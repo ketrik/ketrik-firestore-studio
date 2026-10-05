@@ -1,0 +1,348 @@
+{
+  "name": "ketrik-firestore-studio",
+  "displayName": "Ketrik Firestore Studio",
+  "description": "Ketrik Firestore Database Explorer & Editor for Visual Studio Code",
+  "keywords": [
+    "firebase",
+    "firestore",
+    "explorer",
+    "database",
+    "nosql",
+    "vscode"
+  ],
+  "version": "1.1.0",
+  "publisher": "ketrik",
+  "icon": "media/logo.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ketrik/ketrik-firestore-studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ketrik/ketrik-firestore-studio/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Data Science"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Firestore Studio requires credentials and network access to cloud resources."
+    },
+    "virtualWorkspaces": true
+  },
+  "activationEvents": [
+    "onFileSystem:ketrik-firestore-studio"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Ketrik Firestore Studio",
+      "properties": {
+        "ketrik-firestore-studio.connections": {
+          "type": "array",
+          "default": [],
+          "description": "List of configured Firestore connections",
+          "scope": "application",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique connection identifier"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name for the connection"
+              },
+              "serviceAccountKeyPath": {
+                "type": "string",
+                "description": "Path to Firebase Service Account Key File"
+              },
+              "projectId": {
+                "type": "string",
+                "description": "Google Cloud / Firebase Project ID"
+              },
+              "databaseId": {
+                "type": "string",
+                "default": "(default)",
+                "description": "Firestore Database ID"
+              },
+              "isEmulator": {
+                "type": "boolean",
+                "default": false,
+                "description": "Connect to local Firestore Emulator"
+              },
+              "emulatorHost": {
+                "type": "string",
+                "default": "localhost:8080",
+                "description": "Firestore emulator host (host:port)"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          }
+        },
+        "ketrik-firestore-studio.serviceAccountKeyPath": {
+          "type": "string",
+          "default": "",
+          "description": "Legacy path to Firebase Service Account Key File (auto-migrated to connections)",
+          "scope": "application"
+        },
+        "ketrik-firestore-studio.pagingLimit": {
+          "type": "number",
+          "default": 10,
+          "description": "Number of documents to show per page for each collection",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.documentTemplates": {
+          "type": "array",
+          "description": "Predefined JSON templates for quick document creation",
+          "scope": "resource",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Label for the document template"
+              },
+              "data": {
+                "type": "object",
+                "description": "Default JSON data for the document template"
+              }
+            },
+            "required": [
+              "label",
+              "data"
+            ]
+          }
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ketrik-firestore-studio-view-container",
+          "title": "Ketrik Firestore Studio",
+          "icon": "media/bar-editor.svg"
+        }
+      ]
+    },
+    "views": {
+      "ketrik-firestore-studio-view-container": [
+        {
+          "id": "ketrik-firestore-studio-view",
+          "name": "Firestore Connections",
+          "icon": "media/bar-editor.svg",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "ketrik-firestore-studio-view",
+        "contents": "No Firestore connections configured.\n[Add Firestore Connection](command:ketrik-firestore-studio.addConnection)\n\n[Learn how to get a Service Account Key](https://firebase.google.com/docs/admin/setup#initialize_the_sdk)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ketrik-firestore-studio.addConnection",
+        "category": "Firestore Studio",
+        "title": "Add Connection",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ketrik-firestore-studio.editConnection",
+        "category": "Firestore Studio",
+        "title": "Edit Connection",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "ketrik-firestore-studio.deleteConnection",
+        "category": "Firestore Studio",
+        "title": "Delete Connection",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ketrik-firestore-studio.testConnection",
+        "category": "Firestore Studio",
+        "title": "Test Connection",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "ketrik-firestore-studio.openPath",
+        "category": "Firestore Studio",
+        "title": "Open Path"
+      },
+      {
+        "command": "ketrik-firestore-studio.init",
+        "category": "Firestore Studio",
+        "title": "Initialize"
+      },
+      {
+        "command": "ketrik-firestore-studio.setServiceAccountKeyPath",
+        "category": "Firestore Studio",
+        "title": "Set Service Account Key Path"
+      },
+      {
+        "command": "ketrik-firestore-studio.refreshExplorer",
+        "category": "Firestore Studio",
+        "title": "Refresh Explorer",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ketrik-firestore-studio.copyPath",
+        "category": "Firestore Studio",
+        "title": "Copy Path"
+      },
+      {
+        "command": "ketrik-firestore-studio.orderBy",
+        "category": "Firestore Studio",
+        "title": "Order by..."
+      },
+      {
+        "command": "ketrik-firestore-studio.showMoreItems",
+        "category": "Firestore Studio",
+        "title": "Show More Items",
+        "enablement": "true"
+      },
+      {
+        "command": "ketrik-firestore-studio.openCollectionAsTable",
+        "category": "Firestore Studio",
+        "title": "Open Collection as Table"
+      },
+      {
+        "command": "ketrik-firestore-studio.createDocument",
+        "category": "Firestore Studio",
+        "title": "Create Document"
+      },
+      {
+        "command": "ketrik-firestore-studio.deleteDocument",
+        "category": "Firestore Studio",
+        "title": "Delete Document"
+      },
+      {
+        "command": "ketrik-firestore-studio.addCollection",
+        "category": "Firestore Studio",
+        "title": "Add Collection",
+        "icon": "$(new-folder)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ketrik-firestore-studio.addConnection",
+          "when": "view == ketrik-firestore-studio-view",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.refreshExplorer",
+          "when": "view == ketrik-firestore-studio-view",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ketrik-firestore-studio.testConnection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "inline@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.addCollection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.editConnection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_manage@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteConnection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_manage@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.openCollectionAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.createDocument",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.orderBy",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.copyPath",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'document')",
+          "group": "3_utility@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.addCollection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteDocument",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_actions@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "ketrik-firestore-studio.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.orderBy",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.showMoreItems",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.createDocument",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteDocument",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.addCollection",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
+    "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify --sourcemap",
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/vscode": "^1.140.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  }
+}

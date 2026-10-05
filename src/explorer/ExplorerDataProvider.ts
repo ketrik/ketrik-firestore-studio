@@ -1,0 +1,208 @@
+import {
+  CollectionReference,
+  FieldPath,
+  OrderByDirection,
+  QueryDocumentSnapshot,
+} from "firebase-admin/firestore";
+import * as vscode from "vscode";
+
+import { ConnectionManager } from "../connections/ConnectionManager";
+import {
+  CollectionItem,
+  ConnectionTreeItem,
+  DocumentItem,
+  Item,
+  ShowMoreItemsItem,
+} from "./items";
+
+/** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
+const MAX_MAP_SIZE = 200;
+
+/**
+ * Evict the oldest entry from a Map when it exceeds maxSize.
+ * Maps preserve insertion order, so the first key is the oldest.
+ */
+function evictIfNeeded<K, V>(map: Map<K, V>, maxSize: number): void {
+  if (map.size > maxSize) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) {
+      map.delete(oldest);
+    }
+  }
+}
+
+/**
+ * Provides the Firestore Studio Tree View data for multiple connections.
+ */
+export default class ExplorerDataProvider implements vscode.TreeDataProvider<Item> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<Item | undefined>();
+  private readonly _connectionManager = ConnectionManager.getInstance();
+
+  private _paging = new Map<string, number>();
+  private _orderBy = new Map<string, { field: string | undefined; direction: "asc" | "desc" }>();
+
+  readonly onDidChangeTreeData: vscode.Event<Item | undefined> =
+    this._onDidChangeTreeData.event;
+
+  constructor() {
+    this._connectionManager.onDidChangeConnections(() => {
+      this.refresh();
+    });
+  }
+
+  refresh(): void {
+    this._paging.clear();
+    this._orderBy.clear();
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  getTreeItem(element: Item): vscode.TreeItem {
+    return element;
+  }
+
+  async getParent(element: Item): Promise<Item | undefined> {
+    if (element instanceof DocumentItem) {
+      return new CollectionItem(
+        element.reference.parent.id,
+        element.reference.parent,
+        element.connectionId
+      );
+    } else if (element instanceof CollectionItem) {
+      if (element.reference.parent !== null) {
+        return new DocumentItem(
+          element.reference.parent.id,
+          element.reference.parent,
+          element.connectionId
+        );
+      }
+    }
+    return undefined;
+  }
+
+  async getChildren(element?: Item): Promise<Item[] | undefined> {
+    const defaultLimit =
+      (vscode.workspace
+        .getConfiguration("ketrik-firestore-studio")
+        .get<number>("pagingLimit")) ?? 10;
+
+    if (!element) {
+      const connections = this._connectionManager.getConnections();
+      if (connections.length === 0) {
+        return [];
+      }
+      return connections.map((conn) => new ConnectionTreeItem(conn));
+    }
+
+    if (element instanceof ConnectionTreeItem) {
+      try {
+        const firestore = await this._connectionManager.getFirestore(element.config.id);
+        const refs = (await firestore.listCollections()) as CollectionReference[];
+
+        return refs.map((ref: CollectionReference) => {
+          const sortKey = `${element.config.id}:${ref.path}`;
+          return new CollectionItem(ref.id, ref, element.config.id, {
+            fieldName: this._orderBy.get(sortKey)?.field ?? "id",
+            direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
+          });
+        });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(
+          `Failed to load collections for connection '${element.config.name}': ${err.message}`
+        );
+        return [];
+      }
+    } else if (element instanceof DocumentItem) {
+      try {
+        const refs = (await element.reference.listCollections()) as CollectionReference[];
+        return refs.map((ref: CollectionReference) => {
+          const sortKey = `${element.connectionId}:${ref.path}`;
+          return new CollectionItem(ref.id, ref, element.connectionId, {
+            fieldName: this._orderBy.get(sortKey)?.field ?? "id",
+            direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
+          });
+        });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(
+          `Failed to load sub-collections for document '${element.documentId}': ${err.message}`
+        );
+        return [];
+      }
+    } else if (element instanceof CollectionItem) {
+      try {
+        const key = `${element.connectionId}:${element.reference.path}`;
+        const limit = this._paging.get(key) ?? defaultLimit;
+
+        const sortConfig = this._orderBy.get(key);
+        const snapshots = await element.reference
+          .limit(limit + 1)
+          .orderBy(
+            sortConfig?.field ?? FieldPath.documentId(),
+            sortConfig?.direction ?? "asc"
+          )
+          .get();
+
+        const items: DocumentItem[] = [];
+        snapshots.forEach((snapshot: QueryDocumentSnapshot) => {
+          items.push(
+            new DocumentItem(snapshot.id, snapshot.ref, element.connectionId)
+          );
+        });
+
+        if (items.length > limit) {
+          items.pop();
+          return [
+            ...items,
+            new ShowMoreItemsItem(element.reference, limit, element.connectionId, defaultLimit),
+          ];
+        } else {
+          return items;
+        }
+      } catch (err: any) {
+        vscode.window.showErrorMessage(
+          `Failed to load documents for collection '${element.collectionId}': ${err.message}`
+        );
+        return [];
+      }
+    }
+    return [];
+  }
+
+  /**
+   * Increase the paging limit for the given collection path and refresh the view.
+   */
+  async showMoreItems(path: string, connectionId?: string) {
+    const connId =
+      connectionId ||
+      this._connectionManager.getConnections()[0]?.id ||
+      "default";
+    const key = `${connId}:${path}`;
+    const defaultLimit =
+      (vscode.workspace
+        .getConfiguration("ketrik-firestore-studio")
+        .get<number>("pagingLimit")) || 10;
+    const newLimit = (this._paging.get(key) ?? defaultLimit) + defaultLimit;
+
+    this._paging.set(key, newLimit);
+    evictIfNeeded(this._paging, MAX_MAP_SIZE);
+
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  async orderBy(
+    path: string,
+    field: string | undefined,
+    direction: OrderByDirection,
+    connectionId?: string
+  ) {
+    const connId =
+      connectionId ||
+      this._connectionManager.getConnections()[0]?.id ||
+      "default";
+    const key = `${connId}:${path}`;
+
+    this._orderBy.set(key, { field, direction });
+    evictIfNeeded(this._orderBy, MAX_MAP_SIZE);
+
+    this._onDidChangeTreeData.fire(undefined);
+  }
+}

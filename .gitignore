@@ -1,0 +1,15 @@
+out
+dist
+node_modules
+.vscode-test/
+*.vsix
+.DS_Store
+
+# Credentials and secrets
+*serviceAccount*.json
+*credentials*.json
+*.key
+*.pem
+.env
+.env.*
+!.env.example

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Top Layer / Document -->
+  <path fill="currentColor" opacity="0.95" d="M12 2.5L3.5 7L12 11.5L20.5 7L12 2.5ZM12 4.63L16.48 7L12 9.37L7.52 7L12 4.63Z"/>
+  <!-- Middle Layer / Collection -->
+  <path fill="currentColor" opacity="0.75" d="M3.5 11.5L12 16L20.5 11.5L19.04 10.73L12 14.45L4.96 10.73L3.5 11.5Z"/>
+  <!-- Bottom Layer / Database Storage -->
+  <path fill="currentColor" opacity="0.55" d="M3.5 16L12 20.5L20.5 16L19.04 15.23L12 18.95L4.96 15.23L3.5 16Z"/>
+</svg>
