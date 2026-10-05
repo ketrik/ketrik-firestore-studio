@@ -22,8 +22,6 @@ export async function openCollectionAsTable(item: CollectionItem) {
   let loadedDocs: any[] = [];
   let lastDoc: QueryDocumentSnapshot | null = null;
   let headers: string[] = [];
-  let isSearchMode = false;
-  let searchValue = "";
 
   let isLoading = false;
 
@@ -540,7 +538,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
   panel.webview.html = buildInitialHtml();
 
   // Perform the first data fetch and seed the webview via postMessage.
-  const { newDocs, hasMore: initialHasMore } = await loadMoreDocs();
+  const { hasMore: initialHasMore } = await loadMoreDocs();
   panel.webview.postMessage({
     type: "init",
     headers,
@@ -603,8 +601,6 @@ export async function openCollectionAsTable(item: CollectionItem) {
         });
         return;
       }
-      searchValue = value;
-      isSearchMode = true;
       const filtered = filterDocs(value);
       panel.webview.postMessage({
         type: "searchResults",
@@ -614,8 +610,6 @@ export async function openCollectionAsTable(item: CollectionItem) {
     }
 
     if (message.command === "clearSearch") {
-      isSearchMode = false;
-      searchValue = "";
       panel.webview.postMessage({
         type: "clearSearch",
         headers,

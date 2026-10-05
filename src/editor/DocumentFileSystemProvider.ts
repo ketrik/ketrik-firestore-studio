@@ -14,7 +14,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
   readonly onDidChangeFile: vscode.Event<vscode.FileChangeEvent[]> =
     this._emitter.event;
 
-  watch(uri: vscode.Uri): vscode.Disposable {
+  watch(_uri: vscode.Uri): vscode.Disposable {
     return new vscode.Disposable(() => {});
   }
 
@@ -70,12 +70,12 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
   }
 
   readDirectory(
-    uri: vscode.Uri
+    _uri: vscode.Uri
   ): [string, vscode.FileType][] | Thenable<[string, vscode.FileType][]> {
     throw new Error("Read Directory Method not implemented.");
   }
 
-  createDirectory(uri: vscode.Uri): void | Thenable<void> {
+  createDirectory(_uri: vscode.Uri): void | Thenable<void> {
     throw new Error("Create Directory Method not implemented.");
   }
 
@@ -94,7 +94,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
   async writeFile(
     uri: vscode.Uri,
     content: Uint8Array,
-    options: { readonly create: boolean; readonly overwrite: boolean }
+    _options: { readonly create: boolean; readonly overwrite: boolean }
   ): Promise<void> {
     const { connectionId, docPath } = this.parseUri(uri);
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
@@ -115,16 +115,16 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
   }
 
   delete(
-    uri: vscode.Uri,
-    options: { readonly recursive: boolean }
+    _uri: vscode.Uri,
+    _options: { readonly recursive: boolean }
   ): void | Thenable<void> {
     throw new Error("Delete Method not implemented.");
   }
 
   rename(
-    oldUri: vscode.Uri,
-    newUri: vscode.Uri,
-    options: { readonly overwrite: boolean }
+    _oldUri: vscode.Uri,
+    _newUri: vscode.Uri,
+    _options: { readonly overwrite: boolean }
   ): void | Thenable<void> {
     throw new Error("Rename Method not implemented.");
   }
