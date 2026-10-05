@@ -1,1 +1,0 @@
-# ketrik-firestore-studio
