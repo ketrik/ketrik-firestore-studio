@@ -4,6 +4,11 @@ All notable changes to the "Ketrik Firestore Studio" extension will be documente
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.1.1] - 2026-10-07
+
+### Fixed
+- Broadened VS Code engine compatibility (`^1.85.0`) to ensure support across all modern and LTS versions of Visual Studio Code, Cursor, and VSCodium.
+
 ## [1.1.0] - 2026-10-05
 
 ### Added
