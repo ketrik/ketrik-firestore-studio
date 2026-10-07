@@ -21,7 +21,7 @@
     "url": "https://github.com/ketrik/ketrik-firestore-studio/issues"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.140.0"
   },
   "categories": [
     "Other",
