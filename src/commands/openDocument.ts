@@ -7,13 +7,18 @@ import { scheme } from "../constants";
  */
 export async function openDocument(
   documentReference: DocumentReference,
-  connectionId?: string
+  connectionId?: string,
+  fieldPath?: string
 ): Promise<void> {
   const authority = connectionId || "default";
+  const targetPath = fieldPath
+    ? `/${documentReference.path}/${encodeURIComponent(fieldPath)}.json`
+    : `/${documentReference.path}.json`;
+
   const uri = vscode.Uri.from({
     scheme,
     authority,
-    path: "/" + documentReference.path + ".json",
+    path: targetPath,
   });
 
   const doc = await vscode.workspace.openTextDocument(uri);

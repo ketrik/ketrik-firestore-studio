@@ -53,6 +53,61 @@ export class DocumentItem extends Item {
 }
 
 /**
+ * A Tree View item representing a top-level field / root variable inside a document.
+ */
+export class DocumentFieldItem extends Item {
+  reference: DocumentReference;
+
+  constructor(
+    public fieldName: string,
+    public value: any,
+    public parentDocRef: DocumentReference,
+    public connectionId: string
+  ) {
+    super(fieldName, vscode.TreeItemCollapsibleState.None);
+    this.reference = parentDocRef;
+
+    const valType = Array.isArray(value)
+      ? "array"
+      : value === null
+      ? "null"
+      : typeof value;
+
+    let icon = "symbol-variable";
+    if (valType === "object") {
+      icon = "symbol-namespace";
+      const keyCount = Object.keys(value || {}).length;
+      this.description = `{${keyCount} keys}`;
+    } else if (valType === "array") {
+      icon = "symbol-array";
+      this.description = `[${value.length}]`;
+    } else if (valType === "string") {
+      icon = "symbol-string";
+      this.description = `"${value.length > 20 ? value.slice(0, 17) + "..." : value}"`;
+    } else if (valType === "number") {
+      icon = "symbol-number";
+      this.description = String(value);
+    } else if (valType === "boolean") {
+      icon = "symbol-boolean";
+      this.description = String(value);
+    } else {
+      this.description = String(value);
+    }
+
+    this.id = `${connectionId}:${parentDocRef.path}#${fieldName}`;
+    this.contextValue = "documentField";
+    this.tooltip = `Field: ${fieldName} (${valType})\nDoc: ${parentDocRef.path}`;
+    this.iconPath = new vscode.ThemeIcon(icon);
+
+    this.command = {
+      command: "ketrik-firestore-studio.openField",
+      title: "Open Field",
+      arguments: [this],
+    };
+  }
+}
+
+/**
  * A Tree View item representing a Firestore collection.
  */
 export class CollectionItem extends Item {

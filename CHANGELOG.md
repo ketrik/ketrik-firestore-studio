@@ -2,7 +2,13 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+## [1.2.0] - 2026-10-08
+
+### Added
+- **Root Variables as Virtual Subdocuments**: Open top-level document fields and nested structures independently in dedicated JSON editors.
+- **Atomic Partial Updates**: Saving an edited root field uses Firestore's atomic `.update({ [field]: value })` rather than overwriting the entire document.
+- **Tree View Document Field Explorer**: Expanding any document now displays all its root variables/fields with type badges (e.g. `{14 keys}`, `[5]`, strings, numbers), alongside subcollections.
+- **Field Context Actions**: Open field in editor, copy field path, or delete field directly from the tree view via context menus.
 
 ## [1.1.1] - 2026-10-07
 

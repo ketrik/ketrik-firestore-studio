@@ -4,9 +4,15 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+export interface ParsedDocumentUri {
+  connectionId: string;
+  docPath: string;
+  fieldPath?: string;
+}
+
 /**
- * Custom File System provider that allows interacting with Firestore documents as
- * virtual files in the editor, supporting multiple connections.
+ * Custom File System provider that allows interacting with Firestore documents and
+ * their sub-fields/root-variables as virtual files in the editor, supporting multiple connections.
  */
 export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
   private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
@@ -18,30 +24,39 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
     return new vscode.Disposable(() => {});
   }
 
-  private parseUri(uri: vscode.Uri): { connectionId: string; docPath: string } {
+  public parseUri(uri: vscode.Uri): ParsedDocumentUri {
     const connectionManager = ConnectionManager.getInstance();
     const connections = connectionManager.getConnections();
 
     let connectionId = uri.authority;
-    let docPath = uri.path.startsWith("/") ? uri.path.slice(1) : uri.path;
+    let pathStr = uri.path.startsWith("/") ? uri.path.slice(1) : uri.path;
 
     // Strip trailing .json if present
-    if (docPath.endsWith(".json")) {
-      docPath = docPath.slice(0, -5);
+    if (pathStr.endsWith(".json")) {
+      pathStr = pathStr.slice(0, -5);
     }
 
     if (!connectionId) {
       // Check if first segment of path is connectionId
-      const parts = docPath.split("/");
+      const parts = pathStr.split("/");
       if (connections.some((c) => c.id === parts[0])) {
         connectionId = parts[0];
-        docPath = parts.slice(1).join("/");
+        pathStr = parts.slice(1).join("/");
       } else {
         connectionId = connections[0]?.id || "default";
       }
     }
 
-    return { connectionId, docPath };
+    const segments = pathStr.split("/").filter(Boolean);
+    // Firestore doc paths always have an even number of segments (coll/doc or coll/doc/subcoll/subdoc).
+    // If the path has an odd number >= 3, the trailing segment is a targeted fieldPath!
+    if (segments.length % 2 === 1 && segments.length >= 3) {
+      const fieldPath = decodeURIComponent(segments.pop()!);
+      const docPath = segments.join("/");
+      return { connectionId, docPath, fieldPath };
+    }
+
+    return { connectionId, docPath: segments.join("/") };
   }
 
   private serializeDoc(data: any): Uint8Array {
@@ -49,16 +64,23 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
   }
 
   /**
-   * Return document metadata. Confirms whether the document exists.
+   * Return document (or field) metadata. Confirms whether the document/field exists.
    */
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
-    const { connectionId, docPath } = this.parseUri(uri);
+    const { connectionId, docPath, fieldPath } = this.parseUri(uri);
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
     const doc = await firestore.doc(docPath).get();
     const now = Date.now();
 
     if (!doc.exists) {
       throw vscode.FileSystemError.FileNotFound(uri);
+    }
+
+    if (fieldPath !== undefined) {
+      const data = doc.data();
+      if (!data || !(fieldPath in data)) {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
     }
 
     return {
@@ -80,7 +102,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
   }
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    const { connectionId, docPath } = this.parseUri(uri);
+    const { connectionId, docPath, fieldPath } = this.parseUri(uri);
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
     const doc = await firestore.doc(docPath).get();
 
@@ -88,7 +110,15 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
       throw vscode.FileSystemError.FileNotFound(uri);
     }
 
-    return this.serializeDoc(doc.data());
+    const data = doc.data() ?? {};
+    if (fieldPath !== undefined) {
+      if (!(fieldPath in data)) {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
+      return this.serializeDoc(data[fieldPath]);
+    }
+
+    return this.serializeDoc(data);
   }
 
   async writeFile(
@@ -96,7 +126,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
     content: Uint8Array,
     _options: { readonly create: boolean; readonly overwrite: boolean }
   ): Promise<void> {
-    const { connectionId, docPath } = this.parseUri(uri);
+    const { connectionId, docPath, fieldPath } = this.parseUri(uri);
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
 
     let json: any;
@@ -107,7 +137,14 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
     }
 
     try {
-      await firestore.doc(docPath).set(json);
+      if (fieldPath !== undefined) {
+        // Atomic partial update: only update the targeted root field
+        await firestore.doc(docPath).update({
+          [fieldPath]: json,
+        });
+      } else {
+        await firestore.doc(docPath).set(json);
+      }
       this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
     } catch (e: any) {
       throw new Error(`Could not write Firestore document: ${e.message}`);

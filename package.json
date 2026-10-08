@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.1.1",
+  "version": "1.2.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -227,6 +227,17 @@
         "title": "Delete Document"
       },
       {
+        "command": "ketrik-firestore-studio.openField",
+        "category": "Firestore Studio",
+        "title": "Open Field"
+      },
+      {
+        "command": "ketrik-firestore-studio.deleteField",
+        "category": "Firestore Studio",
+        "title": "Delete Field",
+        "icon": "$(trash)"
+      },
+      {
         "command": "ketrik-firestore-studio.addCollection",
         "category": "Firestore Studio",
         "title": "Add Collection",
@@ -284,8 +295,18 @@
         },
         {
           "command": "ketrik-firestore-studio.copyPath",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'document')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'document' || viewItem == 'documentField')",
           "group": "3_utility@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.openField",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'documentField'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteField",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'documentField'",
+          "group": "1_actions@2"
         },
         {
           "command": "ketrik-firestore-studio.addCollection",
@@ -299,6 +320,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "ketrik-firestore-studio.openField",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteField",
+          "when": "false"
+        },
         {
           "command": "ketrik-firestore-studio.copyPath",
           "when": "false"

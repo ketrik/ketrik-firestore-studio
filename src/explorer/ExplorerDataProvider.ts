@@ -10,6 +10,7 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import {
   CollectionItem,
   ConnectionTreeItem,
+  DocumentFieldItem,
   DocumentItem,
   Item,
   ShowMoreItemsItem,
@@ -113,17 +114,40 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       }
     } else if (element instanceof DocumentItem) {
       try {
+        const items: Item[] = [];
+
+        // 1. Fetch subcollections
         const refs = (await element.reference.listCollections()) as CollectionReference[];
-        return refs.map((ref: CollectionReference) => {
+        const subCollections = refs.map((ref: CollectionReference) => {
           const sortKey = `${element.connectionId}:${ref.path}`;
           return new CollectionItem(ref.id, ref, element.connectionId, {
             fieldName: this._orderBy.get(sortKey)?.field ?? "id",
             direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
           });
         });
+        items.push(...subCollections);
+
+        // 2. Fetch document snapshot and list root variables / fields
+        const snapshot = await element.reference.get();
+        if (snapshot.exists) {
+          const data = snapshot.data() || {};
+          const fieldKeys = Object.keys(data).sort();
+          for (const key of fieldKeys) {
+            items.push(
+              new DocumentFieldItem(
+                key,
+                data[key],
+                element.reference,
+                element.connectionId
+              )
+            );
+          }
+        }
+
+        return items;
       } catch (err: any) {
         vscode.window.showErrorMessage(
-          `Failed to load sub-collections for document '${element.documentId}': ${err.message}`
+          `Failed to load sub-items for document '${element.documentId}': ${err.message}`
         );
         return [];
       }

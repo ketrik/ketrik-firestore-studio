@@ -13,9 +13,10 @@ import {
 import { scheme } from "./constants";
 import { DocumentFileSystemProvider } from "./editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "./explorer/ExplorerDataProvider";
-import { CollectionItem, ConnectionTreeItem, DocumentItem, Item } from "./explorer/items";
+import { CollectionItem, ConnectionTreeItem, DocumentFieldItem, DocumentItem, Item } from "./explorer/items";
 import { openCollectionAsTable } from "./webview/openCollectionAsTable";
 import { ConnectionManager } from "./connections/ConnectionManager";
+import { FieldValue } from "firebase-admin/firestore";
 
 /** Parsed document template (label + data). */
 interface DocumentTemplate {
@@ -304,6 +305,50 @@ export async function activate(context: vscode.ExtensionContext) {
           } catch (err: any) {
             vscode.window.showErrorMessage(
               "Failed to delete document: " + err.message
+            );
+          }
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openField",
+      async (item: DocumentFieldItem) => {
+        if (!item?.parentDocRef || !item?.fieldName) {
+          return;
+        }
+        await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.deleteField",
+      async (item: DocumentFieldItem) => {
+        if (!item?.parentDocRef || !item?.fieldName) {
+          return;
+        }
+
+        const confirm = await vscode.window.showWarningMessage(
+          `Are you sure you want to delete the field "${item.fieldName}" from document "${item.parentDocRef.id}"?`,
+          { modal: true },
+          "Delete Field",
+          "Cancel"
+        );
+
+        if (confirm === "Delete Field") {
+          try {
+            await item.parentDocRef.update({
+              [item.fieldName]: FieldValue.delete(),
+            });
+            vscode.window.showInformationMessage(`Field "${item.fieldName}" deleted!`);
+            explorerDataProvider.refresh();
+          } catch (err: any) {
+            vscode.window.showErrorMessage(
+              `Failed to delete field: ${err.message}`
             );
           }
         }

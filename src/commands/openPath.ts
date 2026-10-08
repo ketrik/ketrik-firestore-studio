@@ -5,7 +5,11 @@ import { openDocument } from "./openDocument";
 /**
  * Open a generic Firestore path. If the path is a document, it will be opened in the editor.
  */
-export default async function openPath(path?: string, connectionId?: string): Promise<void> {
+export default async function openPath(
+  path?: string,
+  connectionId?: string,
+  fieldPath?: string
+): Promise<void> {
   const connectionManager = ConnectionManager.getInstance();
   const connections = connectionManager.getConnections();
 
@@ -34,20 +38,36 @@ export default async function openPath(path?: string, connectionId?: string): Pr
   path =
     path ??
     (await vscode.window.showInputBox({
-      placeHolder: "Firestore Path (e.g., users/user123)",
+      placeHolder: "Firestore Path (e.g., users/user123 or users/user123:profile)",
       prompt: `Open path in connection '${connectionManager.getConnection(connectionId)?.name || connectionId}'`,
     }));
 
   if (path !== undefined && path.trim() !== "") {
     try {
-      const cleanPath = path.trim().replace(/^\//, "");
-      const parts = cleanPath.split("/");
+      let cleanPath = path.trim().replace(/^\//, "");
+      let targetField = fieldPath;
+
+      // Also support users/user123:profile or users/user123#profile syntax from prompt
+      if (!targetField && (cleanPath.includes(":") || cleanPath.includes("#"))) {
+        const separator = cleanPath.includes(":") ? ":" : "#";
+        const parts = cleanPath.split(separator);
+        cleanPath = parts[0];
+        targetField = parts[1];
+      }
+
+      const parts = cleanPath.split("/").filter(Boolean);
+      // If path has an odd number >= 3 (e.g. users/user123/profile), trailing segment is fieldPath
+      if (!targetField && parts.length % 2 === 1 && parts.length >= 3) {
+        targetField = parts.pop();
+        cleanPath = parts.join("/");
+      }
+
       if (parts.length % 2 === 0) {
         const firestore = await connectionManager.getFirestore(connectionId);
         const doc = firestore.doc(cleanPath);
-        await openDocument(doc, connectionId);
+        await openDocument(doc, connectionId, targetField);
       } else {
-        vscode.window.showErrorMessage("Only document paths are supported (e.g. collection/docId)");
+        vscode.window.showErrorMessage("Only document paths are supported (e.g. collection/docId or collection/docId/field)");
       }
     } catch (e: any) {
       vscode.window.showErrorMessage(`Invalid path or error opening document: ${e.message}`);
