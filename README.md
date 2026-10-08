@@ -7,10 +7,15 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 ## Features
 
 - **Multiple Firestore Connections**: Connect to multiple Firestore instances simultaneously (Production, Staging, Dev, Local Emulators, and custom Database IDs).
-- **Interactive Tree Explorer**: Browse collections, documents, and sub-collections across all your connections in one sidebar view.
-- **Direct Document Editing**: Open and edit any document as native JSON with full VS Code editor features. Saving the file (`Cmd+S` / `Ctrl+S`) writes updates back to Firestore immediately.
+- **Interactive Tree Explorer**: Browse collections, documents, sub-collections, and root document fields across all your connections in one sidebar view.
+- **Root Variables as Virtual Subdocuments**: Open top-level document fields and nested structures independently in dedicated JSON editors—no need to navigate massive documents.
+- **Atomic Partial Updates**: Saving an edited root field uses Firestore's atomic `.update({ [field]: value })` rather than overwriting the entire document.
+- **Smart Modal Editing for Primitives**: Click any boolean in the tree to toggle via QuickPick (`true` / `false`), or edit numbers/strings via instant modal input with live validation.
+- **Field Context Actions**: Add new fields with type assistance (`Object`, `Array`, `String`, `Number`, `Boolean`, or custom `JSON`), copy field paths, or delete fields directly from tree context menus.
+- **Auto-Sync & Live Refresh**: Changes saved to documents or sub-fields immediately reflect in the Explorer tree view in real-time.
+- **Direct Document Editing**: Open and edit any full document as native JSON with full VS Code editor features. Saving the file (`Cmd+S` / `Ctrl+S`) writes updates back to Firestore immediately.
 - **Table View with Search**: View collection documents in a tabular format, search across fields, and paginate with ease.
-- **Document Management**: Create new documents (with optional JSON templates) and delete documents safely.
+- **Document & Field Management**: Create new documents (with optional JSON templates), add fields, and delete documents or fields safely.
 - **Export**: Export collection data directly to JSON files.
 - **Custom Ordering & Pagination**: Sort collections by any field in ascending or descending order.
 
@@ -24,7 +29,7 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
    - **Service Account Key (JSON)**: Select your downloaded Firebase service account JSON key file.
    - **Local Firestore Emulator**: Specify emulator host (e.g., `localhost:8080`) and project ID.
 4. (Optional) Provide a custom Database ID if using named databases (defaults to `(default)`).
-5. Explore collections and click on documents to open and edit them live!
+5. Explore collections, expand documents to view top-level fields, and click to edit live!
 
 ---
 
@@ -40,6 +45,10 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 | `ketrik-firestore-studio.openCollectionAsTable` | Open Collection as Table | Open interactive table grid view |
 | `ketrik-firestore-studio.createDocument` | Create Document | Create a new document in the selected collection |
 | `ketrik-firestore-studio.deleteDocument` | Delete Document | Delete a selected document |
+| `ketrik-firestore-studio.addField` | Add Field... | Add a new root field to a document with type picker |
+| `ketrik-firestore-studio.openField` | Edit Value / Open Field | Quick-edit primitive value or open subdocument |
+| `ketrik-firestore-studio.openFieldInEditor` | Open in JSON Editor | Open any field directly into a dedicated JSON tab |
+| `ketrik-firestore-studio.deleteField` | Delete Field | Delete a root field using `FieldValue.delete()` |
 | `ketrik-firestore-studio.addCollection` | Add Collection | Create a root or sub-collection |
 
 ---
