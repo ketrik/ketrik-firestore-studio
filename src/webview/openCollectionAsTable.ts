@@ -343,6 +343,10 @@ export async function openCollectionAsTable(item: CollectionItem) {
             </div>
             <button id="searchBtn">Search</button>
             <button id="clearSearchBtn" class="secondary" style="display:none;">Clear</button>
+            <div style="display:flex; align-items:center; gap:6px; margin-left:4px;">
+              <input id="jumpInput" type="text" placeholder="Lookup Doc ID..." style="min-width:160px; max-width:200px;" />
+              <button id="jumpBtn" class="secondary" title="Direct 1-read document lookup on server">Lookup</button>
+            </div>
             <button id="exportBtn" class="secondary" title="Export as JSON file">
               <span>⬇</span> Export JSON
             </button>
@@ -353,6 +357,9 @@ export async function openCollectionAsTable(item: CollectionItem) {
             Showing <b id="doc-count">0</b> documents
             <span class="search-note" id="search-note" style="display:none;">
               — (Filtered over loaded documents)
+            </span>
+            <span class="search-note" id="lookup-note" style="display:none; color:var(--vscode-editorWarning-foreground, #cca700);">
+              — (Direct Document Lookup)
             </span>
           </div>
           <div>Click any row to open and edit in VS Code</div>
@@ -367,7 +374,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
               <path d="M4 4h16v16H4zM4 9h16M9 4v16"/>
             </svg>
             <h3>No documents found</h3>
-            <p>This collection has no documents or no matches matched your search query.</p>
+            <p id="empty-state-msg">This collection has no documents or no matches matched your search query.</p>
           </div>
         </div>
         <div class="actions">
@@ -423,9 +430,15 @@ export async function openCollectionAsTable(item: CollectionItem) {
               }).join('');
             }
 
-            function updateEmptyState(count) {
+            function updateEmptyState(count, customMsg) {
               const emptyState = document.getElementById('empty-state');
+              const msgEl = document.getElementById('empty-state-msg');
               if (count === 0) {
+                if (customMsg) {
+                  msgEl.textContent = customMsg;
+                } else {
+                  msgEl.textContent = 'This collection has no documents or no matches matched your search query.';
+                }
                 emptyState.style.display = 'block';
               } else {
                 emptyState.style.display = 'none';
@@ -469,7 +482,33 @@ export async function openCollectionAsTable(item: CollectionItem) {
                 document.getElementById('loadMoreBtn').style.display = 'none';
                 document.getElementById('clearSearchBtn').style.display = '';
                 document.getElementById('search-note').style.display = '';
+                document.getElementById('lookup-note').style.display = 'none';
                 updateEmptyState(msg.docs.length);
+              }
+
+              if (msg.type === 'lookupResult') {
+                isSearchMode = true;
+                const headRow = '<th class="id-header">Document ID</th>' +
+                  msg.headers.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
+                document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
+                document.getElementById('table-body').innerHTML = renderRows([msg.doc], msg.headers);
+                document.getElementById('doc-count').textContent = '1';
+                document.getElementById('loadMoreBtn').style.display = 'none';
+                document.getElementById('clearSearchBtn').style.display = '';
+                document.getElementById('search-note').style.display = 'none';
+                document.getElementById('lookup-note').style.display = '';
+                updateEmptyState(1);
+              }
+
+              if (msg.type === 'lookupNotFound') {
+                isSearchMode = true;
+                document.getElementById('table-body').innerHTML = '';
+                document.getElementById('doc-count').textContent = '0';
+                document.getElementById('loadMoreBtn').style.display = 'none';
+                document.getElementById('clearSearchBtn').style.display = '';
+                document.getElementById('search-note').style.display = 'none';
+                document.getElementById('lookup-note').style.display = '';
+                updateEmptyState(0, "Document '" + msg.docId + "' was not found in Firestore.");
               }
 
               if (msg.type === 'clearSearch') {
@@ -479,7 +518,9 @@ export async function openCollectionAsTable(item: CollectionItem) {
                 document.getElementById('loadMoreBtn').style.display = msg.hasMore ? '' : 'none';
                 document.getElementById('clearSearchBtn').style.display = 'none';
                 document.getElementById('search-note').style.display = 'none';
+                document.getElementById('lookup-note').style.display = 'none';
                 document.getElementById('searchInput').value = '';
+                document.getElementById('jumpInput').value = '';
                 updateEmptyState(msg.docs.length);
               }
             });
@@ -505,6 +546,13 @@ export async function openCollectionAsTable(item: CollectionItem) {
               vscode.postMessage({ command: 'search', value });
             };
 
+            document.getElementById('jumpBtn').onclick = function() {
+              const docId = document.getElementById('jumpInput').value.trim();
+              if (docId) {
+                vscode.postMessage({ command: 'jumpToId', docId });
+              }
+            };
+
             document.getElementById('clearSearchBtn').onclick = function() {
               vscode.postMessage({ command: 'clearSearch' });
             };
@@ -525,6 +573,12 @@ export async function openCollectionAsTable(item: CollectionItem) {
             document.getElementById('searchInput').addEventListener('keydown', function(event) {
               if (event.key === 'Enter') {
                 document.getElementById('searchBtn').click();
+              }
+            });
+
+            document.getElementById('jumpInput').addEventListener('keydown', function(event) {
+              if (event.key === 'Enter') {
+                document.getElementById('jumpBtn').click();
               }
             });
           })();
@@ -607,6 +661,47 @@ export async function openCollectionAsTable(item: CollectionItem) {
         headers,
         docs: filtered,
       });
+    }
+
+    if (message.command === "jumpToId") {
+      const docId = (message.docId as string || "").trim();
+      if (!docId) {
+        return;
+      }
+      try {
+        const docRef = item.reference.doc(docId);
+        const snapshot = await docRef.get();
+        if (!snapshot.exists) {
+          panel.webview.postMessage({
+            type: "lookupNotFound",
+            docId,
+          });
+          return;
+        }
+
+        const docData = {
+          ...snapshot.data(),
+          __path: snapshot.ref.path,
+          __id: snapshot.id,
+        };
+
+        const docKeys = Object.keys(snapshot.data() || {});
+        const newHeaders = [...headers];
+        for (const k of docKeys) {
+          if (!newHeaders.includes(k)) {
+            newHeaders.push(k);
+          }
+        }
+        headers = newHeaders;
+
+        panel.webview.postMessage({
+          type: "lookupResult",
+          headers,
+          doc: docData,
+        });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to lookup document '${docId}': ${err.message}`);
+      }
     }
 
     if (message.command === "clearSearch") {

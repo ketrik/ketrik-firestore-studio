@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.2.1",
+  "version": "1.3.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -217,6 +217,12 @@
         "title": "Open Collection as Table"
       },
       {
+        "command": "ketrik-firestore-studio.jumpToDocument",
+        "category": "Firestore Studio",
+        "title": "Jump to Document ID...",
+        "icon": "$(search)"
+      },
+      {
         "command": "ketrik-firestore-studio.createDocument",
         "category": "Firestore Studio",
         "title": "Create Document"
@@ -295,9 +301,14 @@
           "group": "1_actions@1"
         },
         {
-          "command": "ketrik-firestore-studio.createDocument",
+          "command": "ketrik-firestore-studio.jumpToDocument",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
           "group": "1_actions@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.createDocument",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "1_actions@3"
         },
         {
           "command": "ketrik-firestore-studio.orderBy",

@@ -43,6 +43,7 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 | `ketrik-firestore-studio.testConnection` | Test Connection | Test connection credentials and connectivity |
 | `ketrik-firestore-studio.refreshExplorer` | Refresh Explorer | Refresh collections and document tree |
 | `ketrik-firestore-studio.openCollectionAsTable` | Open Collection as Table | Open interactive table grid view |
+| `ketrik-firestore-studio.jumpToDocument` | Jump to Document ID... | Direct 1-read document lookup on server by ID |
 | `ketrik-firestore-studio.createDocument` | Create Document | Create a new document in the selected collection |
 | `ketrik-firestore-studio.deleteDocument` | Delete Document | Delete a selected document |
 | `ketrik-firestore-studio.addField` | Add Field... | Add a new root field to a document with type picker |

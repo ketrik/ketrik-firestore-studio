@@ -159,6 +159,50 @@ export async function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
+      "ketrik-firestore-studio.jumpToDocument",
+      async (item: CollectionItem) => {
+        if (!item?.reference) {
+          vscode.window.showErrorMessage("No collection selected.");
+          return;
+        }
+
+        const docId = await vscode.window.showInputBox({
+          prompt: `Jump to Document ID in '${item.collectionId}'`,
+          placeHolder: "Enter Document ID (e.g. user_123, msg_abc)",
+          validateInput: (v) => (v.trim() ? undefined : "Document ID cannot be empty"),
+        });
+
+        if (!docId) {
+          return;
+        }
+
+        try {
+          const docRef = item.reference.doc(docId.trim());
+          const snapshot = await docRef.get();
+          if (!snapshot.exists) {
+            const createChoice = await vscode.window.showWarningMessage(
+              `Document '${docId.trim()}' does not exist in collection '${item.collectionId}'. Would you like to create it?`,
+              "Create",
+              "Cancel"
+            );
+            if (createChoice === "Create") {
+              await docRef.set({});
+              await openPath(docRef.path, item.connectionId);
+              explorerDataProvider.refresh();
+            }
+            return;
+          }
+
+          await openPath(docRef.path, item.connectionId);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to retrieve document: ${err.message}`);
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
       "ketrik-firestore-studio.createDocument",
       async (item: CollectionItem) => {
         if (!item?.reference) {
