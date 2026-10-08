@@ -57,6 +57,14 @@ export async function activate(context: vscode.ExtensionContext) {
   ConnectionManager.getInstance();
 
   const explorerDataProvider = new ExplorerDataProvider();
+  const documentFileSystemProvider = new DocumentFileSystemProvider();
+
+  // Automatically refresh Explorer Tree whenever a document or sub-field is saved in the editor
+  context.subscriptions.push(
+    documentFileSystemProvider.onDidChangeFile(() => {
+      explorerDataProvider.refresh();
+    })
+  );
 
   const explorerView = vscode.window.createTreeView("ketrik-firestore-studio-view", {
     treeDataProvider: explorerDataProvider,
@@ -319,6 +327,115 @@ export async function activate(context: vscode.ExtensionContext) {
         if (!item?.parentDocRef || !item?.fieldName) {
           return;
         }
+
+        const value = item.value;
+        const valType = Array.isArray(value)
+          ? "array"
+          : value === null
+          ? "null"
+          : typeof value;
+
+        // If it's a complex type (object or array), open directly in the virtual JSON editor
+        if (valType === "object" || valType === "array") {
+          await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
+          return;
+        }
+
+        // For booleans: QuickPick true / false
+        if (valType === "boolean") {
+          const currentStr = String(value);
+          const picked = await vscode.window.showQuickPick(
+            [
+              { label: "true", description: currentStr === "true" ? "(current value)" : undefined },
+              { label: "false", description: currentStr === "false" ? "(current value)" : undefined },
+            ],
+            { placeHolder: `Set boolean value for '${item.fieldName}'` }
+          );
+
+          if (!picked) {
+            return;
+          }
+
+          const newValue = picked.label === "true";
+          if (newValue === value) {
+            return;
+          }
+
+          try {
+            await item.parentDocRef.update({
+              [item.fieldName]: newValue,
+            });
+            vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${newValue}`);
+            explorerDataProvider.refresh();
+          } catch (err: any) {
+            vscode.window.showErrorMessage(`Failed to update field: ${err.message}`);
+          }
+          return;
+        }
+
+        // For numbers: Modal InputBox with number validation
+        if (valType === "number") {
+          const input = await vscode.window.showInputBox({
+            prompt: `Edit numeric value for '${item.fieldName}'`,
+            value: String(value),
+            validateInput: (v) => (isNaN(Number(v)) ? "Must be a valid number" : undefined),
+          });
+
+          if (input === undefined) {
+            return;
+          }
+
+          const newNum = Number(input);
+          if (newNum === value) {
+            return;
+          }
+
+          try {
+            await item.parentDocRef.update({
+              [item.fieldName]: newNum,
+            });
+            vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${newNum}`);
+            explorerDataProvider.refresh();
+          } catch (err: any) {
+            vscode.window.showErrorMessage(`Failed to update field: ${err.message}`);
+          }
+          return;
+        }
+
+        // For strings or null: Modal InputBox
+        const input = await vscode.window.showInputBox({
+          prompt: `Edit string value for '${item.fieldName}'`,
+          value: value === null ? "" : String(value),
+        });
+
+        if (input === undefined) {
+          return;
+        }
+
+        if (input === value) {
+          return;
+        }
+
+        try {
+          await item.parentDocRef.update({
+            [item.fieldName]: input,
+          });
+          vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
+          explorerDataProvider.refresh();
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to update field: ${err.message}`);
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openFieldInEditor",
+      async (item: DocumentFieldItem) => {
+        if (!item?.parentDocRef || !item?.fieldName) {
+          return;
+        }
         await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
       }
     )
@@ -356,12 +473,137 @@ export async function activate(context: vscode.ExtensionContext) {
     )
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.addField",
+      async (item: DocumentItem | DocumentFieldItem) => {
+        const docRef =
+          item instanceof DocumentItem
+            ? item.reference
+            : item instanceof DocumentFieldItem
+            ? item.parentDocRef
+            : undefined;
+
+        const connectionId = item?.connectionId;
+
+        if (!docRef) {
+          vscode.window.showErrorMessage("No document selected.");
+          return;
+        }
+
+        const fieldName = await vscode.window.showInputBox({
+          prompt: "Enter new Field name",
+          placeHolder: "fieldName (e.g. settings, tags, status)",
+          validateInput: (v) => {
+            const trimmed = v.trim();
+            if (!trimmed) {
+              return "Field name cannot be empty";
+            }
+            if (trimmed.includes("/")) {
+              return "Field name cannot contain '/'";
+            }
+            return undefined;
+          },
+        });
+
+        if (!fieldName) {
+          return;
+        }
+
+        const typePick = await vscode.window.showQuickPick(
+          [
+            { label: "$(symbol-namespace) Object / Map ({})", description: "Empty object (opens in editor)", type: "object" },
+            { label: "$(symbol-array) Array ([])", description: "Empty array (opens in editor)", type: "array" },
+            { label: "$(symbol-string) String", description: "Text value", type: "string" },
+            { label: "$(symbol-number) Number", description: "Numeric value", type: "number" },
+            { label: "$(symbol-boolean) Boolean", description: "true / false", type: "boolean" },
+            { label: "$(json) Custom JSON", description: "Input raw JSON payload", type: "json" },
+          ],
+          { placeHolder: `Select value type for field '${fieldName.trim()}'` }
+        );
+
+        if (!typePick) {
+          return;
+        }
+
+        let fieldValue: any;
+        let shouldOpenInEditor = false;
+
+        switch (typePick.type) {
+          case "object":
+            fieldValue = {};
+            shouldOpenInEditor = true;
+            break;
+          case "array":
+            fieldValue = [];
+            shouldOpenInEditor = true;
+            break;
+          case "string": {
+            const strVal = await vscode.window.showInputBox({
+              prompt: `Enter string value for '${fieldName.trim()}'`,
+              placeHolder: "value",
+            });
+            if (strVal === undefined) { return; }
+            fieldValue = strVal;
+            break;
+          }
+          case "number": {
+            const numVal = await vscode.window.showInputBox({
+              prompt: `Enter number value for '${fieldName.trim()}'`,
+              placeHolder: "0",
+              validateInput: (v) => (isNaN(Number(v)) ? "Must be a valid number" : undefined),
+            });
+            if (numVal === undefined) { return; }
+            fieldValue = Number(numVal);
+            break;
+          }
+          case "boolean": {
+            const boolPick = await vscode.window.showQuickPick(["true", "false"], {
+              placeHolder: `Select boolean value for '${fieldName.trim()}'`,
+            });
+            if (!boolPick) { return; }
+            fieldValue = boolPick === "true";
+            break;
+          }
+          case "json": {
+            const jsonVal = await vscode.window.showInputBox({
+              prompt: `Enter JSON value for '${fieldName.trim()}'`,
+              placeHolder: '{"key": "value"}',
+            });
+            if (jsonVal === undefined) { return; }
+            try {
+              fieldValue = JSON.parse(jsonVal || "null");
+            } catch {
+              vscode.window.showErrorMessage("Invalid JSON value entered.");
+              return;
+            }
+            break;
+          }
+        }
+
+        try {
+          await docRef.update({
+            [fieldName.trim()]: fieldValue,
+          });
+          vscode.window.showInformationMessage(`Field '${fieldName.trim()}' added!`);
+          explorerDataProvider.refresh();
+
+          if (shouldOpenInEditor) {
+            await openPath(docRef.path, connectionId, fieldName.trim());
+          }
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to add field: ${err.message}`);
+        }
+      }
+    )
+  );
+
   context.subscriptions.push(explorerView);
 
   context.subscriptions.push(
     vscode.workspace.registerFileSystemProvider(
       scheme,
-      new DocumentFileSystemProvider(),
+      documentFileSystemProvider,
       { isCaseSensitive: true }
     )
   );
