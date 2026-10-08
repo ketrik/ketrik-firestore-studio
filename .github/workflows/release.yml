@@ -9,6 +9,8 @@ on:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -16,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
           cache: 'npm'
 
       - name: Install Dependencies
@@ -30,6 +32,13 @@ jobs:
 
       - name: Package VSIX
         run: npx @vscode/vsce package --no-dependencies
+
+      - name: Create GitHub Release and Attach VSIX
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.vsix'
+          generate_release_notes: true
 
       - name: Publish to VS Code Marketplace
         if: env.VSCE_PAT != ''
