@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import * as vscode from "vscode";
 import { ConnectionManager } from "../connections/ConnectionManager";
+import { scheme } from "../constants";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -28,6 +29,23 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   /** Version (update time + content hash) each open file was last loaded/saved with, for conflict detection. */
   private _baselines = new Map<string, { updateTime: string; hash: string }>();
   private static readonly MAX_BASELINES = 200;
+
+  /**
+   * Invalidate document snapshot cache and notify VS Code that the document file changed,
+   * causing any open editor tabs to reload from Firestore.
+   */
+  public invalidateAndNotify(connectionId: string, docPath: string): void {
+    const key = `${connectionId}:${docPath}`;
+    this._snapshotCache.delete(key);
+    this._snapshotInFlight.delete(key);
+
+    const docUri = vscode.Uri.from({
+      scheme,
+      authority: connectionId,
+      path: `/${docPath}.json`,
+    });
+    this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: docUri }]);
+  }
 
   dispose(): void {
     this._emitter.dispose();

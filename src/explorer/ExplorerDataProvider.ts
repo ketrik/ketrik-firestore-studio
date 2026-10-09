@@ -79,6 +79,35 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     this._onDidChangeTreeData.fire(undefined);
   }
 
+  /**
+   * Refresh a specific item (document, collection, connection, or field's parent)
+   * while keeping the rest of the tree intact and snappy.
+   */
+  refreshNode(element?: Item): void {
+    if (!element) {
+      this.refresh();
+      return;
+    }
+
+    if (element instanceof DocumentItem) {
+      this._treeCache.delete(`doc:${element.connectionId}:${element.reference.path}`);
+      this._onDidChangeTreeData.fire(undefined);
+    } else if (element instanceof DocumentFieldItem) {
+      this._treeCache.delete(`doc:${element.connectionId}:${element.parentDocRef.path}`);
+      this._onDidChangeTreeData.fire(undefined);
+    } else if (element instanceof CollectionItem) {
+      const prefix = `col:${element.connectionId}:${element.reference.path}:`;
+      for (const k of this._treeCache.keys()) {
+        if (k.startsWith(prefix)) {
+          this._treeCache.delete(k);
+        }
+      }
+      this._onDidChangeTreeData.fire(element);
+    } else {
+      this.refresh();
+    }
+  }
+
   getTreeItem(element: Item): vscode.TreeItem {
     return element;
   }

@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.4.0",
+  "version": "1.5.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -294,6 +294,24 @@
         "title": "Open in JSON Editor"
       },
       {
+        "command": "ketrik-firestore-studio.openFieldAsTable",
+        "category": "Firestore Studio",
+        "title": "Open as Table View",
+        "icon": "$(table)"
+      },
+      {
+        "command": "ketrik-firestore-studio.renameField",
+        "category": "Firestore Studio",
+        "title": "Rename Field...",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "ketrik-firestore-studio.refreshItem",
+        "category": "Firestore Studio",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "ketrik-firestore-studio.deleteField",
         "category": "Firestore Studio",
         "title": "Delete Field",
@@ -407,24 +425,39 @@
           "group": "2_sub@2"
         },
         {
-          "command": "ketrik-firestore-studio.openField",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'documentField'",
+          "command": "ketrik-firestore-studio.refreshItem",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "2_sub@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.openFieldAsTable",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
           "group": "1_actions@1"
         },
         {
           "command": "ketrik-firestore-studio.openFieldInEditor",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'documentField'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
           "group": "1_actions@2"
         },
         {
-          "command": "ketrik-firestore-studio.addField",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'documentField'",
+          "command": "ketrik-firestore-studio.renameField",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
           "group": "1_actions@3"
         },
         {
-          "command": "ketrik-firestore-studio.deleteField",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'documentField'",
+          "command": "ketrik-firestore-studio.addField",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
           "group": "1_actions@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.refreshItem",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "group": "1_actions@5"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteField",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "group": "2_danger@1"
         }
       ],
       "commandPalette": [
@@ -433,11 +466,23 @@
           "when": "false"
         },
         {
+          "command": "ketrik-firestore-studio.openFieldAsTable",
+          "when": "false"
+        },
+        {
           "command": "ketrik-firestore-studio.openFieldInEditor",
           "when": "false"
         },
         {
           "command": "ketrik-firestore-studio.deleteField",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.renameField",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.refreshItem",
           "when": "false"
         },
         {

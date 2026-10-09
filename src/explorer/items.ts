@@ -106,7 +106,12 @@ export class DocumentFieldItem extends Item {
     }
 
     this.id = `${connectionId}:${parentDocRef.path}#${fieldName}`;
-    this.contextValue = "documentField";
+    this.contextValue =
+      valType === "object"
+        ? "documentFieldMap"
+        : valType === "array"
+        ? "documentFieldArray"
+        : "documentField";
     this.tooltip = `Field: ${fieldName} (${valType})\nDoc: ${parentDocRef.path}`;
     this.iconPath = new vscode.ThemeIcon(icon, iconColor);
 

@@ -53,7 +53,10 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 | `ketrik-firestore-studio.copyDocumentJson` | Copy as JSON | Copy formatted document JSON directly to OS clipboard |
 | `ketrik-firestore-studio.addField` | Add Field... | Add a new root field to a document with type picker |
 | `ketrik-firestore-studio.openField` | Edit Value / Open Field | Quick-edit primitive value or open subdocument |
+| `ketrik-firestore-studio.openFieldAsTable` | Open as Table View | View Map (`Record<string, T>`) or Array (`T[]`) field as a virtual collection table |
 | `ketrik-firestore-studio.openFieldInEditor` | Open in JSON Editor | Open any field directly into a dedicated JSON tab |
+| `ketrik-firestore-studio.renameField` | Rename Field... | Rename a root field atomically via batch copy and delete |
+| `ketrik-firestore-studio.refreshItem` | Refresh | Refresh a specific document or field without reloading the entire tree |
 | `ketrik-firestore-studio.deleteField` | Delete Field | Delete a root field using `FieldValue.delete()` |
 | `ketrik-firestore-studio.addCollection` | Add Collection | Create a root or sub-collection |
 

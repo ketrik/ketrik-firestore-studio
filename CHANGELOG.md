@@ -2,6 +2,18 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.5.0] - 2026-10-09
+
+### Added
+- **Server-Side Query Builder in Table View**: Interactive query panel to construct multi-clause Firestore `where` queries with rich operators (`==`, `!=`, `<`, `<=`, `>`, `>=`, `array-contains`, `array-contains-any`, `in`, `not-in`). Queries execute directly against Firestore on the server with intelligent type casting (booleans, numbers, and JSON arrays), paginated fetching, and query reset actions.
+- **Open Map / Array Field as Table View (`ketrik-firestore-studio.openFieldAsTable`)**: View Map (`Record<string, T>`) and Array (`T[]`) root variables directly in a dedicated collection table view, supporting the Dual-Contract substrate pattern (Registry keys or sequence indices as row IDs, tabular column breakdown, in-memory search, raw JSON editor jump, and JSON export).
+
+### Fixed & Improved
+- **Smart `null` Field Handling**: Clicking a `null` field in the tree now opens an interactive type picker allowing instant conversion to Object (`{}`), Array (`[]`), String, Number, Boolean, or opening directly in the JSON editor (fixing a bug where it previously assumed string input).
+- **Rename Field (`ketrik-firestore-studio.renameField`)**: Right-click any root field to rename it. Atomically copies the value to the new field name and deletes the old key using `FieldValue.delete()` with conflict/overwrite safety checks.
+- **Granular Node Refresh (`ketrik-firestore-studio.refreshItem`)**: Right-click on any document or field to refresh just that target item and its subfields, without triggering a full tree rebuild or resetting collection pagination and sort orders.
+- **Streamlined Field Context Menus**: Removed duplicate "Edit Value / Open Field" action from right-click context menu (since clicking the node already triggers it), exposing a clean set of actions: Table View (for Maps/Arrays), Open in JSON Editor, Rename Field, Add Field, Refresh, and Delete Field.
+
 ## [1.4.0] - 2026-10-09
 
 ### Added

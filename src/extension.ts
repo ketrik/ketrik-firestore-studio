@@ -15,6 +15,7 @@ import { DocumentFileSystemProvider } from "./editor/DocumentFileSystemProvider"
 import ExplorerDataProvider from "./explorer/ExplorerDataProvider";
 import { CollectionItem, ConnectionTreeItem, DocumentFieldItem, DocumentItem, Item } from "./explorer/items";
 import { openCollectionAsTable } from "./webview/openCollectionAsTable";
+import { openFieldAsTable } from "./webview/openFieldAsTable";
 import { ConnectionManager } from "./connections/ConnectionManager";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -639,10 +640,92 @@ export async function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        // For strings or null: Modal InputBox
+        // For null values: Prompt user to choose new type/value or open in JSON editor
+        if (valType === "null") {
+          const typeChoice = await vscode.window.showQuickPick(
+            [
+              { label: "$(symbol-namespace) Object / Map ({})", description: "Convert to empty object & open in editor", type: "object" },
+              { label: "$(symbol-array) Array ([])", description: "Convert to empty array & open in editor", type: "array" },
+              { label: "$(symbol-string) String", description: "Set text value", type: "string" },
+              { label: "$(symbol-number) Number", description: "Set numeric value", type: "number" },
+              { label: "$(symbol-boolean) Boolean", description: "Set true / false", type: "boolean" },
+              { label: "$(json) Open in JSON Editor", description: "Open raw JSON tab to edit", type: "editor" },
+            ],
+            { placeHolder: `Field '${item.fieldName}' is null. Choose new type or open in editor:` }
+          );
+
+          if (!typeChoice) {
+            return;
+          }
+
+          if (typeChoice.type === "editor") {
+            await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
+            return;
+          }
+
+          if (typeChoice.type === "object") {
+            await item.parentDocRef.update({ [item.fieldName]: {} });
+            explorerDataProvider.refresh();
+            await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
+            return;
+          }
+
+          if (typeChoice.type === "array") {
+            await item.parentDocRef.update({ [item.fieldName]: [] });
+            explorerDataProvider.refresh();
+            await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
+            return;
+          }
+
+          if (typeChoice.type === "boolean") {
+            const boolPick = await vscode.window.showQuickPick(
+              [{ label: "true" }, { label: "false" }],
+              { placeHolder: `Set boolean value for '${item.fieldName}'` }
+            );
+            if (!boolPick) {
+              return;
+            }
+            const bVal = boolPick.label === "true";
+            await item.parentDocRef.update({ [item.fieldName]: bVal });
+            vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${bVal}`);
+            explorerDataProvider.refresh();
+            return;
+          }
+
+          if (typeChoice.type === "number") {
+            const numInput = await vscode.window.showInputBox({
+              prompt: `Enter numeric value for '${item.fieldName}'`,
+              validateInput: (v) => (isNaN(Number(v)) ? "Must be a valid number" : undefined),
+            });
+            if (numInput === undefined) {
+              return;
+            }
+            const nVal = Number(numInput);
+            await item.parentDocRef.update({ [item.fieldName]: nVal });
+            vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${nVal}`);
+            explorerDataProvider.refresh();
+            return;
+          }
+
+          if (typeChoice.type === "string") {
+            const strInput = await vscode.window.showInputBox({
+              prompt: `Enter string value for '${item.fieldName}'`,
+            });
+            if (strInput === undefined) {
+              return;
+            }
+            await item.parentDocRef.update({ [item.fieldName]: strInput });
+            vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
+            explorerDataProvider.refresh();
+            return;
+          }
+          return;
+        }
+
+        // For strings: Modal InputBox
         const input = await vscode.window.showInputBox({
           prompt: `Edit string value for '${item.fieldName}'`,
-          value: value === null ? "" : String(value),
+          value: String(value),
         });
 
         if (input === undefined) {
@@ -680,6 +763,114 @@ export async function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openFieldAsTable",
+      async (item: DocumentFieldItem) => {
+        if (!item?.parentDocRef || !item?.fieldName) {
+          return;
+        }
+        await openFieldAsTable(item);
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.renameField",
+      async (item: DocumentFieldItem) => {
+        if (!item?.parentDocRef || !item?.fieldName) {
+          return;
+        }
+
+        const newName = await vscode.window.showInputBox({
+          prompt: `Rename field '${item.fieldName}'`,
+          value: item.fieldName,
+          validateInput: (v) => {
+            const trimmed = v.trim();
+            if (!trimmed) {
+              return "Field name cannot be empty";
+            }
+            if (trimmed === item.fieldName) {
+              return "New field name must be different";
+            }
+            if (trimmed.includes("/")) {
+              return "Field name cannot contain '/'";
+            }
+            return undefined;
+          },
+        });
+
+        if (!newName || newName.trim() === item.fieldName) {
+          return;
+        }
+
+        const targetName = newName.trim();
+
+        try {
+          // Read current value from document
+          const snapshot = await item.parentDocRef.get();
+          if (!snapshot.exists) {
+            vscode.window.showErrorMessage(`Document "${item.parentDocRef.id}" no longer exists.`);
+            return;
+          }
+
+          const data = snapshot.data() || {};
+          if (!(item.fieldName in data)) {
+            vscode.window.showErrorMessage(`Field "${item.fieldName}" no longer exists.`);
+            return;
+          }
+
+          if (targetName in data) {
+            const overwrite = await vscode.window.showWarningMessage(
+              `Field "${targetName}" already exists on document "${item.parentDocRef.id}". Overwrite it?`,
+              { modal: true },
+              "Overwrite",
+              "Cancel"
+            );
+            if (overwrite !== "Overwrite") {
+              return;
+            }
+          }
+
+          const existingValue = data[item.fieldName];
+
+          // Atomically set new field and delete old field
+          await item.parentDocRef.update({
+            [targetName]: existingValue,
+            [item.fieldName]: FieldValue.delete(),
+          });
+
+          // Invalidate virtual file system and notify open editor tabs to reload document
+          documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+
+          vscode.window.showInformationMessage(`Renamed '${item.fieldName}' to '${targetName}'`);
+          explorerDataProvider.refreshNode(item);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to rename field: ${err.message}`);
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.refreshItem",
+      async (item: Item) => {
+        if (!item) {
+          explorerDataProvider.refresh();
+          return;
+        }
+        if (item instanceof DocumentItem) {
+          documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.reference.path);
+        } else if (item instanceof DocumentFieldItem) {
+          documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+        }
+        explorerDataProvider.refreshNode(item);
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
       "ketrik-firestore-studio.deleteField",
       async (item: DocumentFieldItem) => {
         if (!item?.parentDocRef || !item?.fieldName) {
@@ -698,8 +889,9 @@ export async function activate(context: vscode.ExtensionContext) {
             await item.parentDocRef.update({
               [item.fieldName]: FieldValue.delete(),
             });
+            documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
             vscode.window.showInformationMessage(`Field "${item.fieldName}" deleted!`);
-            explorerDataProvider.refresh();
+            explorerDataProvider.refreshNode(item);
           } catch (err: any) {
             vscode.window.showErrorMessage(
               `Failed to delete field: ${err.message}`

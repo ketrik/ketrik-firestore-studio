@@ -1,8 +1,14 @@
-import { QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { QueryDocumentSnapshot, Query, WhereFilterOp } from "firebase-admin/firestore";
 import * as vscode from "vscode";
 import { CollectionItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import openPath from "../commands/openPath";
+
+export interface QueryClause {
+  field: string;
+  op: WhereFilterOp;
+  value: string;
+}
 
 export async function openCollectionAsTable(item: CollectionItem) {
   const panel = vscode.window.createWebviewPanel(
@@ -21,6 +27,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
   let loadedDocs: any[] = [];
   let lastDoc: QueryDocumentSnapshot | null = null;
   let headers: string[] = [];
+  let activeQueryClauses: QueryClause[] = [];
 
   let isLoading = false;
 
@@ -33,6 +40,35 @@ export async function openCollectionAsTable(item: CollectionItem) {
     return firestore.collection(item.reference.path);
   }
 
+  function parseFilterValue(valStr: string): any {
+    const trimmed = valStr.trim();
+    if (trimmed === "true") { return true; }
+    if (trimmed === "false") { return false; }
+    if (trimmed === "null") { return null; }
+    if (!isNaN(Number(trimmed)) && trimmed !== "") {
+      return Number(trimmed);
+    }
+    // Try parsing JSON for array filters (e.g. [1, 2], ["a", "b"])
+    if ((trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {}
+    }
+    return trimmed;
+  }
+
+  /** Build an executable Firestore query applying all active where clauses. */
+  async function buildBaseQuery(): Promise<Query> {
+    let q: Query = await getCollection();
+    for (const clause of activeQueryClauses) {
+      if (clause.field && clause.op) {
+        const parsedVal = parseFilterValue(clause.value);
+        q = q.where(clause.field, clause.op, parsedVal);
+      }
+    }
+    return q;
+  }
+
   /** Append the next page of documents from Firestore (never more than `maxRows` in total). */
   async function loadMoreDocs(): Promise<{ newDocs: any[]; hasMore: boolean }> {
     const pageSize = Math.min(limit, maxRows - loadedDocs.length);
@@ -41,7 +77,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
     }
 
     try {
-      let query = (await getCollection()).limit(pageSize);
+      let query = (await buildBaseQuery()).limit(pageSize);
       if (lastDoc) {
         query = query.startAfter(lastDoc);
       }
@@ -72,13 +108,13 @@ export async function openCollectionAsTable(item: CollectionItem) {
       const reachedCap = loadedDocs.length >= maxRows;
       if (reachedCap && docs.length === pageSize) {
         vscode.window.showInformationMessage(
-          `Table shows the first ${maxRows} documents (setting "ketrik-firestore-studio.maxTableRows"). Use Lookup to fetch a specific document.`
+          `Table shows the first ${maxRows} documents (setting "ketrik-firestore-studio.maxTableRows"). Use Lookup or Query Builder to narrow results.`
         );
       }
       const hasMore = docs.length === pageSize && !reachedCap;
       return { newDocs: docs, hasMore };
     } catch (err: any) {
-      vscode.window.showErrorMessage(`Failed to load collection '${item.collectionId}': ${err.message}`);
+      vscode.window.showErrorMessage(`Failed to load documents for '${item.collectionId}': ${err.message}`);
       return { newDocs: [], hasMore: false };
     }
   }
@@ -132,11 +168,11 @@ export async function openCollectionAsTable(item: CollectionItem) {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 16px;
+            margin-bottom: 12px;
             gap: 16px;
             flex-wrap: wrap;
             border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128,128,128,0.2)));
-            padding-bottom: 16px;
+            padding-bottom: 14px;
           }
           .title-area {
             display: flex;
@@ -176,7 +212,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
             display: flex;
             align-items: center;
           }
-          input[type="text"] {
+          input[type="text"], select {
             padding: 6px 12px;
             border-radius: 4px;
             border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.3));
@@ -184,10 +220,9 @@ export async function openCollectionAsTable(item: CollectionItem) {
             background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
             outline: none;
-            min-width: 240px;
             transition: border-color 0.15s ease, box-shadow 0.15s ease;
           }
-          input[type="text"]:focus {
+          input[type="text"]:focus, select:focus {
             border-color: var(--vscode-focusBorder);
             box-shadow: 0 0 0 1px var(--vscode-focusBorder);
           }
@@ -229,6 +264,43 @@ export async function openCollectionAsTable(item: CollectionItem) {
           button.secondary:hover {
             background: var(--vscode-button-secondaryHoverBackground);
           }
+          button.icon-btn {
+            padding: 5px 8px;
+            font-size: 0.85em;
+          }
+          .query-builder-panel {
+            background: var(--vscode-editorWidget-background, rgba(128,128,128,0.06));
+            border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.25));
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin-bottom: 14px;
+          }
+          .query-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-weight: 600;
+            font-size: 0.9em;
+          }
+          .clause-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+          }
+          .clause-row input.clause-field {
+            min-width: 150px;
+            flex: 1;
+          }
+          .clause-row select.clause-op {
+            min-width: 140px;
+          }
+          .clause-row input.clause-val {
+            min-width: 160px;
+            flex: 1.5;
+          }
           .info-bar {
             display: flex;
             align-items: center;
@@ -246,7 +318,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
           }
           .table-container {
             overflow: auto;
-            max-height: calc(100vh - 210px);
+            max-height: calc(100vh - 240px);
             border-radius: 6px;
             border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
             background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
@@ -357,13 +429,16 @@ export async function openCollectionAsTable(item: CollectionItem) {
             <span class="badge" title="Connection ID">${item.connectionId}</span>
           </div>
           <div class="toolbar-actions">
+            <button id="toggleFilterBtn" class="secondary" title="Filter collection with server-side where query">
+              <span>🔍</span> Query Filter
+            </button>
             <div class="search-wrapper">
-              <input id="searchInput" type="text" placeholder="Search loaded docs..." />
+              <input id="searchInput" type="text" placeholder="Search loaded docs..." style="min-width: 180px;" />
             </div>
             <button id="searchBtn">Search</button>
             <button id="clearSearchBtn" class="secondary" style="display:none;">Clear</button>
             <div style="display:flex; align-items:center; gap:6px; margin-left:4px;">
-              <input id="jumpInput" type="text" placeholder="Lookup Doc ID..." style="min-width:160px; max-width:200px;" />
+              <input id="jumpInput" type="text" placeholder="Lookup Doc ID..." style="min-width:140px; max-width:180px;" />
               <button id="jumpBtn" class="secondary" title="Direct 1-read document lookup on server">Lookup</button>
             </div>
             <button id="exportBtn" class="secondary" title="Export as JSON file">
@@ -371,6 +446,19 @@ export async function openCollectionAsTable(item: CollectionItem) {
             </button>
           </div>
         </div>
+
+        <div id="queryBuilderPanel" class="query-builder-panel" style="display:none;">
+          <div class="query-header">
+            <span>Server-Side Firestore Query Builder</span>
+            <div style="display:flex; gap:8px;">
+              <button id="addClauseBtn" class="secondary icon-btn">+ Add Clause</button>
+              <button id="runQueryBtn">Run Query</button>
+              <button id="resetQueryBtn" class="secondary">Reset</button>
+            </div>
+          </div>
+          <div id="clauseList"></div>
+        </div>
+
         <div class="info-bar">
           <div class="info-text">
             Showing <b id="doc-count">0</b> documents
@@ -380,9 +468,13 @@ export async function openCollectionAsTable(item: CollectionItem) {
             <span class="search-note" id="lookup-note" style="display:none; color:var(--vscode-editorWarning-foreground, #cca700);">
               — (Direct Document Lookup)
             </span>
+            <span class="search-note" id="query-note" style="display:none; color:var(--vscode-textLink-foreground, #3794ff); font-weight:500;">
+              — (Server Query Active)
+            </span>
           </div>
           <div>Click any row to open and edit in VS Code</div>
         </div>
+
         <div class="table-container">
           <table>
             <thead id="table-head"><tr></tr></thead>
@@ -393,16 +485,20 @@ export async function openCollectionAsTable(item: CollectionItem) {
               <path d="M4 4h16v16H4zM4 9h16M9 4v16"/>
             </svg>
             <h3>No documents found</h3>
-            <p id="empty-state-msg">This collection has no documents or no matches matched your search query.</p>
+            <p id="empty-state-msg">This collection has no documents or no matches matched your query.</p>
           </div>
         </div>
+
         <div class="actions">
           <button id="loadMoreBtn" style="display:none;">Load More Documents</button>
         </div>
+
         <script>
           (function() {
             const vscode = acquireVsCodeApi();
             let isSearchMode = false;
+            let isServerQueryMode = false;
+            let currentHeaders = [];
 
             // ── helpers ──────────────────────────────────────────────────────
             function escapeHtml(val) {
@@ -419,7 +515,6 @@ export async function openCollectionAsTable(item: CollectionItem) {
                 return '<span style="opacity:0.4; font-style:italic;">null</span>';
               }
               if (typeof value === "object") {
-                // Handle Firestore Timestamp objects
                 if (value._seconds !== undefined && value._nanoseconds !== undefined) {
                   try {
                     const date = new Date(value._seconds * 1000);
@@ -456,7 +551,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
                 if (customMsg) {
                   msgEl.textContent = customMsg;
                 } else {
-                  msgEl.textContent = 'This collection has no documents or no matches matched your search query.';
+                  msgEl.textContent = 'This collection has no documents or no matches matched your query.';
                 }
                 emptyState.style.display = 'block';
               } else {
@@ -464,15 +559,73 @@ export async function openCollectionAsTable(item: CollectionItem) {
               }
             }
 
+            // ── Query Builder Row Generator ─────────────────────────────────
+            function createClauseRow(fieldVal, opVal, valVal) {
+              const row = document.createElement('div');
+              row.className = 'clause-row';
+
+              const fieldInput = document.createElement('input');
+              fieldInput.type = 'text';
+              fieldInput.className = 'clause-field';
+              fieldInput.placeholder = 'Field path (e.g. status, age, user.name)';
+              fieldInput.value = fieldVal || '';
+
+              const opSelect = document.createElement('select');
+              opSelect.className = 'clause-op';
+              const ops = [
+                { val: '==', label: '== (Equals)' },
+                { val: '!=', label: '!= (Not Equals)' },
+                { val: '<', label: '< (Less than)' },
+                { val: '<=', label: '<= (Less than or equal)' },
+                { val: '>', label: '> (Greater than)' },
+                { val: '>=', label: '>= (Greater than or equal)' },
+                { val: 'array-contains', label: 'array-contains' },
+                { val: 'array-contains-any', label: 'array-contains-any' },
+                { val: 'in', label: 'in (Match any in array)' },
+                { val: 'not-in', label: 'not-in' }
+              ];
+              ops.forEach(o => {
+                const opt = document.createElement('option');
+                opt.value = o.val;
+                opt.textContent = o.label;
+                if (o.val === opVal) { opt.selected = true; }
+                opSelect.appendChild(opt);
+              });
+
+              const valInput = document.createElement('input');
+              valInput.type = 'text';
+              valInput.className = 'clause-val';
+              valInput.placeholder = 'Value (e.g. true, 25, active, ["a", "b"])';
+              valInput.value = valVal || '';
+
+              const removeBtn = document.createElement('button');
+              removeBtn.className = 'secondary icon-btn';
+              removeBtn.textContent = '✕';
+              removeBtn.title = 'Remove clause';
+              removeBtn.onclick = function() {
+                row.remove();
+                if (document.getElementById('clauseList').children.length === 0) {
+                  createClauseRow();
+                }
+              };
+
+              row.appendChild(fieldInput);
+              row.appendChild(opSelect);
+              row.appendChild(valInput);
+              row.appendChild(removeBtn);
+              document.getElementById('clauseList').appendChild(row);
+            }
+
             // ── message handler ───────────────────────────────────────────
             window.addEventListener('message', function(event) {
               const msg = event.data;
 
               if (msg.type === 'init') {
+                currentHeaders = msg.headers || [];
                 const headRow = '<th class="id-header">Document ID</th>' +
-                  msg.headers.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
+                  currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
                 document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
-                document.getElementById('table-body').innerHTML = renderRows(msg.docs, msg.headers);
+                document.getElementById('table-body').innerHTML = renderRows(msg.docs, currentHeaders);
                 document.getElementById('doc-count').textContent = msg.docs.length;
                 document.getElementById('loadMoreBtn').style.display = msg.hasMore ? '' : 'none';
                 updateEmptyState(msg.docs.length);
@@ -480,13 +633,14 @@ export async function openCollectionAsTable(item: CollectionItem) {
 
               if (msg.type === 'appendRows') {
                 const tbody = document.getElementById('table-body');
+                currentHeaders = msg.headers || currentHeaders;
                 if (msg.headersChanged) {
                   const headRow = '<th class="id-header">Document ID</th>' +
-                    msg.headers.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
+                    currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
                   document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
-                  tbody.innerHTML = renderRows(msg.allDocs, msg.headers);
+                  tbody.innerHTML = renderRows(msg.allDocs, currentHeaders);
                 } else {
-                  tbody.innerHTML += renderRows(msg.newDocs, msg.headers);
+                  tbody.innerHTML += renderRows(msg.newDocs, currentHeaders);
                 }
                 document.getElementById('doc-count').textContent = msg.totalCount;
                 document.getElementById('loadMoreBtn').style.display = msg.hasMore ? '' : 'none';
@@ -507,10 +661,11 @@ export async function openCollectionAsTable(item: CollectionItem) {
 
               if (msg.type === 'lookupResult') {
                 isSearchMode = true;
+                currentHeaders = msg.headers || currentHeaders;
                 const headRow = '<th class="id-header">Document ID</th>' +
-                  msg.headers.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
+                  currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
                 document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
-                document.getElementById('table-body').innerHTML = renderRows([msg.doc], msg.headers);
+                document.getElementById('table-body').innerHTML = renderRows([msg.doc], currentHeaders);
                 document.getElementById('doc-count').textContent = '1';
                 document.getElementById('loadMoreBtn').style.display = 'none';
                 document.getElementById('clearSearchBtn').style.display = '';
@@ -532,19 +687,77 @@ export async function openCollectionAsTable(item: CollectionItem) {
 
               if (msg.type === 'clearSearch') {
                 isSearchMode = false;
-                document.getElementById('table-body').innerHTML = renderRows(msg.docs, msg.headers);
+                currentHeaders = msg.headers || currentHeaders;
+                const headRow = '<th class="id-header">Document ID</th>' +
+                  currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
+                document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
+                document.getElementById('table-body').innerHTML = renderRows(msg.docs, currentHeaders);
                 document.getElementById('doc-count').textContent = msg.docs.length;
                 document.getElementById('loadMoreBtn').style.display = msg.hasMore ? '' : 'none';
-                document.getElementById('clearSearchBtn').style.display = 'none';
+                document.getElementById('clearSearchBtn').style.display = '';
+                if (!isServerQueryMode) {
+                  document.getElementById('clearSearchBtn').style.display = 'none';
+                }
                 document.getElementById('search-note').style.display = 'none';
                 document.getElementById('lookup-note').style.display = 'none';
                 document.getElementById('searchInput').value = '';
                 document.getElementById('jumpInput').value = '';
                 updateEmptyState(msg.docs.length);
               }
+
+              if (msg.type === 'queryResult') {
+                isServerQueryMode = msg.isActive;
+                isSearchMode = false;
+                currentHeaders = msg.headers || [];
+                const headRow = '<th class="id-header">Document ID</th>' +
+                  currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
+                document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
+                document.getElementById('table-body').innerHTML = renderRows(msg.docs, currentHeaders);
+                document.getElementById('doc-count').textContent = msg.docs.length;
+                document.getElementById('loadMoreBtn').style.display = msg.hasMore ? '' : 'none';
+                document.getElementById('loadMoreBtn').disabled = false;
+                document.getElementById('search-note').style.display = 'none';
+                document.getElementById('lookup-note').style.display = 'none';
+                document.getElementById('query-note').style.display = isServerQueryMode ? '' : 'none';
+                document.getElementById('clearSearchBtn').style.display = isServerQueryMode ? '' : 'none';
+                updateEmptyState(msg.docs.length, isServerQueryMode ? "No documents match the specified where clauses." : undefined);
+              }
             });
 
             // ── button handlers ───────────────────────────────────────────
+            document.getElementById('toggleFilterBtn').onclick = function() {
+              const panel = document.getElementById('queryBuilderPanel');
+              const isVisible = panel.style.display !== 'none';
+              panel.style.display = isVisible ? 'none' : 'block';
+              if (!isVisible && document.getElementById('clauseList').children.length === 0) {
+                createClauseRow();
+              }
+            };
+
+            document.getElementById('addClauseBtn').onclick = function() {
+              createClauseRow();
+            };
+
+            document.getElementById('runQueryBtn').onclick = function() {
+              const rows = Array.from(document.querySelectorAll('.clause-row'));
+              const clauses = rows.map(r => ({
+                field: r.querySelector('.clause-field').value.trim(),
+                op: r.querySelector('.clause-op').value,
+                value: r.querySelector('.clause-val').value.trim(),
+              })).filter(c => c.field !== '');
+
+              if (clauses.length === 0) {
+                return;
+              }
+              vscode.postMessage({ command: 'runServerQuery', clauses });
+            };
+
+            document.getElementById('resetQueryBtn').onclick = function() {
+              document.getElementById('clauseList').innerHTML = '';
+              createClauseRow();
+              vscode.postMessage({ command: 'resetServerQuery' });
+            };
+
             document.getElementById('exportBtn').onclick = function() {
               const rows = Array.from(document.querySelectorAll('#table-body tr'));
               const headers = Array.from(document.querySelectorAll('thead th')).map(th => th.textContent.trim());
@@ -658,6 +871,50 @@ export async function openCollectionAsTable(item: CollectionItem) {
       }
     }
 
+    if (message.command === "runServerQuery") {
+      activeQueryClauses = (message.clauses as QueryClause[]) || [];
+      loadedDocs = [];
+      lastDoc = null;
+      headers = [];
+      isLoading = true;
+
+      try {
+        const { newDocs, hasMore } = await loadMoreDocs();
+        hasMoreState = hasMore;
+        panel.webview.postMessage({
+          type: "queryResult",
+          isActive: true,
+          headers,
+          docs: newDocs,
+          hasMore,
+        });
+      } finally {
+        isLoading = false;
+      }
+    }
+
+    if (message.command === "resetServerQuery") {
+      activeQueryClauses = [];
+      loadedDocs = [];
+      lastDoc = null;
+      headers = [];
+      isLoading = true;
+
+      try {
+        const { newDocs, hasMore } = await loadMoreDocs();
+        hasMoreState = hasMore;
+        panel.webview.postMessage({
+          type: "queryResult",
+          isActive: false,
+          headers,
+          docs: newDocs,
+          hasMore,
+        });
+      } finally {
+        isLoading = false;
+      }
+    }
+
     if (message.command === "openDoc" && message.path) {
       openPath(message.path, item.connectionId);
     }
@@ -683,7 +940,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
           type: "clearSearch",
           headers,
           docs: loadedDocs,
-          hasMore: false,
+          hasMore: hasMoreState,
         });
         return;
       }
@@ -741,7 +998,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
         type: "clearSearch",
         headers,
         docs: loadedDocs,
-        hasMore: false,
+        hasMore: hasMoreState,
       });
     }
   });
@@ -751,5 +1008,6 @@ export async function openCollectionAsTable(item: CollectionItem) {
     loadedDocs = [];
     headers = [];
     lastDoc = null;
+    activeQueryClauses = [];
   });
 }
