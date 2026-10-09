@@ -13,7 +13,7 @@ export interface FirestoreConnectionConfig {
   emulatorHost?: string;
 }
 
-export class ConnectionManager {
+export class ConnectionManager implements vscode.Disposable {
   private static instance: ConnectionManager;
   private _onDidChangeConnections = new vscode.EventEmitter<void>();
   readonly onDidChangeConnections = this._onDidChangeConnections.event;
@@ -28,10 +28,11 @@ export class ConnectionManager {
    * whenever the VS Code configuration changes or saveConnections() is called.
    */
   private _cachedConnections: FirestoreConnectionConfig[] | null = null;
+  private _configListener: vscode.Disposable;
 
   private constructor() {
     // Invalidate the connection cache whenever the user changes settings.
-    vscode.workspace.onDidChangeConfiguration((e) => {
+    this._configListener = vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("ketrik-firestore-studio")) {
         this._cachedConnections = null;
       }
@@ -45,6 +46,41 @@ export class ConnectionManager {
       ConnectionManager.instance = new ConnectionManager();
     }
     return ConnectionManager.instance;
+  }
+
+  /**
+   * Terminate all active Firestore instances and Firebase apps cleanly.
+   */
+  public async dispose(): Promise<void> {
+    this._configListener.dispose();
+    this._onDidChangeConnections.dispose();
+    this._cachedConnections = null;
+    this._initInFlight.clear();
+
+    const ids = Array.from(this.firestoreInstances.keys());
+    for (const id of ids) {
+      await this._cleanupInstance(id);
+    }
+    this.firestoreInstances.clear();
+  }
+
+  private async _cleanupInstance(id: string): Promise<void> {
+    const firestore = this.firestoreInstances.get(id);
+    if (firestore) {
+      try {
+        await firestore.terminate();
+      } catch {}
+      this.firestoreInstances.delete(id);
+    }
+    this._initInFlight.delete(id);
+
+    const appName = `firestore-app-${id}`;
+    const existingApp = getApps().find((app) => app?.name === appName);
+    if (existingApp) {
+      try {
+        await deleteApp(existingApp);
+      } catch {}
+    }
   }
 
   private async migrateLegacyConfigIfNeeded(): Promise<void> {
@@ -80,10 +116,17 @@ export class ConnectionManager {
   public async saveConnections(connections: FirestoreConnectionConfig[]): Promise<void> {
     const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
     await config.update("connections", connections, vscode.ConfigurationTarget.Global);
+
+    // Clean up instances that are no longer in the connections list
+    const currentIds = new Set(connections.map((c) => c.id));
+    for (const id of Array.from(this.firestoreInstances.keys())) {
+      if (!currentIds.has(id)) {
+        await this._cleanupInstance(id);
+      }
+    }
+
     // Invalidate cached instances and connection list.
     this._cachedConnections = null;
-    this.firestoreInstances.clear();
-    this._initInFlight.clear();
     this._onDidChangeConnections.fire();
   }
 
@@ -102,20 +145,14 @@ export class ConnectionManager {
     const index = connections.findIndex((c) => c.id === conn.id);
     if (index !== -1) {
       connections[index] = conn;
-      this.firestoreInstances.delete(conn.id);
+      await this._cleanupInstance(conn.id);
       await this.saveConnections(connections);
     }
   }
 
   public async deleteConnection(id: string): Promise<void> {
     const connections = this.getConnections().filter((c) => c.id !== id);
-    this.firestoreInstances.delete(id);
-    this._initInFlight.delete(id);
-    const appName = `firestore-app-${id}`;
-    const existingApp = getApps().find((app) => app?.name === appName);
-    if (existingApp) {
-      await deleteApp(existingApp);
-    }
+    await this._cleanupInstance(id);
     await this.saveConnections(connections);
   }
 
@@ -159,6 +196,27 @@ export class ConnectionManager {
     return promise;
   }
 
+  /**
+   * Create/get the Firestore instance for an app. Emulator connections are pointed at their host
+   * through per-instance settings, so no process-wide environment variable is touched and
+   * emulator and production connections can coexist.
+   */
+  private _openFirestore(app: App, conn: FirestoreConnectionConfig): Firestore {
+    const databaseId = conn.databaseId && conn.databaseId !== "(default)" ? conn.databaseId : undefined;
+    const firestore = databaseId ? getFirestore(app, databaseId) : getFirestore(app);
+
+    if (conn.isEmulator) {
+      try {
+        firestore.settings({ host: conn.emulatorHost || "localhost:8080", ssl: false });
+      } catch {
+        // settings() may only be called once, before first use – an already configured
+        // instance (e.g. after a hot-reload) is reused as is.
+      }
+    }
+
+    return firestore;
+  }
+
   private async _initFirestore(conn: FirestoreConnectionConfig): Promise<Firestore> {
     const appName = `firestore-app-${conn.id}`;
     // Guard against the app already existing (e.g. after a hot-reload).
@@ -166,9 +224,6 @@ export class ConnectionManager {
 
     if (!app) {
       if (conn.isEmulator) {
-        if (conn.emulatorHost) {
-          process.env.FIRESTORE_EMULATOR_HOST = conn.emulatorHost;
-        }
         app = initializeApp(
           {
             projectId: conn.projectId || "demo-project",
@@ -196,20 +251,15 @@ export class ConnectionManager {
       }
     }
 
-    return conn.databaseId && conn.databaseId !== "(default)"
-      ? getFirestore(app, conn.databaseId)
-      : getFirestore(app);
+    return this._openFirestore(app, conn);
   }
 
   public async testConnection(conn: FirestoreConnectionConfig): Promise<{ success: boolean; message?: string }> {
+    let testApp: App | undefined;
     try {
       const tempAppName = `test-conn-${Date.now()}`;
-      let testApp: App;
 
       if (conn.isEmulator) {
-        if (conn.emulatorHost) {
-          process.env.FIRESTORE_EMULATOR_HOST = conn.emulatorHost;
-        }
         testApp = initializeApp(
           {
             projectId: conn.projectId || "demo-project",
@@ -232,15 +282,17 @@ export class ConnectionManager {
         );
       }
 
-      const firestore = conn.databaseId && conn.databaseId !== "(default)"
-        ? getFirestore(testApp, conn.databaseId)
-        : getFirestore(testApp);
-
+      const firestore = this._openFirestore(testApp, conn);
       await firestore.listCollections();
-      await deleteApp(testApp);
       return { success: true };
     } catch (err: any) {
       return { success: false, message: err.message };
+    } finally {
+      if (testApp) {
+        try {
+          await deleteApp(testApp);
+        } catch {}
+      }
     }
   }
 }

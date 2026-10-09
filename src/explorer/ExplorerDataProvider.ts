@@ -35,25 +35,47 @@ function evictIfNeeded<K, V>(map: Map<K, V>, maxSize: number): void {
 /**
  * Provides the Firestore Studio Tree View data for multiple connections.
  */
-export default class ExplorerDataProvider implements vscode.TreeDataProvider<Item> {
+export default class ExplorerDataProvider implements vscode.TreeDataProvider<Item>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<Item | undefined>();
   private readonly _connectionManager = ConnectionManager.getInstance();
 
   private _paging = new Map<string, number>();
   private _orderBy = new Map<string, { field: string | undefined; direction: "asc" | "desc" }>();
+  private _connectionListener: vscode.Disposable;
+
+  /** Cache tree children (collections, docs, fields) to avoid re-requesting on repeated expand/collapse. */
+  private _treeCache = new Map<string, { items: Item[]; timestamp: number }>();
 
   readonly onDidChangeTreeData: vscode.Event<Item | undefined> =
     this._onDidChangeTreeData.event;
 
   constructor() {
-    this._connectionManager.onDidChangeConnections(() => {
-      this.refresh();
+    this._connectionListener = this._connectionManager.onDidChangeConnections(() => {
+      this.refresh(true);
     });
   }
 
-  refresh(): void {
+  private getCacheTTL(): number {
+    const seconds = vscode.workspace
+      .getConfiguration("ketrik-firestore-studio")
+      .get<number>("cacheTTLSeconds", 30);
+    return Math.max(0, seconds) * 1000;
+  }
+
+  dispose(): void {
+    this._connectionListener.dispose();
+    this._onDidChangeTreeData.dispose();
     this._paging.clear();
     this._orderBy.clear();
+    this._treeCache.clear();
+  }
+
+  refresh(resetState = false): void {
+    this._treeCache.clear();
+    if (resetState) {
+      this._paging.clear();
+      this._orderBy.clear();
+    }
     this._onDidChangeTreeData.fire(undefined);
   }
 
@@ -94,18 +116,44 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       return connections.map((conn) => new ConnectionTreeItem(conn));
     }
 
+    const ttl = this.getCacheTTL();
+    const cacheKey = element
+      ? element instanceof ConnectionTreeItem
+        ? `conn:${element.config.id}`
+        : element instanceof DocumentItem
+        ? `doc:${element.connectionId}:${element.reference.path}`
+        : element instanceof CollectionItem
+        ? `col:${element.connectionId}:${element.reference.path}:${this._paging.get(`${element.connectionId}:${element.reference.path}`) ?? defaultLimit}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.field ?? "id"}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.direction ?? "asc"}`
+        : undefined
+      : "root";
+
+    if (cacheKey && ttl > 0) {
+      const cached = this._treeCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < ttl) {
+        return cached.items;
+      }
+    }
+
+    const storeAndReturn = (items: Item[]): Item[] => {
+      if (cacheKey && ttl > 0) {
+        this._treeCache.set(cacheKey, { items, timestamp: Date.now() });
+      }
+      return items;
+    };
+
     if (element instanceof ConnectionTreeItem) {
       try {
         const firestore = await this._connectionManager.getFirestore(element.config.id);
         const refs = (await firestore.listCollections()) as CollectionReference[];
 
-        return refs.map((ref: CollectionReference) => {
+        const items = refs.map((ref: CollectionReference) => {
           const sortKey = `${element.config.id}:${ref.path}`;
           return new CollectionItem(ref.id, ref, element.config.id, {
             fieldName: this._orderBy.get(sortKey)?.field ?? "id",
             direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
           });
         });
+        return storeAndReturn(items);
       } catch (err: any) {
         vscode.window.showErrorMessage(
           `Failed to load collections for connection '${element.config.name}': ${err.message}`
@@ -144,7 +192,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           }
         }
 
-        return items;
+        return storeAndReturn(items);
       } catch (err: any) {
         vscode.window.showErrorMessage(
           `Failed to load sub-items for document '${element.documentId}': ${err.message}`
@@ -174,12 +222,13 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
         if (items.length > limit) {
           items.pop();
-          return [
+          const result = [
             ...items,
             new ShowMoreItemsItem(element.reference, limit, element.connectionId, defaultLimit),
           ];
+          return storeAndReturn(result);
         } else {
-          return items;
+          return storeAndReturn(items);
         }
       } catch (err: any) {
         vscode.window.showErrorMessage(

@@ -54,15 +54,19 @@ function getTemplates(): DocumentTemplate[] {
 
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize ConnectionManager singleton
-  ConnectionManager.getInstance();
+  const connectionManager = ConnectionManager.getInstance();
+  context.subscriptions.push(connectionManager);
 
   const explorerDataProvider = new ExplorerDataProvider();
-  const documentFileSystemProvider = new DocumentFileSystemProvider();
+  context.subscriptions.push(explorerDataProvider);
 
-  // Automatically refresh Explorer Tree whenever a document or sub-field is saved in the editor
+  const documentFileSystemProvider = new DocumentFileSystemProvider();
+  context.subscriptions.push(documentFileSystemProvider);
+
+  // Automatically refresh Explorer Tree whenever a document or sub-field is saved in the editor (preserve pagination)
   context.subscriptions.push(
     documentFileSystemProvider.onDidChangeFile(() => {
-      explorerDataProvider.refresh();
+      explorerDataProvider.refresh(false);
     })
   );
 
@@ -81,7 +85,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.refreshExplorer",
-      () => explorerDataProvider.refresh()
+      () => explorerDataProvider.refresh(true)
     )
   );
 
@@ -342,14 +346,51 @@ export async function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        const confirm = await vscode.window.showWarningMessage(
-          `Are you sure you want to delete the document "${item.label}"?`,
-          { modal: true },
-          "Delete",
-          "Cancel"
-        );
+        const subcollections = await item.reference.listCollections();
+        const hasSubcollections = subcollections.length > 0;
 
-        if (confirm === "Delete") {
+        let confirm: string | undefined;
+
+        if (hasSubcollections) {
+          confirm = await vscode.window.showWarningMessage(
+            `Document "${item.label}" has ${subcollections.length} subcollection(s) (${subcollections.map((s) => s.id).join(", ")}). How would you like to delete it?`,
+            { modal: true },
+            "Deep Delete (Doc + Subcollections)",
+            "Delete Document Only",
+            "Cancel"
+          );
+        } else {
+          confirm = await vscode.window.showWarningMessage(
+            `Are you sure you want to delete the document "${item.label}"?`,
+            { modal: true },
+            "Delete",
+            "Cancel"
+          );
+        }
+
+        if (!confirm || confirm === "Cancel") {
+          return;
+        }
+
+        if (confirm === "Deep Delete (Doc + Subcollections)") {
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `Deep deleting document "${item.label}" and all subcollections...`,
+              cancellable: false,
+            },
+            async () => {
+              try {
+                const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
+                await firestore.recursiveDelete(item.reference);
+                vscode.window.showInformationMessage(`Deleted document "${item.label}" and all nested subcollections.`);
+                explorerDataProvider.refresh();
+              } catch (err: any) {
+                vscode.window.showErrorMessage(`Failed deep delete: ${err.message}`);
+              }
+            }
+          );
+        } else if (confirm === "Delete" || confirm === "Delete Document Only") {
           try {
             await item.reference.delete();
             vscode.window.showInformationMessage("Document deleted!");
@@ -359,6 +400,158 @@ export async function activate(context: vscode.ExtensionContext) {
               "Failed to delete document: " + err.message
             );
           }
+        }
+      }
+    )
+  );
+
+  // In-memory document clipboard for copy/paste across collections and connections
+  let copiedDocumentBuffer: {
+    sourceDocId: string;
+    sourcePath: string;
+    sourceConnectionId: string;
+    data: any;
+  } | null = null;
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.duplicateDocument",
+      async (item: DocumentItem) => {
+        if (!item?.reference) {
+          vscode.window.showErrorMessage("No document selected.");
+          return;
+        }
+
+        const snapshot = await item.reference.get();
+        if (!snapshot.exists) {
+          vscode.window.showErrorMessage(`Document "${item.documentId}" does not exist.`);
+          return;
+        }
+
+        const newDocId = await vscode.window.showInputBox({
+          prompt: `Duplicate document "${item.documentId}"`,
+          value: `${item.documentId}_copy`,
+          placeHolder: "Enter new Document ID (or leave blank to auto-generate)",
+        });
+
+        if (newDocId === undefined) {
+          return; // User cancelled
+        }
+
+        try {
+          const targetRef = newDocId.trim()
+            ? item.reference.parent.doc(newDocId.trim())
+            : item.reference.parent.doc();
+
+          await targetRef.set(snapshot.data() || {});
+          vscode.window.showInformationMessage(`Document duplicated as "${targetRef.id}"!`);
+          await openPath(targetRef.path, item.connectionId);
+          explorerDataProvider.refresh();
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to duplicate document: ${err.message}`);
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.copyDocument",
+      async (item: DocumentItem) => {
+        if (!item?.reference) {
+          vscode.window.showErrorMessage("No document selected.");
+          return;
+        }
+
+        try {
+          const snapshot = await item.reference.get();
+          if (!snapshot.exists) {
+            vscode.window.showErrorMessage(`Document "${item.documentId}" does not exist.`);
+            return;
+          }
+
+          copiedDocumentBuffer = {
+            sourceDocId: item.documentId,
+            sourcePath: item.reference.path,
+            sourceConnectionId: item.connectionId,
+            data: snapshot.data() || {},
+          };
+
+          vscode.window.showInformationMessage(
+            `Document "${item.documentId}" copied to Firestore Studio clipboard.`
+          );
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to copy document: ${err.message}`);
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.pasteDocument",
+      async (item: CollectionItem) => {
+        if (!item?.reference) {
+          vscode.window.showErrorMessage("No target collection selected.");
+          return;
+        }
+
+        if (!copiedDocumentBuffer) {
+          vscode.window.showWarningMessage(
+            "No document in Firestore Studio clipboard. Copy a document first."
+          );
+          return;
+        }
+
+        const targetDocId = await vscode.window.showInputBox({
+          prompt: `Paste document into collection "${item.collectionId}"`,
+          value: copiedDocumentBuffer.sourceDocId,
+          placeHolder: "Enter Document ID (or leave blank for auto-generated ID)",
+        });
+
+        if (targetDocId === undefined) {
+          return; // User cancelled
+        }
+
+        try {
+          const targetRef = targetDocId.trim()
+            ? item.reference.doc(targetDocId.trim())
+            : item.reference.doc();
+
+          await targetRef.set(copiedDocumentBuffer.data);
+          vscode.window.showInformationMessage(
+            `Pasted document "${targetRef.id}" into "${item.collectionId}"!`
+          );
+          await openPath(targetRef.path, item.connectionId);
+          explorerDataProvider.refresh();
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to paste document: ${err.message}`);
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.copyDocumentJson",
+      async (item: DocumentItem) => {
+        if (!item?.reference) {
+          vscode.window.showErrorMessage("No document selected.");
+          return;
+        }
+
+        try {
+          const snapshot = await item.reference.get();
+          if (!snapshot.exists) {
+            vscode.window.showErrorMessage(`Document "${item.documentId}" does not exist.`);
+            return;
+          }
+
+          const jsonText = JSON.stringify(snapshot.data() || {}, null, 2);
+          await vscode.env.clipboard.writeText(jsonText);
+          vscode.window.showInformationMessage(`Copied document JSON to clipboard.`);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to copy JSON: ${err.message}`);
         }
       }
     )
@@ -662,4 +855,6 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 }
 
-export function deactivate() {}
+export async function deactivate(): Promise<void> {
+  await ConnectionManager.getInstance().dispose();
+}

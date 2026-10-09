@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import * as vscode from "vscode";
 import { ConnectionManager } from "../connections/ConnectionManager";
 
@@ -14,11 +15,83 @@ export interface ParsedDocumentUri {
  * Custom File System provider that allows interacting with Firestore documents and
  * their sub-fields/root-variables as virtual files in the editor, supporting multiple connections.
  */
-export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
+export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vscode.Disposable {
   private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
 
   readonly onDidChangeFile: vscode.Event<vscode.FileChangeEvent[]> =
     this._emitter.event;
+
+  /** In-flight / short-lived document snapshot cache to deduplicate stat() followed immediately by readFile(). */
+  private _snapshotCache = new Map<string, { snapshot: import("firebase-admin/firestore").DocumentSnapshot; timestamp: number }>();
+  private _snapshotInFlight = new Map<string, Promise<import("firebase-admin/firestore").DocumentSnapshot>>();
+
+  /** Version (update time + content hash) each open file was last loaded/saved with, for conflict detection. */
+  private _baselines = new Map<string, { updateTime: string; hash: string }>();
+  private static readonly MAX_BASELINES = 200;
+
+  dispose(): void {
+    this._emitter.dispose();
+    this._snapshotCache.clear();
+    this._snapshotInFlight.clear();
+    this._baselines.clear();
+  }
+
+  private getCacheTTL(): number {
+    const seconds = vscode.workspace
+      .getConfiguration("ketrik-firestore-studio")
+      .get<number>("cacheTTLSeconds", 30);
+    return Math.max(0, seconds) * 1000;
+  }
+
+  private async getCachedSnapshot(
+    connectionId: string,
+    docPath: string
+  ): Promise<import("firebase-admin/firestore").DocumentSnapshot> {
+    const key = `${connectionId}:${docPath}`;
+    const now = Date.now();
+    const ttl = this.getCacheTTL();
+    const cached = this._snapshotCache.get(key);
+    if (cached && now - cached.timestamp < ttl) {
+      return cached.snapshot;
+    }
+
+    const inFlight = this._snapshotInFlight.get(key);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+    const promise: Promise<import("firebase-admin/firestore").DocumentSnapshot> = firestore
+      .doc(docPath)
+      .get()
+      .then((snapshot) => {
+        // Only cache if this request has not been invalidated (e.g. by a write) meanwhile.
+        if (this._snapshotInFlight.get(key) === promise) {
+          this._snapshotInFlight.delete(key);
+          const timestamp = Date.now();
+          if (ttl > 0) {
+            this._snapshotCache.set(key, { snapshot, timestamp });
+            // Evict after TTL so the cache cannot grow unbounded.
+            const timer = setTimeout(() => {
+              if (this._snapshotCache.get(key)?.timestamp === timestamp) {
+                this._snapshotCache.delete(key);
+              }
+            }, ttl);
+            timer.unref?.();
+          }
+        }
+        return snapshot;
+      })
+      .catch((err) => {
+        if (this._snapshotInFlight.get(key) === promise) {
+          this._snapshotInFlight.delete(key);
+        }
+        throw err;
+      });
+
+    this._snapshotInFlight.set(key, promise);
+    return promise;
+  }
 
   watch(_uri: vscode.Uri): vscode.Disposable {
     return new vscode.Disposable(() => {});
@@ -68,8 +141,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
    */
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
     const { connectionId, docPath, fieldPath } = this.parseUri(uri);
-    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-    const doc = await firestore.doc(docPath).get();
+    const doc = await this.getCachedSnapshot(connectionId, docPath);
     const now = Date.now();
 
     if (!doc.exists) {
@@ -103,8 +175,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
     const { connectionId, docPath, fieldPath } = this.parseUri(uri);
-    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-    const doc = await firestore.doc(docPath).get();
+    const doc = await this.getCachedSnapshot(connectionId, docPath);
 
     if (!doc.exists) {
       throw vscode.FileSystemError.FileNotFound(uri);
@@ -115,10 +186,79 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
       if (!(fieldPath in data)) {
         throw vscode.FileSystemError.FileNotFound(uri);
       }
-      return this.serializeDoc(data[fieldPath]);
+      const bytes = this.serializeDoc(data[fieldPath]);
+      this.rememberBaseline(uri, doc.updateTime, bytes);
+      return bytes;
     }
 
-    return this.serializeDoc(data);
+    const bytes = this.serializeDoc(data);
+    this.rememberBaseline(uri, doc.updateTime, bytes);
+    return bytes;
+  }
+
+  /** Remember which version of a file the editor loaded, so saves can detect remote changes. */
+  private rememberBaseline(
+    uri: vscode.Uri,
+    updateTime: import("firebase-admin/firestore").Timestamp | undefined,
+    bytes: Uint8Array
+  ): void {
+    const key = uri.toString();
+    this._baselines.delete(key); // re-insert to keep Map order = recency
+    this._baselines.set(key, {
+      updateTime: updateTime ? `${updateTime.seconds}.${updateTime.nanoseconds}` : "",
+      hash: createHash("sha1").update(bytes).digest("hex"),
+    });
+    if (this._baselines.size > DocumentFileSystemProvider.MAX_BASELINES) {
+      const oldest = this._baselines.keys().next().value;
+      if (oldest !== undefined) {
+        this._baselines.delete(oldest);
+      }
+    }
+  }
+
+  /**
+   * Before saving, fetch a fresh copy (bypassing the cache) and compare it with the version the
+   * editor loaded. If the document changed remotely meanwhile, ask before overwriting.
+   */
+  private async confirmNoRemoteChange(
+    uri: vscode.Uri,
+    firestore: import("firebase-admin/firestore").Firestore,
+    docPath: string,
+    fieldPath: string | undefined
+  ): Promise<void> {
+    const baseline = this._baselines.get(uri.toString());
+    if (!baseline) {
+      return;
+    }
+
+    const fresh = await firestore.doc(docPath).get();
+    const freshTime = fresh.updateTime ? `${fresh.updateTime.seconds}.${fresh.updateTime.nanoseconds}` : "";
+    if (fresh.exists && freshTime === baseline.updateTime) {
+      return; // unchanged
+    }
+
+    if (fresh.exists && fieldPath !== undefined) {
+      // Field-level edit: ignore changes to other fields.
+      const data = fresh.data() ?? {};
+      const freshHash =
+        fieldPath in data
+          ? createHash("sha1").update(this.serializeDoc(data[fieldPath])).digest("hex")
+          : "";
+      if (freshHash === baseline.hash) {
+        return;
+      }
+    }
+
+    const choice = await vscode.window.showWarningMessage(
+      fresh.exists
+        ? `"${docPath}" was modified in Firestore after you opened it. Overwrite the remote changes?`
+        : `"${docPath}" no longer exists in Firestore. Save anyway?`,
+      { modal: true },
+      "Overwrite"
+    );
+    if (choice !== "Overwrite") {
+      throw vscode.FileSystemError.Unavailable("Save cancelled: the document changed remotely.");
+    }
   }
 
   async writeFile(
@@ -129,6 +269,10 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
     const { connectionId, docPath, fieldPath } = this.parseUri(uri);
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
 
+    // Invalidate cached snapshot on write
+    this._snapshotCache.delete(`${connectionId}:${docPath}`);
+    this._snapshotInFlight.delete(`${connectionId}:${docPath}`);
+
     let json: any;
     try {
       json = JSON.parse(decoder.decode(content));
@@ -136,15 +280,29 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider {
       throw new Error(`Could not parse JSON: ${e.message}`);
     }
 
+    const checkChanges = vscode.workspace
+      .getConfiguration("ketrik-firestore-studio")
+      .get<boolean>("checkRemoteChangesOnSave", false);
+
+    if (checkChanges) {
+      await this.confirmNoRemoteChange(uri, firestore, docPath, fieldPath);
+    }
+
     try {
+      let writeTime: import("firebase-admin/firestore").Timestamp;
       if (fieldPath !== undefined) {
         // Atomic partial update: only update the targeted root field
-        await firestore.doc(docPath).update({
+        writeTime = (await firestore.doc(docPath).update({
           [fieldPath]: json,
-        });
+        })).writeTime;
       } else {
-        await firestore.doc(docPath).set(json);
+        writeTime = (await firestore.doc(docPath).set(json)).writeTime;
       }
+      // The saved version becomes the new baseline for the next save.
+      this.rememberBaseline(uri, writeTime, this.serializeDoc(json));
+      // Invalidate again after the write completes so no stale snapshot survives.
+      this._snapshotCache.delete(`${connectionId}:${docPath}`);
+      this._snapshotInFlight.delete(`${connectionId}:${docPath}`);
       this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
     } catch (e: any) {
       throw new Error(`Could not write Firestore document: ${e.message}`);

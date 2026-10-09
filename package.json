@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.3.0",
+  "version": "1.4.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -98,6 +98,34 @@
           "type": "number",
           "default": 10,
           "description": "Number of documents to show per page for each collection",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.maxTableRows": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "description": "Maximum number of documents the collection table view will load in total. Every loaded document is a billed Firestore read, so keep this low; use Lookup to fetch specific documents.",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.cacheTTLSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "description": "Cache lifetime in seconds for virtual document files and tree browsing. Keeps browsing snappy and saves Firestore read quota. Saves invalidate the cache immediately.",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.checkRemoteChangesOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "If enabled, performs an extra Firestore read before saving to warn if the document was modified by another party. Disabled by default so saves don't consume extra read quota and allow partial doc updates smoothly.",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.initialFoldLevel": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Initial folding level when opening a Firestore document in the JSON editor. Set to 1 to fold root keys by default, or 0 to keep fully expanded.",
           "scope": "window"
         },
         "ketrik-firestore-studio.documentTemplates": {
@@ -233,6 +261,29 @@
         "title": "Delete Document"
       },
       {
+        "command": "ketrik-firestore-studio.duplicateDocument",
+        "category": "Firestore Studio",
+        "title": "Duplicate Document...",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "ketrik-firestore-studio.copyDocument",
+        "category": "Firestore Studio",
+        "title": "Copy Document",
+        "icon": "$(files)"
+      },
+      {
+        "command": "ketrik-firestore-studio.pasteDocument",
+        "category": "Firestore Studio",
+        "title": "Paste Document",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "ketrik-firestore-studio.copyDocumentJson",
+        "category": "Firestore Studio",
+        "title": "Copy as JSON"
+      },
+      {
         "command": "ketrik-firestore-studio.openField",
         "category": "Firestore Studio",
         "title": "Edit Value / Open Field"
@@ -311,6 +362,11 @@
           "group": "1_actions@3"
         },
         {
+          "command": "ketrik-firestore-studio.pasteDocument",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "1_actions@4"
+        },
+        {
           "command": "ketrik-firestore-studio.orderBy",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
           "group": "2_filter@1"
@@ -326,14 +382,29 @@
           "group": "1_actions@1"
         },
         {
-          "command": "ketrik-firestore-studio.addCollection",
+          "command": "ketrik-firestore-studio.duplicateDocument",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "1_actions@2"
         },
         {
-          "command": "ketrik-firestore-studio.deleteDocument",
+          "command": "ketrik-firestore-studio.copyDocument",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "1_actions@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.copyDocumentJson",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_actions@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.addCollection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "2_sub@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteDocument",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "2_sub@2"
         },
         {
           "command": "ketrik-firestore-studio.openField",
@@ -394,6 +465,22 @@
           "when": "false"
         },
         {
+          "command": "ketrik-firestore-studio.duplicateDocument",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.copyDocument",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.pasteDocument",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.copyDocumentJson",
+          "when": "false"
+        },
+        {
           "command": "ketrik-firestore-studio.addCollection",
           "when": "false"
         }
@@ -405,7 +492,8 @@
     "compile": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
     "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify --sourcemap",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "release": "./scripts/release.sh"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

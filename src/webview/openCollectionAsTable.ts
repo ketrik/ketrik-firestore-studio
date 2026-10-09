@@ -1,6 +1,7 @@
 import { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import * as vscode from "vscode";
 import { CollectionItem } from "../explorer/items";
+import { ConnectionManager } from "../connections/ConnectionManager";
 import openPath from "../commands/openPath";
 
 export async function openCollectionAsTable(item: CollectionItem) {
@@ -10,14 +11,12 @@ export async function openCollectionAsTable(item: CollectionItem) {
     vscode.ViewColumn.One,
     {
       enableScripts: true,
-      retainContextWhenHidden: true,
     }
   );
 
-  const limit =
-    (vscode.workspace
-      .getConfiguration()
-      .get("ketrik-firestore-studio.pagingLimit") as number) || 10;
+  const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+  const limit = (config.get<number>("pagingLimit") as number) || 10;
+  const maxRows = Math.max(1, config.get<number>("maxTableRows") ?? 100);
 
   let loadedDocs: any[] = [];
   let lastDoc: QueryDocumentSnapshot | null = null;
@@ -25,10 +24,24 @@ export async function openCollectionAsTable(item: CollectionItem) {
 
   let isLoading = false;
 
-  /** Append the next page of documents from Firestore (up to `limit` docs). */
+  /**
+   * Resolve the collection through the live connection on every query, so the table keeps
+   * working after the connection was edited (its old Firestore instance is terminated).
+   */
+  async function getCollection() {
+    const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
+    return firestore.collection(item.reference.path);
+  }
+
+  /** Append the next page of documents from Firestore (never more than `maxRows` in total). */
   async function loadMoreDocs(): Promise<{ newDocs: any[]; hasMore: boolean }> {
+    const pageSize = Math.min(limit, maxRows - loadedDocs.length);
+    if (pageSize <= 0) {
+      return { newDocs: [], hasMore: false };
+    }
+
     try {
-      let query = item.reference.limit(limit);
+      let query = (await getCollection()).limit(pageSize);
       if (lastDoc) {
         query = query.startAfter(lastDoc);
       }
@@ -56,7 +69,13 @@ export async function openCollectionAsTable(item: CollectionItem) {
         lastDoc = snapshot.docs[snapshot.docs.length - 1];
       }
 
-      const hasMore = docs.length === limit;
+      const reachedCap = loadedDocs.length >= maxRows;
+      if (reachedCap && docs.length === pageSize) {
+        vscode.window.showInformationMessage(
+          `Table shows the first ${maxRows} documents (setting "ketrik-firestore-studio.maxTableRows"). Use Lookup to fetch a specific document.`
+        );
+      }
+      const hasMore = docs.length === pageSize && !reachedCap;
       return { newDocs: docs, hasMore };
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to load collection '${item.collectionId}': ${err.message}`);
@@ -581,6 +600,9 @@ export async function openCollectionAsTable(item: CollectionItem) {
                 document.getElementById('jumpBtn').click();
               }
             });
+
+            // Tell the extension the page is (re)loaded so it can send the current data.
+            vscode.postMessage({ command: 'ready' });
           })();
         </script>
       </body>
@@ -591,17 +613,26 @@ export async function openCollectionAsTable(item: CollectionItem) {
   // ── Initial load ──────────────────────────────────────────────────────────
   panel.webview.html = buildInitialHtml();
 
-  // Perform the first data fetch and seed the webview via postMessage.
-  const { hasMore: initialHasMore } = await loadMoreDocs();
-  panel.webview.postMessage({
-    type: "init",
-    headers,
-    docs: loadedDocs,
-    hasMore: initialHasMore,
+  // Start the first data fetch immediately; the webview is seeded once it reports 'ready'.
+  let hasMoreState = false;
+  const initialLoad = loadMoreDocs().then((r) => {
+    hasMoreState = r.hasMore;
   });
 
   // ── Message handler ───────────────────────────────────────────────────────
-  panel.webview.onDidReceiveMessage(async (message) => {
+  const messageSubscription = panel.webview.onDidReceiveMessage(async (message) => {
+    if (message.command === "ready") {
+      // Sent on every (re)load of the webview, e.g. when a hidden tab becomes visible again.
+      await initialLoad;
+      panel.webview.postMessage({
+        type: "init",
+        headers,
+        docs: loadedDocs,
+        hasMore: hasMoreState,
+      });
+      return;
+    }
+
     if (message.command === "loadMore") {
       if (isLoading) {
         return;
@@ -610,6 +641,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
       try {
         const prevHeaders = [...headers];
         const { newDocs, hasMore } = await loadMoreDocs();
+        hasMoreState = hasMore;
         const headersChanged = headers.length !== prevHeaders.length;
 
         panel.webview.postMessage({
@@ -617,7 +649,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
           headers,
           headersChanged,
           newDocs,
-          allDocs: loadedDocs,
+          allDocs: headersChanged ? loadedDocs : undefined,
           totalCount: loadedDocs.length,
           hasMore,
         });
@@ -669,7 +701,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
         return;
       }
       try {
-        const docRef = item.reference.doc(docId);
+        const docRef = (await getCollection()).doc(docId);
         const snapshot = await docRef.get();
         if (!snapshot.exists) {
           panel.webview.postMessage({
@@ -712,5 +744,12 @@ export async function openCollectionAsTable(item: CollectionItem) {
         hasMore: false,
       });
     }
+  });
+
+  panel.onDidDispose(() => {
+    messageSubscription.dispose();
+    loadedDocs = [];
+    headers = [];
+    lastDoc = null;
   });
 }

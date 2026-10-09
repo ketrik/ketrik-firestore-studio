@@ -24,4 +24,14 @@ export async function openDocument(
   const doc = await vscode.workspace.openTextDocument(uri);
   await vscode.languages.setTextDocumentLanguage(doc, "json");
   await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
+
+  const foldLevel = vscode.workspace
+    .getConfiguration("ketrik-firestore-studio")
+    .get<number>("initialFoldLevel", 0);
+
+  if (foldLevel > 0) {
+    try {
+      await vscode.commands.executeCommand(`editor.foldLevel${foldLevel}`);
+    } catch {}
+  }
 }

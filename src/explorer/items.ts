@@ -48,7 +48,11 @@ export class DocumentItem extends Item {
     this.id = `${connectionId}:${reference.path}`;
     this.contextValue = "document";
     this.tooltip = `[${connectionId}] ${reference.path}`;
-    this.iconPath = new vscode.ThemeIcon("file");
+    // Distinct vibrant blue icon for documents
+    this.iconPath = new vscode.ThemeIcon(
+      "file-code",
+      new vscode.ThemeColor("charts.blue")
+    );
   }
 }
 
@@ -74,21 +78,28 @@ export class DocumentFieldItem extends Item {
       : typeof value;
 
     let icon = "symbol-variable";
+    let iconColor: vscode.ThemeColor | undefined;
+
     if (valType === "object") {
       icon = "symbol-namespace";
+      iconColor = new vscode.ThemeColor("symbolIcon.namespaceForeground");
       const keyCount = Object.keys(value || {}).length;
       this.description = `{${keyCount} keys}`;
     } else if (valType === "array") {
       icon = "symbol-array";
+      iconColor = new vscode.ThemeColor("symbolIcon.arrayForeground");
       this.description = `[${value.length}]`;
     } else if (valType === "string") {
       icon = "symbol-string";
+      iconColor = new vscode.ThemeColor("symbolIcon.stringForeground");
       this.description = `"${value.length > 20 ? value.slice(0, 17) + "..." : value}"`;
     } else if (valType === "number") {
       icon = "symbol-number";
+      iconColor = new vscode.ThemeColor("symbolIcon.numberForeground");
       this.description = String(value);
     } else if (valType === "boolean") {
       icon = "symbol-boolean";
+      iconColor = new vscode.ThemeColor("symbolIcon.booleanForeground");
       this.description = String(value);
     } else {
       this.description = String(value);
@@ -97,7 +108,7 @@ export class DocumentFieldItem extends Item {
     this.id = `${connectionId}:${parentDocRef.path}#${fieldName}`;
     this.contextValue = "documentField";
     this.tooltip = `Field: ${fieldName} (${valType})\nDoc: ${parentDocRef.path}`;
-    this.iconPath = new vscode.ThemeIcon(icon);
+    this.iconPath = new vscode.ThemeIcon(icon, iconColor);
 
     this.command = {
       command: "ketrik-firestore-studio.openField",
@@ -125,7 +136,11 @@ export class CollectionItem extends Item {
     this.id = `${connectionId}:${reference.path}`;
     this.contextValue = "collection";
     this.tooltip = `[${connectionId}] ${reference.path}`;
-    this.iconPath = new vscode.ThemeIcon("folder");
+    // Folder icon with warm gold/amber color
+    this.iconPath = new vscode.ThemeIcon(
+      "folder",
+      new vscode.ThemeColor("charts.orange")
+    );
     this.description = (orderBy.direction === "asc" ? "↑" : "↓") + orderBy.fieldName;
   }
 }

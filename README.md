@@ -15,7 +15,8 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 - **Auto-Sync & Live Refresh**: Changes saved to documents or sub-fields immediately reflect in the Explorer tree view in real-time.
 - **Direct Document Editing**: Open and edit any full document as native JSON with full VS Code editor features. Saving the file (`Cmd+S` / `Ctrl+S`) writes updates back to Firestore immediately.
 - **Table View with Search**: View collection documents in a tabular format, search across fields, and paginate with ease.
-- **Document & Field Management**: Create new documents (with optional JSON templates), add fields, and delete documents or fields safely.
+- **Document Cloning & Cross-Connection Copying**: Duplicate documents within the same collection or copy/paste them across different environments (e.g., copy from Production to Local Emulator) with automatic ID handling.
+- **Copy as JSON**: Copy formatted document JSON directly to your clipboard from the tree menu without opening tabs.
 - **Export**: Export collection data directly to JSON files.
 - **Custom Ordering & Pagination**: Sort collections by any field in ascending or descending order.
 
@@ -46,6 +47,10 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 | `ketrik-firestore-studio.jumpToDocument` | Jump to Document ID... | Direct 1-read document lookup on server by ID |
 | `ketrik-firestore-studio.createDocument` | Create Document | Create a new document in the selected collection |
 | `ketrik-firestore-studio.deleteDocument` | Delete Document | Delete a selected document |
+| `ketrik-firestore-studio.duplicateDocument` | Duplicate Document... | Clone document within collection with new ID |
+| `ketrik-firestore-studio.copyDocument` | Copy Document | Copy document to internal clipboard for cross-collection/connection paste |
+| `ketrik-firestore-studio.pasteDocument` | Paste Document | Paste copied document into any target collection or connection |
+| `ketrik-firestore-studio.copyDocumentJson` | Copy as JSON | Copy formatted document JSON directly to OS clipboard |
 | `ketrik-firestore-studio.addField` | Add Field... | Add a new root field to a document with type picker |
 | `ketrik-firestore-studio.openField` | Edit Value / Open Field | Quick-edit primitive value or open subdocument |
 | `ketrik-firestore-studio.openFieldInEditor` | Open in JSON Editor | Open any field directly into a dedicated JSON tab |
@@ -57,7 +62,11 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 ## Extension Settings
 
 - `ketrik-firestore-studio.connections`: List of configured Firestore connections (ID, Name, Service Account Path, Project ID, Database ID, Emulator settings).
-- `ketrik-firestore-studio.pagingLimit`: Number of documents to show per page (default: `10`).
+- `ketrik-firestore-studio.pagingLimit`: Number of documents to show per page in the tree view (default: `10`).
+- `ketrik-firestore-studio.maxTableRows`: Maximum number of documents to load in the collection table view (default: `100`).
+- `ketrik-firestore-studio.cacheTTLSeconds`: Memory cache duration in seconds for tree browsing and virtual docs (default: `30`).
+- `ketrik-firestore-studio.initialFoldLevel`: Initial folding level when opening documents in editor (`0` for none, `1` for root keys, etc.).
+- `ketrik-firestore-studio.checkRemoteChangesOnSave`: Check for remote changes before saving (default: `false`).
 - `ketrik-firestore-studio.documentTemplates`: Custom JSON templates for fast document creation.
 
 ---
