@@ -9,9 +9,9 @@ timeline
         2026-10-07 : v1.0.0 Initial Release : v1.1.0 Custom DB IDs
         2026-10-08 : v1.2.0 Subdocuments & Atomic Updates : v1.3.0 Jump to Doc ID
         2026-10-09 : v1.4.0 Deep Delete & Cross-Copy : v1.5.0 Server Query Builder & Dual-Contract Table
-        2026-10-10 : v1.6.0 Dual-Prefix Protocol & Safe Mode
+        2026-10-10 : v1.7.0 Dual-Prefix Protocol, Safe Mode & Modular Architecture
     section Planned
-        Q4 2026 : v1.7.0 Substrate Migrations & Lifecycle Simulation
+        Q4 2026 : v1.8.0 Substrate Migrations & Lifecycle Simulation
         2027 : v2.0.0 Offline Mode & Cross-Project Studio
 ```
 
@@ -29,15 +29,15 @@ timeline
 | **v1.3.0** | Shipped | 2026-10-08 | Direct 1-read document ID jump (Tree & Table views), quota protection |
 | **v1.4.0** | Shipped | 2026-10-09 | Deep recursive delete, duplicate doc, cross-connection copy/paste, memory cleanups |
 | **v1.5.0** | Shipped | 2026-10-09 | Server-side query builder (multi-clause `where`), Map/Array field table view (`openFieldAsTable`), atomic field rename, granular refresh |
-| **v1.6.0** | Shipped | 2026-10-10 | Dual-Prefix protocol (`_` & `__`), Tree hierarchy badging, Table column zones & noise toggles, protocol query presets, safe mode mutation guards, cross-substrate paste |
-| **v1.7.0** | Planned | Q4 2026 | Substrate migration wizard (Explode $\leftrightarrow$ Consolidate), time-travel lifecycle preview, TypeScript schema generator |
+| **v1.7.0** | Shipped | 2026-10-10 | Dual-Prefix protocol (`_` & `__`), Tree hierarchy badging, Table column zones & noise toggles, protocol query presets, safe mode mutation guards, cross-substrate paste, modular extension architecture |
+| **v1.8.0** | Planned | Q4 2026 | Substrate migration wizard (Explode $\leftrightarrow$ Consolidate), time-travel lifecycle preview, TypeScript schema generator |
 | **v2.0.0** | Future | 2027 | Local offline cache & sync, cross-database schema diffing, visual security rules simulator |
 
 ---
 
 ## 🚀 Upcoming Releases
 
-### [v1.6.0] — Dual-Prefix Protocol & Protocol Safety (Target: October 2026)
+### [v1.8.0] — Substrate Migrations & Lifecycle Simulation (Target: Q4 2026)
 
 *Theme: Native architectural support for the Dual-Prefix (`_` and `__`) convention and anonymous namespaces (`"__": { ... }`), enabling clean separation of system envelopes, operational state, and domain data.*
 

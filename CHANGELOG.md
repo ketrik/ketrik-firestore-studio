@@ -2,7 +2,7 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
-## [1.6.0] - 2026-10-10
+## [1.7.0] - 2026-10-10
 
 ### Added
 - **Dual-Prefix Protocol (`_` and `__`) Support & Semantic Badging**:
@@ -20,6 +20,10 @@ All notable changes to the "Ketrik Firestore Studio" extension will be documente
 - **Safe Mode: System Key Mutation Guard**:
   - Added setting `ketrik-firestore-studio.protectSystemKeys` (default: `true`).
   - Warns and requires explicit confirmation before deleting or renaming any System Envelope (`_`) or Operational Protocol (`__`) key.
+- **Modular Architecture & Extension Refactoring**:
+  - Decoupled commands into dedicated domain modules: `documentCommands.ts`, `fieldCommands.ts`, and `collectionCommands.ts`.
+  - Introduced `DocumentClipboard` and `TemplateService` for clean state isolation.
+  - Reduced `extension.ts` by over 80% (from 1,130 lines to ~200 lines).
 
 ## [1.5.0] - 2026-10-09
 
