@@ -2,6 +2,25 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.6.0] - 2026-10-10
+
+### Added
+- **Dual-Prefix Protocol (`_` and `__`) Support & Semantic Badging**:
+  - Operational Protocol fields (`__key` or `"__": { ... }`) render in the Explorer Tree with a dedicated operational shield badge (`$(shield)`) in `charts.red`.
+  - System Envelope index anchors (`_key`, e.g. `_cat`, `_kind`, `_ts`, `_ch`) render with an index tag badge (`$(tag)`) in `charts.purple`.
+  - Expanding documents now deterministically groups fields into architectural tiers: Operational Protocol (`__`) $\rightarrow$ System Envelope (`_`) $\rightarrow$ Domain Content (alphabetical).
+- **Table Column Partitioning & Noise Filter Toggles**:
+  - Both Collection Table (`openCollectionAsTable`) and Field Table (`openFieldAsTable`) order columns by tier: Pinned `id` $\rightarrow$ System Envelope (`_*`) $\rightarrow$ Domain Content $\rightarrow$ Operational Protocol (`__*`).
+  - Added header badges (`<envelope>` and `<protocol>`) with distinct border accents.
+  - Added toolbar toggle buttons: **`🛡️ __ Protocol`** and **`🏷️ _ Envelope`** to instantly hide/show system metadata so content editors can focus purely on domain data.
+- **Server-Side Query Builder Protocol Shortcuts**:
+  - Added 1-click query presets in the Query Builder: **`[⚡ Active Only]`** (`__.active == true`) and **`[⏱ Inactive]`** (`__.active == false`).
+- **Cross-Substrate Clipboard (Dual-Contract Paste)**:
+  - Copy any document from a collection $\rightarrow$ Right-click an in-document Map (`Record<string, T>`) or Array (`T[]`) field $\rightarrow$ **Paste Document**. Automatically sets the key in the registry or appends to the array.
+- **Safe Mode: System Key Mutation Guard**:
+  - Added setting `ketrik-firestore-studio.protectSystemKeys` (default: `true`).
+  - Warns and requires explicit confirmation before deleting or renaming any System Envelope (`_`) or Operational Protocol (`__`) key.
+
 ## [1.5.0] - 2026-10-09
 
 ### Added

@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.5.0",
+  "version": "1.7.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -126,6 +126,12 @@
           "minimum": 0,
           "maximum": 5,
           "description": "Initial folding level when opening a Firestore document in the JSON editor. Set to 1 to fold root keys by default, or 0 to keep fully expanded.",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.protectSystemKeys": {
+          "type": "boolean",
+          "default": true,
+          "description": "Safe Mode: Warn and require explicit confirmation when deleting or renaming System Envelope ('_') or Operational Protocol ('__') keys.",
           "scope": "window"
         },
         "ketrik-firestore-studio.documentTemplates": {
@@ -450,9 +456,14 @@
           "group": "1_actions@4"
         },
         {
+          "command": "ketrik-firestore-studio.pasteDocument",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "group": "1_actions@5"
+        },
+        {
           "command": "ketrik-firestore-studio.refreshItem",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
-          "group": "1_actions@5"
+          "group": "1_actions@6"
         },
         {
           "command": "ketrik-firestore-studio.deleteField",

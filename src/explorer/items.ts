@@ -80,28 +80,62 @@ export class DocumentFieldItem extends Item {
     let icon = "symbol-variable";
     let iconColor: vscode.ThemeColor | undefined;
 
+    // Dual-Prefix Protocol classification
+    const isProtocol = fieldName.startsWith("__");
+    const isEnvelope = fieldName.startsWith("_") && !isProtocol;
+
     if (valType === "object") {
-      icon = "symbol-namespace";
-      iconColor = new vscode.ThemeColor("symbolIcon.namespaceForeground");
+      if (isProtocol) {
+        icon = "shield";
+        iconColor = new vscode.ThemeColor("charts.red");
+      } else if (isEnvelope) {
+        icon = "tag";
+        iconColor = new vscode.ThemeColor("charts.purple");
+      } else {
+        icon = "symbol-namespace";
+        iconColor = new vscode.ThemeColor("symbolIcon.namespaceForeground");
+      }
       const keyCount = Object.keys(value || {}).length;
       this.description = `{${keyCount} keys}`;
     } else if (valType === "array") {
-      icon = "symbol-array";
-      iconColor = new vscode.ThemeColor("symbolIcon.arrayForeground");
+      icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-array";
+      iconColor = isProtocol
+        ? new vscode.ThemeColor("charts.red")
+        : isEnvelope
+        ? new vscode.ThemeColor("charts.purple")
+        : new vscode.ThemeColor("symbolIcon.arrayForeground");
       this.description = `[${value.length}]`;
     } else if (valType === "string") {
-      icon = "symbol-string";
-      iconColor = new vscode.ThemeColor("symbolIcon.stringForeground");
+      icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-string";
+      iconColor = isProtocol
+        ? new vscode.ThemeColor("charts.red")
+        : isEnvelope
+        ? new vscode.ThemeColor("charts.purple")
+        : new vscode.ThemeColor("symbolIcon.stringForeground");
       this.description = `"${value.length > 20 ? value.slice(0, 17) + "..." : value}"`;
     } else if (valType === "number") {
-      icon = "symbol-number";
-      iconColor = new vscode.ThemeColor("symbolIcon.numberForeground");
+      icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-number";
+      iconColor = isProtocol
+        ? new vscode.ThemeColor("charts.red")
+        : isEnvelope
+        ? new vscode.ThemeColor("charts.purple")
+        : new vscode.ThemeColor("symbolIcon.numberForeground");
       this.description = String(value);
     } else if (valType === "boolean") {
-      icon = "symbol-boolean";
-      iconColor = new vscode.ThemeColor("symbolIcon.booleanForeground");
+      icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-boolean";
+      iconColor = isProtocol
+        ? new vscode.ThemeColor("charts.red")
+        : isEnvelope
+        ? new vscode.ThemeColor("charts.purple")
+        : new vscode.ThemeColor("symbolIcon.booleanForeground");
       this.description = String(value);
     } else {
+      icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-variable";
+      iconColor = isProtocol
+        ? new vscode.ThemeColor("charts.red")
+        : isEnvelope
+        ? new vscode.ThemeColor("charts.purple")
+        : undefined;
       this.description = String(value);
     }
 
@@ -112,7 +146,13 @@ export class DocumentFieldItem extends Item {
         : valType === "array"
         ? "documentFieldArray"
         : "documentField";
-    this.tooltip = `Field: ${fieldName} (${valType})\nDoc: ${parentDocRef.path}`;
+
+    const tierLabel = isProtocol
+      ? " [Protocol / Operational]"
+      : isEnvelope
+      ? " [System Envelope / Index]"
+      : "";
+    this.tooltip = `Field: ${fieldName} (${valType})${tierLabel}\nDoc: ${parentDocRef.path}`;
     this.iconPath = new vscode.ThemeIcon(icon, iconColor);
 
     this.command = {

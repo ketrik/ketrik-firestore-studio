@@ -80,6 +80,12 @@ This extension relies on the [Firebase Admin SDK](https://firebase.google.com/do
 
 ---
 
+## Roadmap & Release Schedule
+
+See [ROADMAP.md](ROADMAP.md) for historical release dates, active milestones, and upcoming feature specifications.
+
+---
+
 ## License
 
 [MIT](LICENSE)

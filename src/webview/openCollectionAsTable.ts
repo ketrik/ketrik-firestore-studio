@@ -57,6 +57,26 @@ export async function openCollectionAsTable(item: CollectionItem) {
     return trimmed;
   }
 
+  function sortHeaders(headerList: string[]): string[] {
+    return [...headerList].sort((a, b) => {
+      const isEnvA = a.startsWith("_") && !a.startsWith("__");
+      const isEnvB = b.startsWith("_") && !b.startsWith("__");
+      const isProtoA = a.startsWith("__");
+      const isProtoB = b.startsWith("__");
+
+      // 1. System Envelope (_key) first
+      if (isEnvA && !isEnvB) return -1;
+      if (!isEnvA && isEnvB) return 1;
+
+      // 2. Operational Protocol (__key) last
+      if (isProtoA && !isProtoB) return 1;
+      if (!isProtoA && isProtoB) return -1;
+
+      // 3. Domain content in alphabetical order
+      return a.localeCompare(b);
+    });
+  }
+
   /** Build an executable Firestore query applying all active where clauses. */
   async function buildBaseQuery(): Promise<Query> {
     let q: Query = await getCollection();
@@ -89,14 +109,14 @@ export async function openCollectionAsTable(item: CollectionItem) {
       }));
 
       if (docs.length > 0 && headers.length === 0) {
-        headers = Object.keys(docs[0]).filter((k) => k !== "__path" && k !== "__id");
+        headers = sortHeaders(Object.keys(docs[0]).filter((k) => k !== "__path" && k !== "__id"));
       }
 
       // Merge any new header keys from subsequent pages.
       if (docs.length > 0) {
         const newKeys = Object.keys(docs[0]).filter((k) => k !== "__path" && k !== "__id" && !headers.includes(k));
         if (newKeys.length > 0) {
-          headers = [...headers, ...newKeys];
+          headers = sortHeaders([...headers, ...newKeys]);
         }
       }
 
@@ -351,6 +371,35 @@ export async function openCollectionAsTable(item: CollectionItem) {
             font-size: 0.78em;
             border-bottom: 2px solid var(--vscode-focusBorder, rgba(128,128,128,0.3));
           }
+          th.envelope-header {
+            background: rgba(157, 107, 240, 0.08);
+            border-bottom-color: #9d6bf0;
+          }
+          th.protocol-header {
+            background: rgba(240, 98, 146, 0.08);
+            border-bottom-color: #f06292;
+          }
+          .th-tag {
+            display: inline-block;
+            font-size: 0.85em;
+            padding: 1px 4px;
+            border-radius: 3px;
+            margin-right: 4px;
+            text-transform: none;
+            font-family: var(--mono-font);
+          }
+          .th-tag.envelope {
+            background: rgba(157, 107, 240, 0.2);
+            color: #b388ff;
+          }
+          .th-tag.protocol {
+            background: rgba(240, 98, 146, 0.2);
+            color: #ff80ab;
+          }
+          .toggle-btn.active {
+            background: var(--vscode-badge-background, #4d4d4d);
+            color: var(--vscode-badge-foreground, #fff);
+          }
           th.id-header {
             width: 190px;
             min-width: 170px;
@@ -432,8 +481,14 @@ export async function openCollectionAsTable(item: CollectionItem) {
             <button id="toggleFilterBtn" class="secondary" title="Filter collection with server-side where query">
               <span>🔍</span> Query Filter
             </button>
+            <button id="toggleProtoBtn" class="secondary toggle-btn" title="Toggle visibility of Operational Protocol (__) columns">
+              <span>🛡️</span> __ Protocol
+            </button>
+            <button id="toggleEnvBtn" class="secondary toggle-btn" title="Toggle visibility of System Envelope (_) columns">
+              <span>🏷️</span> _ Envelope
+            </button>
             <div class="search-wrapper">
-              <input id="searchInput" type="text" placeholder="Search loaded docs..." style="min-width: 180px;" />
+              <input id="searchInput" type="text" placeholder="Search loaded docs..." style="min-width: 160px;" />
             </div>
             <button id="searchBtn">Search</button>
             <button id="clearSearchBtn" class="secondary" style="display:none;">Clear</button>
@@ -450,7 +505,10 @@ export async function openCollectionAsTable(item: CollectionItem) {
         <div id="queryBuilderPanel" class="query-builder-panel" style="display:none;">
           <div class="query-header">
             <span>Server-Side Firestore Query Builder</span>
-            <div style="display:flex; gap:8px;">
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span style="font-size:0.85em; opacity:0.8;">Presets:</span>
+              <button id="presetActiveBtn" class="secondary icon-btn" title="Filter docs where __.active == true" style="font-size:0.82em; padding:3px 8px;">⚡ Active Only</button>
+              <button id="presetExpiredBtn" class="secondary icon-btn" title="Filter docs where __.active == false" style="font-size:0.82em; padding:3px 8px;">⏱ Inactive</button>
               <button id="addClauseBtn" class="secondary icon-btn">+ Add Clause</button>
               <button id="runQueryBtn">Run Query</button>
               <button id="resetQueryBtn" class="secondary">Reset</button>
@@ -499,6 +557,8 @@ export async function openCollectionAsTable(item: CollectionItem) {
             let isSearchMode = false;
             let isServerQueryMode = false;
             let currentHeaders = [];
+            let hideProtocol = false;
+            let hideEnvelope = false;
 
             // ── helpers ──────────────────────────────────────────────────────
             function escapeHtml(val) {
@@ -508,6 +568,37 @@ export async function openCollectionAsTable(item: CollectionItem) {
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;');
+            }
+
+            function getVisibleHeaders(headers) {
+              return headers.filter(h => {
+                const isProto = h.startsWith('__');
+                const isEnv = h.startsWith('_') && !isProto;
+                if (hideProtocol && isProto) return false;
+                if (hideEnvelope && isEnv) return false;
+                return true;
+              });
+            }
+
+            function renderHeaderCell(h) {
+              const isProto = h.startsWith('__');
+              const isEnv = h.startsWith('_') && !isProto;
+              let cls = '';
+              let badge = '';
+              if (isProto) {
+                cls = ' class="protocol-header"';
+                badge = '<span class="th-tag protocol">protocol</span>';
+              } else if (isEnv) {
+                cls = ' class="envelope-header"';
+                badge = '<span class="th-tag envelope">envelope</span>';
+              }
+              return '<th' + cls + '>' + badge + escapeHtml(h) + '</th>';
+            }
+
+            function renderHeaderRow(headers) {
+              const visible = getVisibleHeaders(headers);
+              return '<th class="id-header">Document ID</th>' +
+                visible.map(h => renderHeaderCell(h)).join('');
             }
 
             function formatCell(value) {
@@ -530,13 +621,14 @@ export async function openCollectionAsTable(item: CollectionItem) {
             }
 
             function renderRows(docs, headers) {
+              const visible = getVisibleHeaders(headers);
               return docs.map(doc => {
                 const docId = doc.__id || (doc.__path ? doc.__path.split('/').pop() : '');
                 const idCell = '<td><div class="doc-id-cell">' +
                   '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1h8l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm7 1v3h3L11 2z"/></svg>' +
                   '<span>' + escapeHtml(docId) + '</span></div></td>';
 
-                const dataCells = headers.map(h => {
+                const dataCells = visible.map(h => {
                   return '<td>' + formatCell(doc[h]) + '</td>';
                 }).join('');
 
@@ -616,32 +708,35 @@ export async function openCollectionAsTable(item: CollectionItem) {
               document.getElementById('clauseList').appendChild(row);
             }
 
+            let lastDocs = [];
+
+            function reRenderCurrentTable() {
+              document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
+              document.getElementById('table-body').innerHTML = renderRows(lastDocs, currentHeaders);
+            }
+
             // ── message handler ───────────────────────────────────────────
             window.addEventListener('message', function(event) {
               const msg = event.data;
 
               if (msg.type === 'init') {
                 currentHeaders = msg.headers || [];
-                const headRow = '<th class="id-header">Document ID</th>' +
-                  currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
-                document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
-                document.getElementById('table-body').innerHTML = renderRows(msg.docs, currentHeaders);
-                document.getElementById('doc-count').textContent = msg.docs.length;
+                lastDocs = msg.docs || [];
+                document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
+                document.getElementById('table-body').innerHTML = renderRows(lastDocs, currentHeaders);
+                document.getElementById('doc-count').textContent = lastDocs.length;
                 document.getElementById('loadMoreBtn').style.display = msg.hasMore ? '' : 'none';
-                updateEmptyState(msg.docs.length);
+                updateEmptyState(lastDocs.length);
               }
 
               if (msg.type === 'appendRows') {
-                const tbody = document.getElementById('table-body');
                 currentHeaders = msg.headers || currentHeaders;
                 if (msg.headersChanged) {
-                  const headRow = '<th class="id-header">Document ID</th>' +
-                    currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
-                  document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
-                  tbody.innerHTML = renderRows(msg.allDocs, currentHeaders);
+                  lastDocs = msg.allDocs || [];
                 } else {
-                  tbody.innerHTML += renderRows(msg.newDocs, currentHeaders);
+                  lastDocs = lastDocs.concat(msg.newDocs || []);
                 }
+                reRenderCurrentTable();
                 document.getElementById('doc-count').textContent = msg.totalCount;
                 document.getElementById('loadMoreBtn').style.display = msg.hasMore ? '' : 'none';
                 document.getElementById('loadMoreBtn').disabled = false;
@@ -650,22 +745,22 @@ export async function openCollectionAsTable(item: CollectionItem) {
 
               if (msg.type === 'searchResults') {
                 isSearchMode = true;
-                document.getElementById('table-body').innerHTML = renderRows(msg.docs, msg.headers);
-                document.getElementById('doc-count').textContent = msg.docs.length;
+                currentHeaders = msg.headers || currentHeaders;
+                lastDocs = msg.docs || [];
+                reRenderCurrentTable();
+                document.getElementById('doc-count').textContent = lastDocs.length;
                 document.getElementById('loadMoreBtn').style.display = 'none';
                 document.getElementById('clearSearchBtn').style.display = '';
                 document.getElementById('search-note').style.display = '';
                 document.getElementById('lookup-note').style.display = 'none';
-                updateEmptyState(msg.docs.length);
+                updateEmptyState(lastDocs.length);
               }
 
               if (msg.type === 'lookupResult') {
                 isSearchMode = true;
                 currentHeaders = msg.headers || currentHeaders;
-                const headRow = '<th class="id-header">Document ID</th>' +
-                  currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
-                document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
-                document.getElementById('table-body').innerHTML = renderRows([msg.doc], currentHeaders);
+                lastDocs = [msg.doc];
+                reRenderCurrentTable();
                 document.getElementById('doc-count').textContent = '1';
                 document.getElementById('loadMoreBtn').style.display = 'none';
                 document.getElementById('clearSearchBtn').style.display = '';
@@ -676,6 +771,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
 
               if (msg.type === 'lookupNotFound') {
                 isSearchMode = true;
+                lastDocs = [];
                 document.getElementById('table-body').innerHTML = '';
                 document.getElementById('doc-count').textContent = '0';
                 document.getElementById('loadMoreBtn').style.display = 'none';
@@ -688,11 +784,9 @@ export async function openCollectionAsTable(item: CollectionItem) {
               if (msg.type === 'clearSearch') {
                 isSearchMode = false;
                 currentHeaders = msg.headers || currentHeaders;
-                const headRow = '<th class="id-header">Document ID</th>' +
-                  currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
-                document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
-                document.getElementById('table-body').innerHTML = renderRows(msg.docs, currentHeaders);
-                document.getElementById('doc-count').textContent = msg.docs.length;
+                lastDocs = msg.docs || [];
+                reRenderCurrentTable();
+                document.getElementById('doc-count').textContent = lastDocs.length;
                 document.getElementById('loadMoreBtn').style.display = msg.hasMore ? '' : 'none';
                 document.getElementById('clearSearchBtn').style.display = '';
                 if (!isServerQueryMode) {
@@ -702,29 +796,49 @@ export async function openCollectionAsTable(item: CollectionItem) {
                 document.getElementById('lookup-note').style.display = 'none';
                 document.getElementById('searchInput').value = '';
                 document.getElementById('jumpInput').value = '';
-                updateEmptyState(msg.docs.length);
+                updateEmptyState(lastDocs.length);
               }
 
               if (msg.type === 'queryResult') {
                 isServerQueryMode = msg.isActive;
                 isSearchMode = false;
                 currentHeaders = msg.headers || [];
-                const headRow = '<th class="id-header">Document ID</th>' +
-                  currentHeaders.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
-                document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
-                document.getElementById('table-body').innerHTML = renderRows(msg.docs, currentHeaders);
-                document.getElementById('doc-count').textContent = msg.docs.length;
+                lastDocs = msg.docs || [];
+                reRenderCurrentTable();
+                document.getElementById('doc-count').textContent = lastDocs.length;
                 document.getElementById('loadMoreBtn').style.display = msg.hasMore ? '' : 'none';
                 document.getElementById('loadMoreBtn').disabled = false;
                 document.getElementById('search-note').style.display = 'none';
                 document.getElementById('lookup-note').style.display = 'none';
                 document.getElementById('query-note').style.display = isServerQueryMode ? '' : 'none';
                 document.getElementById('clearSearchBtn').style.display = isServerQueryMode ? '' : 'none';
-                updateEmptyState(msg.docs.length, isServerQueryMode ? "No documents match the specified where clauses." : undefined);
+                updateEmptyState(lastDocs.length, isServerQueryMode ? "No documents match the specified where clauses." : undefined);
               }
             });
 
             // ── button handlers ───────────────────────────────────────────
+            document.getElementById('toggleProtoBtn').onclick = function() {
+              hideProtocol = !hideProtocol;
+              this.classList.toggle('active', hideProtocol);
+              reRenderCurrentTable();
+            };
+
+            document.getElementById('toggleEnvBtn').onclick = function() {
+              hideEnvelope = !hideEnvelope;
+              this.classList.toggle('active', hideEnvelope);
+              reRenderCurrentTable();
+            };
+
+            document.getElementById('presetActiveBtn').onclick = function() {
+              document.getElementById('clauseList').innerHTML = '';
+              createClauseRow('__.active', '==', 'true');
+            };
+
+            document.getElementById('presetExpiredBtn').onclick = function() {
+              document.getElementById('clauseList').innerHTML = '';
+              createClauseRow('__.active', '==', 'false');
+            };
+
             document.getElementById('toggleFilterBtn').onclick = function() {
               const panel = document.getElementById('queryBuilderPanel');
               const isVisible = panel.style.display !== 'none';

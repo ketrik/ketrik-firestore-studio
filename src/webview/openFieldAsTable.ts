@@ -80,9 +80,24 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
       });
     }
 
+    const sortedHeaders = Array.from(headerSet).sort((a, b) => {
+      const isEnvA = a.startsWith("_") && !a.startsWith("__");
+      const isEnvB = b.startsWith("_") && !b.startsWith("__");
+      const isProtoA = a.startsWith("__");
+      const isProtoB = b.startsWith("__");
+
+      if (isEnvA && !isEnvB) return -1;
+      if (!isEnvA && isEnvB) return 1;
+
+      if (isProtoA && !isProtoB) return 1;
+      if (!isProtoA && isProtoB) return -1;
+
+      return a.localeCompare(b);
+    });
+
     return {
       rows: parsedRows,
-      headers: Array.from(headerSet),
+      headers: sortedHeaders,
     };
   }
 
@@ -290,6 +305,35 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             font-size: 0.78em;
             border-bottom: 2px solid var(--vscode-focusBorder, rgba(128,128,128,0.3));
           }
+          th.envelope-header {
+            background: rgba(157, 107, 240, 0.08);
+            border-bottom-color: #9d6bf0;
+          }
+          th.protocol-header {
+            background: rgba(240, 98, 146, 0.08);
+            border-bottom-color: #f06292;
+          }
+          .th-tag {
+            display: inline-block;
+            font-size: 0.85em;
+            padding: 1px 4px;
+            border-radius: 3px;
+            margin-right: 4px;
+            text-transform: none;
+            font-family: var(--mono-font);
+          }
+          .th-tag.envelope {
+            background: rgba(157, 107, 240, 0.2);
+            color: #b388ff;
+          }
+          .th-tag.protocol {
+            background: rgba(240, 98, 146, 0.2);
+            color: #ff80ab;
+          }
+          .toggle-btn.active {
+            background: var(--vscode-badge-background, #4d4d4d);
+            color: var(--vscode-badge-foreground, #fff);
+          }
           th.id-header {
             width: 190px;
             min-width: 170px;
@@ -363,6 +407,12 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             <span class="badge" title="Connection ID">${item.connectionId}</span>
           </div>
           <div class="toolbar-actions">
+            <button id="toggleProtoBtn" class="secondary toggle-btn" title="Toggle visibility of Operational Protocol (__) columns">
+              <span>🛡️</span> __ Protocol
+            </button>
+            <button id="toggleEnvBtn" class="secondary toggle-btn" title="Toggle visibility of System Envelope (_) columns">
+              <span>🏷️</span> _ Envelope
+            </button>
             <div class="search-wrapper">
               <input id="searchInput" type="text" placeholder="Search rows..." />
             </div>
@@ -404,6 +454,11 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
           (function() {
             const vscode = acquireVsCodeApi();
 
+            let currentHeaders = [];
+            let currentRows = [];
+            let hideProtocol = false;
+            let hideEnvelope = false;
+
             function escapeHtml(val) {
               if (val === null || val === undefined) { return ''; }
               return String(val)
@@ -411,6 +466,42 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;');
+            }
+
+            function getVisibleHeaders(headers) {
+              return headers.filter(h => {
+                const isProto = h.startsWith('__');
+                const isEnv = h.startsWith('_') && !isProto;
+                if (hideProtocol && isProto) return false;
+                if (hideEnvelope && isEnv) return false;
+                return true;
+              });
+            }
+
+            function renderHeaderCell(h) {
+              const isProto = h.startsWith('__');
+              const isEnv = h.startsWith('_') && !isProto;
+              let cls = '';
+              let badge = '';
+              if (isProto) {
+                cls = ' class="protocol-header"';
+                badge = '<span class="th-tag protocol">protocol</span>';
+              } else if (isEnv) {
+                cls = ' class="envelope-header"';
+                badge = '<span class="th-tag envelope">envelope</span>';
+              }
+              return '<th' + cls + '>' + badge + escapeHtml(h) + '</th>';
+            }
+
+            function renderHeaderRow(headers) {
+              const visible = getVisibleHeaders(headers);
+              return '<th class="id-header">${rowIdHeader}</th>' +
+                visible.map(h => renderHeaderCell(h)).join('');
+            }
+
+            function reRenderCurrentTable() {
+              document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
+              document.getElementById('table-body').innerHTML = renderRows(currentRows, currentHeaders);
             }
 
             function formatCell(value) {
@@ -433,13 +524,14 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             }
 
             function renderRows(rows, headers) {
+              const visible = getVisibleHeaders(headers);
               return rows.map(row => {
                 const rowId = row.__id || '';
                 const idCell = '<td><div class="row-id-cell">' +
                   '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1h8l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm7 1v3h3L11 2z"/></svg>' +
                   '<span>' + escapeHtml(rowId) + '</span></div></td>';
 
-                const dataCells = headers.map(h => {
+                const dataCells = visible.map(h => {
                   return '<td>' + formatCell(row[h]) + '</td>';
                 }).join('');
 
@@ -460,10 +552,9 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
               const msg = event.data;
 
               if (msg.type === 'init' || msg.type === 'clearSearch') {
-                const headRow = '<th class="id-header">${rowIdHeader}</th>' +
-                  msg.headers.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
-                document.getElementById('table-head').innerHTML = '<tr>' + headRow + '</tr>';
-                document.getElementById('table-body').innerHTML = renderRows(msg.rows, msg.headers);
+                currentHeaders = msg.headers || [];
+                currentRows = msg.rows || [];
+                reRenderCurrentTable();
                 document.getElementById('row-count').textContent = msg.rows.length;
                 document.getElementById('search-note').style.display = 'none';
                 document.getElementById('clearSearchBtn').style.display = 'none';
@@ -472,13 +563,27 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
               }
 
               if (msg.type === 'searchResults') {
-                document.getElementById('table-body').innerHTML = renderRows(msg.rows, msg.headers);
+                currentHeaders = msg.headers || [];
+                currentRows = msg.rows || [];
+                reRenderCurrentTable();
                 document.getElementById('row-count').textContent = msg.rows.length;
                 document.getElementById('search-note').style.display = '';
                 document.getElementById('clearSearchBtn').style.display = '';
                 updateEmptyState(msg.rows.length);
               }
             });
+
+            document.getElementById('toggleProtoBtn').onclick = function() {
+              hideProtocol = !hideProtocol;
+              this.classList.toggle('active', hideProtocol);
+              reRenderCurrentTable();
+            };
+
+            document.getElementById('toggleEnvBtn').onclick = function() {
+              hideEnvelope = !hideEnvelope;
+              this.classList.toggle('active', hideEnvelope);
+              reRenderCurrentTable();
+            };
 
             document.getElementById('exportBtn').onclick = function() {
               const rows = Array.from(document.querySelectorAll('#table-body tr'));

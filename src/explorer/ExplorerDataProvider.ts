@@ -208,7 +208,19 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const snapshot = await element.reference.get();
         if (snapshot.exists) {
           const data = snapshot.data() || {};
-          const fieldKeys = Object.keys(data).sort();
+          const fieldKeys = Object.keys(data).sort((a, b) => {
+            const isProtoA = a.startsWith("__");
+            const isProtoB = b.startsWith("__");
+            if (isProtoA && !isProtoB) return -1;
+            if (!isProtoA && isProtoB) return 1;
+
+            const isEnvA = a.startsWith("_");
+            const isEnvB = b.startsWith("_");
+            if (isEnvA && !isEnvB) return -1;
+            if (!isEnvA && isEnvB) return 1;
+
+            return a.localeCompare(b);
+          });
           for (const key of fieldKeys) {
             items.push(
               new DocumentFieldItem(
