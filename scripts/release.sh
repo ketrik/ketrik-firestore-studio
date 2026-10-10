@@ -6,17 +6,33 @@ cd "$(dirname "$0")/.."
 
 echo "🚀 Preparing release..."
 
-# 1. Read current version from package.json
-CURRENT_VERSION=$(node -p "require('./package.json').version")
-IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+# 1. Determine baseline version from latest git tag or package.json
+PKG_VERSION=$(node -p "require('./package.json').version")
+LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git tag -l --sort=-v:refname "v*" | head -n 1 || echo "")
+TAG_VERSION="${LATEST_TAG#v}"
+
+# Use the latest git tag as the true source of released version if available
+if [[ -n "${TAG_VERSION:-}" ]]; then
+  BASE_VERSION="${TAG_VERSION}"
+  echo "📌 Latest git release tag: ${LATEST_TAG} (${TAG_VERSION})"
+else
+  BASE_VERSION="${PKG_VERSION}"
+  echo "📌 Baseline version: ${PKG_VERSION} (from package.json)"
+fi
+
+echo "📦 Version in package.json: ${PKG_VERSION}"
+
+IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
 
 NEXT_PATCH="${MAJOR}.${MINOR}.$((PATCH + 1))"
 NEXT_MINOR="${MAJOR}.$((MINOR + 1)).0"
 NEXT_MAJOR="$((MAJOR + 1)).0.0"
 
 echo ""
-echo "Current version in package.json: ${CURRENT_VERSION}"
-echo "Choose release version:"
+echo "Choose release version (bumped from ${BASE_VERSION}):"
+if [[ "${PKG_VERSION}" != "${BASE_VERSION}" && "${PKG_VERSION}" != "${NEXT_MINOR}" && "${PKG_VERSION}" != "${NEXT_PATCH}" ]]; then
+  echo "  0) Use current package.json: ${PKG_VERSION}"
+fi
 echo "  1) Minor bump: ${NEXT_MINOR} (Recommended for new features)"
 echo "  2) Patch bump: ${NEXT_PATCH} (Bugfixes / small patches)"
 echo "  3) Major bump: ${NEXT_MAJOR} (Breaking changes)"
@@ -31,6 +47,9 @@ else
 fi
 
 case "${CHOICE:-1}" in
+  0)
+    NEW_VERSION="${PKG_VERSION}"
+    ;;
   1)
     NEW_VERSION="${NEXT_MINOR}"
     ;;
