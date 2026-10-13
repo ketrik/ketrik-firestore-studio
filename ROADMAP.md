@@ -69,6 +69,11 @@ timeline
 
 *Theme: Final polish and developer productivity bridge before the v2.0 major milestone.*
 
+* **Cross-Environment Auth User Cloning (`Clone / Copy User to Connection...`)**:
+  * Right-click any Auth user or select in Table view $\rightarrow$ **Clone User to Connection...**.
+  * Replicates user account (`uid`, `email`, `displayName`, `photoURL`, `customClaims`, `emailVerified`) to target environment (e.g., Production $\rightarrow$ Staging or Local Emulator).
+  * Optional checkbox to cascade-clone their Firestore profile document (`/users/{uid}`) in the same operation.
+  * Option to generate a fresh password reset link on the target connection.
 * **Bulk Batch Mutation & Deletion**:
   * Multi-select rows in Collection Table or Auth Users Table.
   * Batch field update (e.g., set `status: "archived"` across 50 selected documents via `WriteBatch`).
@@ -82,6 +87,8 @@ timeline
   * Full collection export to JSON / NDJSON / CSV with streaming batching to avoid memory exhaustion.
 * **Firestore Aggregation Queries**:
   * Native Firestore `count()`, `sum()`, and `average()` aggregation support in the Table view header (showing exact collection document counts at minimal read cost).
+* **Project Auth Configuration Inspector**:
+  * Dedicated inspector for `admin.auth().projectConfigManager()`: view enabled sign-in providers, authorized domains list with 1-click addition, SMS region policies, and blocking functions (`beforeSignIn`, `beforeCreate`).
 * **Query Bookmarks & Search History**:
   * Save frequently used server-side `where` query combinations as named bookmarks per collection.
   * Quick-access recent queries list.
@@ -98,6 +105,8 @@ timeline
   * Side-by-side graphical diff between environments (e.g. comparing Production vs. Staging collections or document structures).
 * **Interactive Security Rules Simulator & Test Runner**:
   * In-IDE simulation engine to test rules against mock request auth tokens (`request.auth.uid`, `request.auth.token.admin`) before deploying.
+* **Impersonation Token Minter (`Mint Custom Token & Sign-In Link`)**:
+  * Generate minted custom JWT tokens for any user to test client apps and verify security rules permissions directly from that user's perspective.
 * **Multi-Tab Studio Dashboard**:
   * Unified workspace tab with tabs for Collections, Auth Users, Rules, and Metrics.
 
