@@ -19,8 +19,10 @@ All notable changes to the "Ketrik Firestore Studio" extension will be documente
   - Generates secure out-of-band password reset links directly from tree context menus or table rows, copied straight to clipboard with optional browser jump.
 - **Cascade User & Profile Deletion (`ketrik-firestore-studio.deleteAuthUser`)**:
   - Delete an Auth user with intelligent prompt to also delete their `/users/{uid}` Firestore profile document.
-- **Avatar & Photo Display in Auth Users Table**:
-  - Renders user profile avatars (`photoURL`) with automated fallback to stylized user initial badges.
+- **Ergonomic Icon-Only Security Badges & Rich Tooltips**:
+  - Replaced bulky text badges in the Explorer tree with clean single-character status icons (`🚨`, `⚠️ 🌐`, `👤`, `🛡️`, `🔑`, `🔒`).
+  - Rich hover tooltips with operation & role icons (`📖 Read:` / `✍️ Write:`) and immediate visual role identification (`🌐 Public`, `🔒 Logged-in`, `👤 Owner`, `🔑 Admin`, `🛡️ Backend Only`).
+  - Prominent threat warning alerts for public unauthenticated read/write exposures.
 
 ## [1.8.0] - 2026-10-13
 
