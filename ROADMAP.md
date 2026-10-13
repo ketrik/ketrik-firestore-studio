@@ -9,10 +9,11 @@ timeline
         2026-10-07 : v1.0.0 Initial Release : v1.1.0 Custom DB IDs
         2026-10-08 : v1.2.0 Subdocuments & Atomic Updates : v1.3.0 Jump to Doc ID
         2026-10-09 : v1.4.0 Deep Delete & Cross-Copy : v1.5.0 Server Query Builder & Dual-Contract Table
-        2026-10-10 : v1.7.0 Dual-Prefix Protocol, Safe Mode & Modular Architecture
+        2026-10-10 : v1.7.0 Dual-Prefix Protocol & Modular Architecture
+        2026-10-13 : v1.8.0 Security Rules, Auth Management & Sticky Tables
     section Planned
-        Q4 2026 : v1.8.0 Substrate Migrations & Lifecycle Simulation
-        2027 : v2.0.0 Offline Mode & Cross-Project Studio
+        Q4 2026 : v1.9.0 Batch Data Tools, Schema Export & Studio Polish
+        2027 : v2.0.0 Offline Mode, Cross-Project Sync & Rules Simulator
 ```
 
 ---
@@ -30,64 +31,73 @@ timeline
 | **v1.4.0** | Shipped | 2026-10-09 | Deep recursive delete, duplicate doc, cross-connection copy/paste, memory cleanups |
 | **v1.5.0** | Shipped | 2026-10-09 | Server-side query builder (multi-clause `where`), Map/Array field table view (`openFieldAsTable`), atomic field rename, granular refresh |
 | **v1.7.0** | Shipped | 2026-10-10 | Dual-Prefix protocol (`_` & `__`), Tree hierarchy badging, Table column zones & noise toggles, protocol query presets, safe mode mutation guards, cross-substrate paste, modular extension architecture |
-| **v1.8.0** | Planned | Q4 2026 | Substrate migration wizard (Explode $\leftrightarrow$ Consolidate), time-travel lifecycle preview, TypeScript schema generator |
-| **v2.0.0** | Future | 2027 | Local offline cache & sync, cross-database schema diffing, visual security rules simulator |
+| **v1.8.0** | Shipped | 2026-10-13 | Live Security Rules inspector & diff (`firestore.rules`), TextMate syntax grammar, AST rule permissions parser, Firebase Auth users tree & table view (bulk load, newest-first sort, custom claims editor, profile linker), sticky table columns (pinned ID & actions) |
+| **v1.9.0** | Planned | Q4 2026 | Pre-2.0 Bridge: Bulk batch operations (batch mutate/delete), TypeScript contract & schema generator, CSV/JSON collection import & export wizard, collection count aggregation, query bookmarks & history |
+| **v2.0.0** | Future | 2027 | Local offline cache & sync, cross-database schema diffing, interactive visual Security Rules simulator & test runner, multi-tab studio dashboard |
 
 ---
 
-## 🚀 Upcoming Releases
+## 🚀 Active & Upcoming Releases
 
-### [v1.8.0] — Substrate Migrations & Lifecycle Simulation (Target: Q4 2026)
+### [v1.8.0] — Security Rules & Auth User Management (Shipped: 2026-10-13)
 
-*Theme: Native architectural support for the Dual-Prefix (`_` and `__`) convention and anonymous namespaces (`"__": { ... }`), enabling clean separation of system envelopes, operational state, and domain data.*
+*Theme: Project governance, security rules diffing, enterprise user claims, and high-density tabular browsing.*
 
-* **Dual-Prefix Visual Hierarchy (Explorer Tree)**:
-  * **System Protocol (`__key` / `"__": { ... }`)**: Rendered with dedicated operational state/security badge icons (`$(shield)` / `$(gear)`).
-  * **System Envelope (`_key`)**: Rendered with index/metadata badge icons (`$(tag)` / `$(symbol-key)`) indicating query dimensions (`_cat`, `_kind`, `_ts`, `_ch`).
-  * **Domain Content**: Traditional type icons (`$(symbol-string)`, `$(symbol-number)`).
-  * **Smart Field Sorting**: Logical grouping when expanding documents: `id` $\rightarrow$ `__` $\rightarrow$ `_` $\rightarrow$ domain content.
-* **Smart Table Column Partitioning & Noise Toggles**:
-  * Pinned Identity column (`id` / `uid`).
-  * Grouped System Envelope columns with subtle tinting.
-  * Collapsible/grouped Protocol columns (`__.active`, `__.from`, `__.exp`).
-  * Toolbar toggle buttons: *"Hide Protocol (`__`)"* and *"Hide Envelope (`_`)"* to let copy editors focus purely on domain content.
-* **Server Query Builder Protocol Shortcuts**:
-  * Dot-path autocomplete for nested namespace fields (`__.active`, `__.exp`, `__.targetUid`).
-  * Instant filter presets: `[⚡ Active Only]`, `[⏱ Expired / Inactive]`, `[📂 Filter by _kind/_cat]`.
-* **System Key Mutation Guard (Safe Mode)**:
-  * Optional configuration setting `ketrik-firestore-studio.security.protectSystemKeys` (default: `true`).
-  * Confirmation dialog when attempting to mutate or delete root `id`, immutable envelope `_` keys, or protocol `__` blocks.
-  * Sanitized document duplication: Option to strip or reinitialize system envelopes and protocol state (`_ts = Date.now()`, `__.active = false`).
-* **Cross-Substrate Clipboard Flow**:
-  * Copy collection document $\rightarrow$ Paste into in-document Map/Array field (`Record<string, T>`).
-  * Right-click item in Map/Array table view $\rightarrow$ Paste as Collection Document.
+* **Live Security Rules Inspector & Diff (`firestore.rules`)**:
+  * Direct extraction of live deployed rules via Firebase Rules API (`firebase.securityRules.get`).
+  * Virtual editor tab (`ketrik-firestore-studio://rules/firestore.rules`) with `.rules` syntax highlighting.
+  * Side-by-side graphical diff between deployed cloud rules and local workspace `firestore.rules`.
+  * Quick deployment command with safety confirmation.
+  * AST permission analysis highlighting locked vs authenticated collections.
+* **Firebase Authentication & User Management Suite**:
+  * Dedicated **Authentication (Users & Claims)** tree node under each connection.
+  * Tree paging (25 users/batch) with `Load more users...` cursor pagination.
+  * **Auth Users Webview Table**:
+    * Bulk loading up to 1,000 users per single HTTP request (zero Firestore read billing).
+    * Instant in-memory sorting by **Creation Date (Newest First)**, **Last Sign-in**, and **Email / Name**.
+    * Real-time client-side filter by email, UID, display name, and custom claims.
+    * In-table actions: Edit Custom Claims (`admin`, roles), Check/Create Firestore Profile (`users/{uid}`), and Disable/Enable user.
+    * Export loaded/filtered users to JSON.
+* **Sticky Column Table Navigation**:
+  * Sticky left-pinned identifier columns (`Document ID`, `Email / Name`, `Row ID`) during horizontal scroll.
+  * Sticky right-pinned `Actions` column on Auth Users Table.
+  * Sticky column headers on vertical scroll.
 
 ---
 
-### [v1.7.0] — Substrate Migrations & Lifecycle Simulation (Target: Q4 2026)
+### [v1.9.0] — Batch Operations, Schema Generator & Studio Polish (Target: Q4 2026)
 
-*Theme: Tools for evolving database architectures and testing time-dependent data.*
+*Theme: Final polish and developer productivity bridge before the v2.0 major milestone.*
 
-* **Substrate Migration Wizard (Explode $\leftrightarrow$ Consolidate)**:
-  * **Explode**: Convert bounded document maps approaching the 1MB Firestore threshold (`doc.items: Record<string, T>`) into full subcollections or root collections using batched operations.
-  * **Consolidate**: Compress small collections into single aggregate document dictionaries (`Record<string, T>`) with atomic updates to cut down per-read billing.
-* **Time-Travel Lifecycle Preview**:
-  * Virtual time slider in Table and Document views to preview live/scheduled/expired documents based on protocol temporal bounds (`__.from` and `__.exp`).
-  * Visual status pills in table rows: `🟢 Active`, `🟡 Scheduled`, `🔴 Expired`, `⚪ Inactive`.
-* **Tombstone Purge Utility**:
-  * Automated cleaner for soft-deleted registry keys (e.g. `{ [key]: null }` or `deletedAt: Timestamp`) with safety dry-runs.
-* **TypeScript Contract & Adapter Generator**:
-  * One-click generation of typed interfaces (`NotificationDoc`, `NotificationProtocolZone`, etc.) and dual-contract destructuring adapters from live collections or sample documents.
+* **Bulk Batch Mutation & Deletion**:
+  * Multi-select rows in Collection Table or Auth Users Table.
+  * Batch field update (e.g., set `status: "archived"` across 50 selected documents via `WriteBatch`).
+  * Batched delete with quota warning and dry-run preview.
+* **TypeScript Contract & Schema Generator**:
+  * Right-click any collection or document $\rightarrow$ **Generate TypeScript Interfaces**.
+  * Introspects documents in the collection to deduce inferred TypeScript types (including optional fields and nested structures).
+  * Direct copy or write to `.d.ts` file in the workspace.
+* **Data Import & Export Wizard (CSV & JSON)**:
+  * Import CSV or JSON datasets directly into a Firestore collection with custom ID mapping and field type coercion.
+  * Full collection export to JSON / NDJSON / CSV with streaming batching to avoid memory exhaustion.
+* **Firestore Aggregation Queries**:
+  * Native Firestore `count()`, `sum()`, and `average()` aggregation support in the Table view header (showing exact collection document counts at minimal read cost).
+* **Query Bookmarks & Search History**:
+  * Save frequently used server-side `where` query combinations as named bookmarks per collection.
+  * Quick-access recent queries list.
 
 ---
 
 ### [v2.0.0] — Enterprise Studio & Offline Experience (Target: 2027)
 
-*Theme: Enterprise multi-tenant workflows and next-generation offline development.*
+*Theme: Next-generation enterprise workflow, offline emulation, and cross-project sync.*
 
 * **Local Offline Cache & Mocking**:
   * Work offline with local SQLite/IndexedDB caches of remote documents with automatic drift detection and push synchronization.
 * **Cross-Project Schema & Data Diff Viewer**:
   * Side-by-side graphical diff between environments (e.g. comparing Production vs. Staging collections or document structures).
-* **Security Rules Simulator**:
-  * Interactive debugger and tester for `firestore.rules` directly within VS Code, validating permissions against simulated auth tokens.
+* **Interactive Security Rules Simulator & Test Runner**:
+  * In-IDE simulation engine to test rules against mock request auth tokens (`request.auth.uid`, `request.auth.token.admin`) before deploying.
+* **Multi-Tab Studio Dashboard**:
+  * Unified workspace tab with tabs for Collections, Auth Users, Rules, and Metrics.
+
