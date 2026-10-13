@@ -69,18 +69,36 @@ export function getCollectionTableStyles(): string {
       text-align: center;
       position: sticky;
       left: 0;
-      z-index: 4;
-      background: var(--vscode-editor-background);
+      z-index: 5;
+      background-color: var(--vscode-editor-background);
+      border-right: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
     }
     thead th.select-col {
-      z-index: 6;
-      background: var(--vscode-editor-background);
+      z-index: 12;
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, rgba(128, 128, 128, 0.1))),
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, rgba(128, 128, 128, 0.1)))
+      );
     }
     td.sticky-col {
       left: 36px !important;
+      box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.25);
     }
     thead th.id-header {
       left: 36px !important;
+      box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.25);
+    }
+    tbody tr:nth-child(even) td.select-col {
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(rgba(128, 128, 128, 0.035), rgba(128, 128, 128, 0.035));
+    }
+    tbody tr:hover td.select-col {
+      background-color: var(--vscode-editor-background) !important;
+      background-image: linear-gradient(
+        var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15)),
+        var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15))
+      ) !important;
     }
     .row-checkbox {
       cursor: pointer;
@@ -88,17 +106,39 @@ export function getCollectionTableStyles(): string {
       height: 15px;
       accent-color: var(--vscode-button-background, #007acc);
     }
+    .parent-header {
+      min-width: 170px;
+    }
+    .parent-doc-link {
+      color: var(--vscode-textLink-foreground, #3794ff);
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 0.9em;
+      border-radius: 3px;
+      padding: 1px 4px;
+    }
+    .parent-doc-link:hover {
+      text-decoration: underline;
+      background: rgba(55, 148, 255, 0.1);
+    }
   `;
 }
 
-export function getCollectionTableHtml(item: { collectionId: string; connectionId: string }): string {
+export function getCollectionTableHtml(
+  item: { collectionId: string; connectionId: string },
+  isCollectionGroup = false
+): string {
   return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Collection: ${item.collectionId}</title>
+      <title>${isCollectionGroup ? "Collection Group" : "Collection"}: ${item.collectionId}</title>
       <style>
         ${getCollectionTableStyles()}
       </style>
@@ -107,22 +147,27 @@ export function getCollectionTableHtml(item: { collectionId: string; connectionI
       <div class="toolbar">
         <div class="title-area">
           <h1>
-            <span>📁</span>
+            <span>${isCollectionGroup ? "🗂️" : "📁"}</span>
             <span class="collection-name">${item.collectionId}</span>
+            ${
+              isCollectionGroup
+                ? '<span class="badge" style="margin-left: 8px; background: rgba(255,152,0,0.18); color: #ff9800; border: 1px solid rgba(255,152,0,0.4);">Collection Group</span>'
+                : ""
+            }
           </h1>
           <span class="badge" title="Connection ID">${item.connectionId}</span>
         </div>
-        <div class="toolbar-actions">
-          <button id="toggleProtoBtn" class="secondary toggle-btn" title="Toggle visibility of Operational Protocol (__) columns">
+        <div class="toolbar-actions" id="toolbarActions" style="display:none;">
+          <button id="toggleProtoBtn" class="secondary toggle-btn" title="Toggle visibility of Operational Protocol (__) columns" style="display:none;">
             <span>🛡️</span> __ Protocol
           </button>
-          <button id="toggleEnvBtn" class="secondary toggle-btn" title="Toggle visibility of System Envelope (_) columns">
+          <button id="toggleEnvBtn" class="secondary toggle-btn" title="Toggle visibility of System Envelope (_) columns" style="display:none;">
             <span>🏷️</span> _ Envelope
           </button>
           <button id="toggleFilterBtn" class="secondary" title="Build server-side Firestore query filters">
             <span>🔍</span> Filter / Where
           </button>
-          <button id="toggleTimeTravelBtn" class="secondary toggle-btn" title="Simulate time-travel to preview live, scheduled, or expired documents">
+          <button id="toggleTimeTravelBtn" class="secondary toggle-btn" title="Simulate time-travel to preview live, scheduled, or expired documents" style="display:none;">
             <span>⏱️</span> Simulate Time
           </button>
           <div class="search-wrapper">
@@ -136,7 +181,7 @@ export function getCollectionTableHtml(item: { collectionId: string; connectionI
           <button id="countCollBtn" class="secondary" title="Get exact total document count in collection (1 read per 1k index entries)">
             <span>📊</span> Count
           </button>
-          <button id="calcAggBtn" class="secondary" title="Compute Sum and Average on numeric fields">
+          <button id="calcAggBtn" class="secondary" title="Compute Sum and Average on numeric fields" style="display:none;">
             <span>∑</span> Aggregates...
           </button>
           <button id="clearSearchBtn" class="secondary" style="display:none;">Clear</button>
@@ -190,7 +235,7 @@ export function getCollectionTableHtml(item: { collectionId: string; connectionI
         <div id="clauseList"></div>
       </div>
 
-      <div class="info-bar">
+      <div class="info-bar" id="infoBar" style="display:none;">
         <div class="info-text">
           Showing <b id="doc-count">0</b> documents
           <span id="total-count-badge" class="badge" style="display:none; margin-left: 8px; background: rgba(55,148,255,0.15); color: var(--vscode-textLink-foreground, #3794ff); border-color: rgba(55,148,255,0.4);"></span>
@@ -220,11 +265,24 @@ export function getCollectionTableHtml(item: { collectionId: string; connectionI
           <tbody id="table-body"></tbody>
         </table>
         <div id="empty-state" class="empty-state" style="display:none;">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4; margin-bottom:10px;">
             <path d="M4 4h16v16H4zM4 9h16M9 4v16"/>
           </svg>
-          <h3>No documents found</h3>
-          <p id="empty-state-msg">This collection has no documents or no matches matched your query.</p>
+          <h3 id="empty-state-title" style="margin:0 0 6px 0;">This collection is empty</h3>
+          <p id="empty-state-msg" style="margin:0 0 16px 0; color:var(--vscode-descriptionForeground);">There are no documents in this collection yet.</p>
+          <div id="empty-state-actions" style="display:flex; gap:10px; justify-content:center;">
+            <button id="emptyCreateDocBtn" style="padding:6px 16px;">
+              <span>➕</span> Create Document
+            </button>
+            <button id="emptyRefreshBtn" class="secondary" style="padding:6px 14px;">
+              <span>🔄</span> Refresh
+            </button>
+          </div>
+          <div id="empty-state-filter-actions" style="display:none; justify-content:center;">
+            <button id="emptyClearFilterBtn" class="secondary" style="padding:6px 14px;">
+              Clear Active Filters
+            </button>
+          </div>
         </div>
       </div>
 
@@ -233,17 +291,18 @@ export function getCollectionTableHtml(item: { collectionId: string; connectionI
       </div>
 
       <script>
-        ${getCollectionTableClientScript()}
+        ${getCollectionTableClientScript(isCollectionGroup)}
       </script>
     </body>
     </html>
   `;
 }
 
-export function getCollectionTableClientScript(): string {
+export function getCollectionTableClientScript(isCollectionGroup = false): string {
   return `
     (function() {
       const vscode = acquireVsCodeApi();
+      const isGroup = ${isCollectionGroup};
       let isSearchMode = false;
       let isServerQueryMode = false;
       let currentHeaders = [];
@@ -341,8 +400,10 @@ export function getCollectionTableClientScript(): string {
       }
 
       function renderHeaderRow(headers) {
+        const parentHeader = isGroup ? '<th class="parent-header">Parent Document</th>' : '';
         return '<th class="select-col"><input type="checkbox" id="selectAllCheckbox" class="row-checkbox" title="Select All Loaded Rows" /></th>' +
           '<th class="id-header">Document ID</th>' +
+          parentHeader +
           headers.map(h => renderHeaderCell(h)).join('');
       }
 
@@ -380,6 +441,12 @@ export function getCollectionTableClientScript(): string {
             '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1h8l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm7 1v3h3L11 2z"/></svg>' +
             '<span>' + escapeHtml(docId) + '</span>' + pillHtml + '</div></td>';
 
+          const parentCell = isGroup
+            ? '<td>' + (doc.__parentPath
+                ? '<span class="parent-doc-link" data-parent="' + escapeHtml(doc.__parentPath) + '" title="Click to open parent document: ' + escapeHtml(doc.__parentPath) + '">📁 ' + escapeHtml(doc.__parentPath) + '</span>'
+                : '<span style="opacity:0.4; font-style:italic;">(root)</span>') + '</td>'
+            : '';
+
           const dataCells = headers.map(h => {
             const isProto = h.startsWith('__');
             const isEnv = h.startsWith('_') && !isProto;
@@ -387,22 +454,105 @@ export function getCollectionTableClientScript(): string {
             return '<td' + tdCls + '>' + formatCell(doc[h]) + '</td>';
           }).join('');
 
-          return '<tr data-path="' + escapeHtml(doc.__path || '') + '" data-id="' + escapeHtml(docId) + '">' + selectCell + idCell + dataCells + '</tr>';
+          return '<tr data-path="' + escapeHtml(doc.__path || '') + '" data-id="' + escapeHtml(docId) + '">' + selectCell + idCell + parentCell + dataCells + '</tr>';
         }).join('');
+      }
+
+      function getNumericFields() {
+        const fields = new Set();
+        function inspect(obj, prefix) {
+          if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+          if (obj._seconds !== undefined && obj._nanoseconds !== undefined) return;
+          if (obj._latitude !== undefined && obj._longitude !== undefined) return;
+
+          for (const key of Object.keys(obj)) {
+            if (!prefix && (key.startsWith('__') || key === '__id' || key === '__path' || key === '__parentPath')) continue;
+            if (key === '_seconds' || key === '_nanoseconds' || key === '_latitude' || key === '_longitude') continue;
+
+            const val = obj[key];
+            const path = prefix ? prefix + '.' + key : key;
+            if (typeof val === 'number' && Number.isFinite(val)) {
+              fields.add(path);
+            } else if (val && typeof val === 'object' && !Array.isArray(val) && prefix.split('.').length < 2) {
+              inspect(val, path);
+            }
+          }
+        }
+        for (const doc of allLoadedDocs) {
+          if (doc) inspect(doc, '');
+        }
+        for (const doc of lastDocs) {
+          if (doc) inspect(doc, '');
+        }
+        return Array.from(fields).sort();
+      }
+
+      function updateContextualButtons() {
+        const hasProto = currentHeaders.some(h => h.startsWith('__'));
+        const hasEnv = currentHeaders.some(h => h.startsWith('_') && !h.startsWith('__'));
+        const hasLifecycle = allLoadedDocs.some(d => d && (d.__ !== undefined || d['__.active'] !== undefined || d['__.from'] !== undefined || d['__.exp'] !== undefined));
+        const numFields = getNumericFields();
+
+        const protoBtn = document.getElementById('toggleProtoBtn');
+        if (protoBtn) protoBtn.style.display = hasProto ? 'inline-flex' : 'none';
+
+        const envBtn = document.getElementById('toggleEnvBtn');
+        if (envBtn) envBtn.style.display = hasEnv ? 'inline-flex' : 'none';
+
+        const timeBtn = document.getElementById('toggleTimeTravelBtn');
+        if (timeBtn) timeBtn.style.display = hasLifecycle ? 'inline-flex' : 'none';
+
+        const aggBtn = document.getElementById('calcAggBtn');
+        if (aggBtn) {
+          aggBtn.style.display = numFields.length > 0 ? 'inline-flex' : 'none';
+          if (numFields.length > 0) {
+            aggBtn.title = 'Compute Sum and Average on numeric fields: ' + numFields.join(', ');
+          }
+        }
       }
 
       function updateEmptyState(count, customMsg) {
         const emptyState = document.getElementById('empty-state');
+        const titleEl = document.getElementById('empty-state-title');
         const msgEl = document.getElementById('empty-state-msg');
+        const emptyActions = document.getElementById('empty-state-actions');
+        const emptyFilterActions = document.getElementById('empty-state-filter-actions');
+        const toolbarActions = document.getElementById('toolbarActions');
+        const infoBar = document.getElementById('infoBar');
+        const tableContainerTable = document.querySelector('.table-container table');
+
+        updateContextualButtons();
+
+        const isFiltering = isSearchMode || isServerQueryMode;
+
         if (count === 0) {
-          if (customMsg) {
-            msgEl.textContent = customMsg;
-          } else {
-            msgEl.textContent = 'This collection has no documents or no matches matched your query.';
-          }
           emptyState.style.display = 'block';
+          if (tableContainerTable) tableContainerTable.style.display = 'none';
+
+          if (isFiltering) {
+            // When filtering/querying, keep toolbar visible so user can clear/modify query
+            if (toolbarActions) toolbarActions.style.display = 'flex';
+            if (infoBar) infoBar.style.display = 'flex';
+            if (titleEl) titleEl.textContent = 'No matching documents';
+            if (msgEl) msgEl.textContent = customMsg || 'No documents matched your active search or query clauses.';
+            if (emptyActions) emptyActions.style.display = 'none';
+            if (emptyFilterActions) emptyFilterActions.style.display = 'flex';
+          } else {
+            // Truly empty collection: hide the busy toolbar actions
+            if (toolbarActions) toolbarActions.style.display = 'none';
+            if (infoBar) infoBar.style.display = 'none';
+            if (titleEl) titleEl.textContent = 'This collection is empty';
+            if (msgEl) msgEl.textContent = customMsg || 'There are no documents in this collection yet.';
+            if (emptyActions) emptyActions.style.display = 'flex';
+            if (emptyFilterActions) emptyFilterActions.style.display = 'none';
+          }
         } else {
           emptyState.style.display = 'none';
+          if (tableContainerTable) tableContainerTable.style.display = 'table';
+          if (toolbarActions) toolbarActions.style.display = 'flex';
+          if (infoBar) infoBar.style.display = 'flex';
+          if (emptyActions) emptyActions.style.display = 'none';
+          if (emptyFilterActions) emptyFilterActions.style.display = 'none';
         }
       }
 
@@ -570,12 +720,33 @@ export function getCollectionTableClientScript(): string {
           }
         }
 
+        if (msg.type === 'aggregateStart') {
+          const btn = document.getElementById('calcAggBtn');
+          if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span>⏳</span> Calculating...';
+          }
+        }
+
         if (msg.type === 'aggregateResult') {
+          const btn = document.getElementById('calcAggBtn');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<span>∑</span> Aggregates...';
+          }
           const badge = document.getElementById('total-count-badge');
           if (badge) {
             const avgFormatted = msg.avg !== null && msg.avg !== undefined ? Number(msg.avg).toFixed(2) : 'N/A';
             badge.textContent = msg.field + ': Sum=' + (msg.sum ?? 0) + ' | Avg=' + avgFormatted;
             badge.style.display = 'inline-block';
+          }
+        }
+
+        if (msg.type === 'aggregateError') {
+          const btn = document.getElementById('calcAggBtn');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<span>∑</span> Aggregates...';
           }
         }
 
@@ -587,6 +758,7 @@ export function getCollectionTableClientScript(): string {
             lastDocs = allLoadedDocs;
             reRenderCurrentTable();
             document.getElementById('doc-count').textContent = lastDocs.length;
+            updateEmptyState(lastDocs.length);
           }
         }
 
@@ -778,7 +950,8 @@ export function getCollectionTableClientScript(): string {
       };
 
       document.getElementById('calcAggBtn').onclick = function() {
-        vscode.postMessage({ command: 'calculateAggregates' });
+        const numFields = getNumericFields();
+        vscode.postMessage({ command: 'calculateAggregates', numericFields: numFields });
       };
 
       document.getElementById('batchUpdateBtn').onclick = function() {
@@ -794,7 +967,7 @@ export function getCollectionTableClientScript(): string {
       document.getElementById('batchClearBtn').onclick = function() {
         selectedDocIds.clear();
         const checkboxes = document.querySelectorAll('.row-select-checkbox, #selectAllCheckbox');
-        checkboxes.forEach(cb => { (cb as any).checked = false; });
+        checkboxes.forEach(cb => { cb.checked = false; });
         updateBatchToolbar();
       };
 
@@ -913,6 +1086,14 @@ export function getCollectionTableClientScript(): string {
         if (event.target.closest('.select-col') || event.target.closest('.row-checkbox')) {
           return;
         }
+        const parentLink = event.target.closest('.parent-doc-link');
+        if (parentLink) {
+          const parentPath = parentLink.getAttribute('data-parent');
+          if (parentPath) {
+            vscode.postMessage({ command: 'openDoc', path: parentPath });
+            return;
+          }
+        }
         const target = event.target.closest('tr');
         if (target) {
           const path = target.getAttribute('data-path');
@@ -932,6 +1113,27 @@ export function getCollectionTableClientScript(): string {
           document.getElementById('jumpBtn').click();
         }
       });
+
+      const emptyCreateDocBtn = document.getElementById('emptyCreateDocBtn');
+      if (emptyCreateDocBtn) {
+        emptyCreateDocBtn.onclick = function() {
+          vscode.postMessage({ command: 'createDoc' });
+        };
+      }
+
+      const emptyRefreshBtn = document.getElementById('emptyRefreshBtn');
+      if (emptyRefreshBtn) {
+        emptyRefreshBtn.onclick = function() {
+          vscode.postMessage({ command: 'refresh' });
+        };
+      }
+
+      const emptyClearFilterBtn = document.getElementById('emptyClearFilterBtn');
+      if (emptyClearFilterBtn) {
+        emptyClearFilterBtn.onclick = function() {
+          document.getElementById('clearSearchBtn').click();
+        };
+      }
 
       // Tell the extension the page is (re)loaded so it can send the current data.
       vscode.postMessage({ command: 'ready' });

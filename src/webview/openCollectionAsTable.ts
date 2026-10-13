@@ -1,4 +1,4 @@
-import { QueryDocumentSnapshot, Query, AggregateField, FieldValue } from "firebase-admin/firestore";
+import { QueryDocumentSnapshot, Query, AggregateField, FieldValue, FieldPath } from "firebase-admin/firestore";
 import * as vscode from "vscode";
 import { CollectionItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
@@ -9,10 +9,52 @@ import { getCollectionTableHtml } from "./collectionTable/collectionTableHtml";
 
 export { QueryClause };
 
-export async function openCollectionAsTable(item: CollectionItem) {
+export interface CollectionTableTarget {
+  connectionId: string;
+  collectionId: string;
+  collectionPath?: string;
+  reference?: import("firebase-admin/firestore").CollectionReference;
+  isCollectionGroup?: boolean;
+}
+
+function sanitizeFirestoreValue(val: any): any {
+  if (val === null || val === undefined) return val;
+  if (typeof val !== "object") return val;
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val._seconds === "number" && typeof val._nanoseconds === "number") {
+    return { _seconds: val._seconds, _nanoseconds: val._nanoseconds };
+  }
+  if (typeof val._latitude === "number" && typeof val._longitude === "number") {
+    return { _latitude: val._latitude, _longitude: val._longitude };
+  }
+  if (typeof val.path === "string" && (val._firestore || val.constructor?.name === "DocumentReference")) {
+    return `[Ref: ${val.path}]`;
+  }
+  if (Array.isArray(val)) {
+    return val.map(sanitizeFirestoreValue);
+  }
+  const result: Record<string, any> = {};
+  for (const k of Object.keys(val)) {
+    result[k] = sanitizeFirestoreValue(val[k]);
+  }
+  return result;
+}
+
+export async function openCollectionAsTable(
+  item: CollectionItem | CollectionTableTarget,
+  isCollectionGroup = false
+) {
+  const isGroup = isCollectionGroup || (item as any).isCollectionGroup === true;
+  const collectionId = item.collectionId;
+  const connectionId = item.connectionId;
+  const collectionPath =
+    (item as any).reference?.path ||
+    (item as any).collectionPath ||
+    collectionId;
+
   const panel = vscode.window.createWebviewPanel(
     "firestoreCollectionTable",
-    `Collection: ${item.collectionId}`,
+    isGroup ? `Collection Group: ${collectionId}` : `Collection: ${collectionPath}`,
     vscode.ViewColumn.One,
     {
       enableScripts: true,
@@ -30,17 +72,19 @@ export async function openCollectionAsTable(item: CollectionItem) {
   let isLoading = false;
 
   /**
-   * Resolve the collection through the live connection on every query, so the table keeps
-   * working after the connection was edited (its old Firestore instance is terminated).
+   * Resolve the collection or collection group query target through the live connection.
    */
-  async function getCollection() {
-    const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-    return firestore.collection(item.reference.path);
+  async function getBaseQueryTarget(): Promise<Query> {
+    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+    if (isGroup) {
+      return firestore.collectionGroup(collectionId);
+    }
+    return firestore.collection(collectionPath);
   }
 
   /** Build an executable Firestore query applying all active where clauses. */
   async function buildBaseQuery(): Promise<Query> {
-    let q: Query = await getCollection();
+    let q: Query = await getBaseQueryTarget();
     for (const clause of activeQueryClauses) {
       if (clause.field && clause.op) {
         const parsedVal = parseFilterValue(clause.value, clause.op);
@@ -64,16 +108,17 @@ export async function openCollectionAsTable(item: CollectionItem) {
       }
       const snapshot = await query.get();
       const docs = snapshot.docs.map((doc: QueryDocumentSnapshot) => ({
-        ...doc.data(),
+        ...sanitizeFirestoreValue(doc.data()),
         __path: doc.ref.path,
         __id: doc.id,
+        __parentPath: doc.ref.parent && doc.ref.parent.parent ? doc.ref.parent.parent.path : null,
       }));
 
       if (docs.length > 0) {
         const headerSet = new Set<string>(headers);
         docs.forEach((doc: any) => {
           Object.keys(doc).forEach((k) => {
-            if (k !== "__path" && k !== "__id") {
+            if (k !== "__path" && k !== "__id" && k !== "__parentPath") {
               headerSet.add(k);
             }
           });
@@ -97,7 +142,24 @@ export async function openCollectionAsTable(item: CollectionItem) {
       const hasMore = docs.length === pageSize && !reachedCap;
       return { newDocs: docs, hasMore };
     } catch (err: any) {
-      vscode.window.showErrorMessage(`Failed to load documents for '${item.collectionId}': ${err.message}`);
+      const match = (err.message || "").match(/https:\/\/console\.firebase\.google\.com\S+/);
+      if (match) {
+        const indexUrl = match[0];
+        vscode.window.showErrorMessage(
+          `Collection Group query requires a composite index. Create it in Firebase Console:`,
+          "Create Index in Firebase Console",
+          "Copy Index URL"
+        ).then((action) => {
+          if (action === "Create Index in Firebase Console") {
+            vscode.env.openExternal(vscode.Uri.parse(indexUrl));
+          } else if (action === "Copy Index URL") {
+            vscode.env.clipboard.writeText(indexUrl);
+            vscode.window.showInformationMessage("Index URL copied to clipboard!");
+          }
+        });
+      } else {
+        vscode.window.showErrorMessage(`Failed to load documents for '${collectionId}': ${err.message}`);
+      }
       return { newDocs: [], hasMore: false };
     }
   }
@@ -108,13 +170,15 @@ export async function openCollectionAsTable(item: CollectionItem) {
     return vscode.Uri.joinPath(wsFolder.uri, ".vscode", "firestore-queries.json");
   }
 
+  const bookmarkKey = isGroup ? `group:${collectionId}` : collectionId;
+
   async function loadSavedBookmarks(): Promise<Record<string, QueryClause[]>> {
     const uri = await getQueriesFileUri();
     if (!uri) return {};
     try {
       const bytes = await vscode.workspace.fs.readFile(uri);
       const parsed = JSON.parse(Buffer.from(bytes).toString("utf8"));
-      return parsed[item.collectionId] || {};
+      return parsed[bookmarkKey] || {};
     } catch {
       return {};
     }
@@ -132,30 +196,33 @@ export async function openCollectionAsTable(item: CollectionItem) {
       existing = JSON.parse(Buffer.from(bytes).toString("utf8"));
     } catch {}
 
-    if (!existing[item.collectionId]) {
-      existing[item.collectionId] = {};
+    if (!existing[bookmarkKey]) {
+      existing[bookmarkKey] = {};
     }
-    existing[item.collectionId][name] = clauses;
+    existing[bookmarkKey][name] = clauses;
 
     const content = Buffer.from(JSON.stringify(existing, null, 2), "utf8");
     await vscode.workspace.fs.writeFile(uri, content);
     vscode.window.showInformationMessage(`Saved query bookmark '${name}'!`);
   }
 
-  // ── Initial load ──────────────────────────────────────────────────────────
-  panel.webview.html = getCollectionTableHtml(item);
-
+  // ── Data loading & Message handler ─────────────────────────────────────────
   // Start the first data fetch immediately; the webview is seeded once it reports 'ready'.
   let hasMoreState = false;
-  const initialLoad = loadMoreDocs().then((r) => {
-    hasMoreState = r.hasMore;
-  });
+  const initialLoad = loadMoreDocs()
+    .then((r) => {
+      hasMoreState = r.hasMore;
+    })
+    .catch((err) => {
+      vscode.window.showErrorMessage(`Failed to load initial documents: ${err.message}`);
+    });
 
-  // ── Message handler ───────────────────────────────────────────────────────
   const messageSubscription = panel.webview.onDidReceiveMessage(async (message) => {
     if (message.command === "ready") {
       // Sent on every (re)load of the webview, e.g. when a hidden tab becomes visible again.
-      await initialLoad;
+      try {
+        await initialLoad;
+      } catch {}
       const bookmarks = await loadSavedBookmarks();
       panel.webview.postMessage({
         type: "init",
@@ -236,13 +303,85 @@ export async function openCollectionAsTable(item: CollectionItem) {
       }
     }
 
+    if (message.command === "refresh") {
+      loadedDocs = [];
+      lastDoc = null;
+      headers = [];
+      isLoading = true;
+      try {
+        const { hasMore } = await loadMoreDocs();
+        hasMoreState = hasMore;
+        const bookmarks = await loadSavedBookmarks();
+        panel.webview.postMessage({
+          type: "init",
+          headers,
+          docs: loadedDocs,
+          hasMore: hasMoreState,
+          bookmarks,
+        });
+      } finally {
+        isLoading = false;
+      }
+      return;
+    }
+
+    if (message.command === "createDoc") {
+      try {
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        const collRef = firestore.collection(collectionPath);
+        const docId = await vscode.window.showInputBox({
+          prompt: "Enter Document ID (leave blank for auto-generated ID)",
+          placeHolder: "Document ID",
+        });
+        if (docId === undefined) return;
+
+        const json = await vscode.window.showInputBox({
+          prompt: "Enter document data as JSON",
+          placeHolder: '{"name": "example"}',
+          value: "{}",
+        });
+        if (json === undefined) return;
+
+        let data: any = {};
+        try {
+          data = JSON.parse(json || "{}");
+        } catch {
+          vscode.window.showErrorMessage("Invalid JSON.");
+          return;
+        }
+
+        const docRef = docId.trim() ? collRef.doc(docId.trim()) : collRef.doc();
+        await docRef.set(data);
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
+        vscode.window.showInformationMessage(`Document '${docRef.id}' created!`);
+
+        // Reload collection table to show new document
+        loadedDocs = [];
+        lastDoc = null;
+        headers = [];
+        const { hasMore } = await loadMoreDocs();
+        hasMoreState = hasMore;
+        const bookmarks = await loadSavedBookmarks();
+        panel.webview.postMessage({
+          type: "init",
+          headers,
+          docs: loadedDocs,
+          hasMore: hasMoreState,
+          bookmarks,
+        });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to create document: ${err.message}`);
+      }
+      return;
+    }
+
     if (message.command === "openDoc" && message.path) {
-      openPath(message.path, item.connectionId);
+      openPath(message.path, connectionId);
     }
 
     if (message.command === "exportJson") {
       const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(`${item.collectionId}_export.json`),
+        defaultUri: vscode.Uri.file(`${isGroup ? "group_" : ""}${collectionId}_export.json`),
         filters: { JSON: ["json"] },
       });
       if (uri) {
@@ -264,9 +403,33 @@ export async function openCollectionAsTable(item: CollectionItem) {
         return;
       }
       try {
-        const docRef = (await getCollection()).doc(docId);
-        const snapshot = await docRef.get();
-        if (!snapshot.exists) {
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        let snapshot: QueryDocumentSnapshot | import("firebase-admin/firestore").DocumentSnapshot | null = null;
+
+        if (isGroup) {
+          if (docId.includes("/")) {
+            const s = await firestore.doc(docId).get();
+            if (s.exists) {
+              snapshot = s;
+            }
+          } else {
+            const querySnap = await firestore
+              .collectionGroup(collectionId)
+              .where(FieldPath.documentId(), "==", docId)
+              .limit(1)
+              .get();
+            if (!querySnap.empty) {
+              snapshot = querySnap.docs[0];
+            }
+          }
+        } else {
+          const s = await firestore.collection(collectionPath).doc(docId).get();
+          if (s.exists) {
+            snapshot = s;
+          }
+        }
+
+        if (!snapshot || !snapshot.exists) {
           panel.webview.postMessage({
             type: "lookupNotFound",
             docId,
@@ -275,15 +438,18 @@ export async function openCollectionAsTable(item: CollectionItem) {
         }
 
         const docData = {
-          ...snapshot.data(),
+          ...sanitizeFirestoreValue(snapshot.data()),
           __path: snapshot.ref.path,
           __id: snapshot.id,
+          __parentPath: snapshot.ref.parent && snapshot.ref.parent.parent ? snapshot.ref.parent.parent.path : null,
         };
 
         const docKeys = Object.keys(snapshot.data() || {});
         const headerSet = new Set<string>(headers);
         for (const k of docKeys) {
-          headerSet.add(k);
+          if (k !== "__path" && k !== "__id" && k !== "__parentPath") {
+            headerSet.add(k);
+          }
         }
         headers = sortHeaders(Array.from(headerSet));
 
@@ -315,7 +481,9 @@ export async function openCollectionAsTable(item: CollectionItem) {
           type: "countResult",
           count,
         });
-        vscode.window.showInformationMessage(`Collection '${item.collectionId}' has ${count.toLocaleString()} document(s).`);
+        vscode.window.showInformationMessage(
+          `${isGroup ? "Collection Group" : "Collection"} '${collectionId}' has ${count.toLocaleString()} document(s).`
+        );
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to count collection: ${err.message}`);
       }
@@ -323,17 +491,53 @@ export async function openCollectionAsTable(item: CollectionItem) {
 
     if (message.command === "calculateAggregates") {
       let field = message.field;
+      const detectedNumericFields: string[] = Array.isArray(message.numericFields)
+        ? message.numericFields.filter((f: any) => typeof f === "string" && f.trim().length > 0)
+        : [];
+
       if (!field) {
-        field = await vscode.window.showInputBox({
-          title: `Calculate Aggregates for '${item.collectionId}'`,
-          prompt: "Enter numeric field name (e.g. amount, price, score, rating)",
-          placeHolder: "amount",
-          validateInput: (v) => (v.trim() ? undefined : "Field name is required"),
-        });
+        if (detectedNumericFields.length > 0) {
+          const quickPickItems: vscode.QuickPickItem[] = detectedNumericFields.map((f) => ({
+            label: `$(symbol-number) ${f}`,
+            description: "Numeric field",
+            detail: `Compute Sum and Average for '${f}'`,
+          }));
+          quickPickItems.push({
+            label: "$(edit) Custom Field Path...",
+            description: "Manual entry",
+            detail: "Enter a custom field or nested dot-notation path to aggregate",
+          });
+
+          const selected = await vscode.window.showQuickPick(quickPickItems, {
+            title: `Calculate Aggregates for ${isGroup ? "Collection Group" : "Collection"} '${collectionId}'`,
+            placeHolder: "Select a numeric field to compute Sum and Average",
+          });
+
+          if (!selected) return;
+
+          if (selected.label.startsWith("$(edit)")) {
+            field = await vscode.window.showInputBox({
+              title: `Calculate Aggregates for ${isGroup ? "Collection Group" : "Collection"} '${collectionId}'`,
+              prompt: "Enter numeric field path (e.g. amount, stats.price, score)",
+              placeHolder: detectedNumericFields[0] || "amount",
+              validateInput: (v) => (v.trim() ? undefined : "Field path is required"),
+            });
+          } else {
+            field = selected.label.replace(/^\$\(symbol-number\)\s*/, "");
+          }
+        } else {
+          field = await vscode.window.showInputBox({
+            title: `Calculate Aggregates for ${isGroup ? "Collection Group" : "Collection"} '${collectionId}'`,
+            prompt: "Enter numeric field name (e.g. amount, price, score, rating)",
+            placeHolder: "amount",
+            validateInput: (v) => (v.trim() ? undefined : "Field name is required"),
+          });
+        }
       }
       if (!field) return;
 
       try {
+        panel.webview.postMessage({ type: "aggregateStart" });
         const query = await buildBaseQuery();
         const aggSnapshot = await query.aggregate({
           count: AggregateField.count(),
@@ -352,6 +556,7 @@ export async function openCollectionAsTable(item: CollectionItem) {
           `Aggregates for '${field.trim()}': Count = ${data.count.toLocaleString()}, Sum = ${data.sum ?? 0}, Average = ${data.avg !== null && data.avg !== undefined ? Number(data.avg).toFixed(2) : "N/A"}`
         );
       } catch (err: any) {
+        panel.webview.postMessage({ type: "aggregateError", error: err.message });
         vscode.window.showErrorMessage(`Failed to calculate aggregates for '${field}': ${err.message}`);
       }
     }
@@ -400,15 +605,22 @@ export async function openCollectionAsTable(item: CollectionItem) {
       if (confirm !== "Proceed with Batch Update") return;
 
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-        const collRef = firestore.collection(item.reference.path);
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        const docPathMap = new Map<string, string>();
+        loadedDocs.forEach((d) => {
+          if (d.__id && d.__path) {
+            docPathMap.set(d.__id, d.__path);
+          }
+        });
+
         const chunkSize = 400;
 
         for (let i = 0; i < docIds.length; i += chunkSize) {
           const chunk = docIds.slice(i, i + chunkSize);
           const batch = firestore.batch();
           for (const id of chunk) {
-            const docRef = collRef.doc(id);
+            const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
+            const docRef = firestore.doc(targetPath);
             if (isDeleteField) {
               batch.update(docRef, { [fieldName.trim()]: FieldValue.delete() });
             } else {
@@ -420,8 +632,8 @@ export async function openCollectionAsTable(item: CollectionItem) {
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
           docIds.map((id) => ({
-            connectionId: item.connectionId,
-            docPath: `${item.reference.path}/${id}`,
+            connectionId,
+            docPath: docPathMap.get(id) || `${collectionPath}/${id}`,
           }))
         );
 
@@ -468,23 +680,30 @@ export async function openCollectionAsTable(item: CollectionItem) {
       if (confirm !== "Delete Permanently") return;
 
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-        const collRef = firestore.collection(item.reference.path);
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        const docPathMap = new Map<string, string>();
+        loadedDocs.forEach((d) => {
+          if (d.__id && d.__path) {
+            docPathMap.set(d.__id, d.__path);
+          }
+        });
+
         const chunkSize = 400;
 
         for (let i = 0; i < docIds.length; i += chunkSize) {
           const chunk = docIds.slice(i, i + chunkSize);
           const batch = firestore.batch();
           for (const id of chunk) {
-            batch.delete(collRef.doc(id));
+            const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
+            batch.delete(firestore.doc(targetPath));
           }
           await batch.commit();
         }
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
           docIds.map((id) => ({
-            connectionId: item.connectionId,
-            docPath: `${item.reference.path}/${id}`,
+            connectionId,
+            docPath: docPathMap.get(id) || `${collectionPath}/${id}`,
           }))
         );
 
@@ -533,6 +752,9 @@ export async function openCollectionAsTable(item: CollectionItem) {
       });
     }
   });
+
+  // Assign HTML content to render webview and trigger client-side ready handshake
+  panel.webview.html = getCollectionTableHtml({ collectionId, connectionId }, isGroup);
 
   panel.onDidDispose(() => {
     messageSubscription.dispose();

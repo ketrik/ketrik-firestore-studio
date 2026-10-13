@@ -2,6 +2,54 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.9.2] - 2026-10-13
+
+### Added
+- **Local Firebase Emulator Suite Integration & Auto-Discovery**:
+  - Automatically detect active workspace `firebase.json` and `.firebaserc` on load.
+  - Non-blocking socket port health probing (`net.Socket`) for Firestore (`8080`), Firebase Auth (`9099`), and Emulator UI (`4000`).
+  - Terminal-based process launcher with comprehensive lifecycle controls:
+    - `ketrik-firestore-studio.startEmulator`: Launch emulators in integrated terminal using workspace configuration.
+    - `ketrik-firestore-studio.stopEmulator`: Safely stop active emulator processes.
+    - `ketrik-firestore-studio.restartEmulator`: One-action terminal restart cycle.
+    - `ketrik-firestore-studio.openEmulatorUi`: One-click browser launcher for Firebase Emulator UI dashboard.
+    - `ketrik-firestore-studio.discoverEmulators`: Re-probe ports and auto-connect to running emulators.
+    - `ketrik-firestore-studio.emulatorStatusMenu`: Interactive QuickPick dashboard displaying live port states, service URLs, and quick actions.
+  - Live status bar indicator displaying emulator health (`$(server-process) Emulator: 8080 (Online)`).
+  - Isolated connection environment variables supporting both `FIRESTORE_EMULATOR_HOST` and `FIREBASE_AUTH_EMULATOR_HOST` without requiring cloud service accounts.
+  - Welcome view quick-action to boot or connect local emulators when no active connections are present.
+- **Collection Group Queries & Table Views (`collectionGroup`)**:
+  - Full partition-wide querying via `ketrik-firestore-studio.queryCollectionGroup` across all matching subcollections database-wide.
+  - Sticky **Parent Document** column (`__parentPath`) in table view displaying origin document hierarchy with 1-click jump to open parent documents in the editor.
+  - Composite index error interceptor providing 1-click URLs directly to the Firebase Console index builder when queries require an index.
+  - Full support for where query builder, chunked `WriteBatch` updates and deletes, aggregations, and pagination over collection groups.
+- **Inline Table View Action Icons in Tree Explorer**:
+  - Inline `$(table)` action icon on collections for instant one-click table view launch.
+  - Inline `$(table)` action icon on Map and Array document fields (`openFieldAsTable`).
+
+### Improved
+- **Smart Aggregations & Numeric QuickPick**:
+  - `calcAggBtn` (`∑ Aggregates...`) now dynamically inspects loaded documents and only displays when numeric fields are detected.
+  - Interactive QuickPick automatically lists all detected numeric fields (`$(symbol-number) <field>`) with manual custom path fallback.
+  - Added responsive loading (`⏳ Calculating...`) and error recovery states to the aggregation button.
+  - Dynamic button tooltip displaying all detected numeric fields available for aggregation.
+- **Security Rules AST Caching & Fallback Handling**:
+  - In-memory caching for parsed AST security rules (`RulesParser.ts`) to eliminate redundant evaluations during tree navigation.
+  - Graceful handling when no security rules file is downloaded or configured, preventing confusing restricted-access locks.
+- **Tree Explorer & Snapshot Cache Performance**:
+  - Granular node-level refresh (`refreshNode`) replacing disruptive full-tree redraws.
+  - Optimized virtual file system cache invalidation and snapshot caching in `DocumentFileSystemProvider`.
+
+### Fixed
+- **Collection Table Initial Blank Screen**:
+  - Resolved blank table view on collection open caused by client-side syntax errors and `structuredClone` serialization failures on `DocumentReference` objects.
+  - Added recursive `sanitizeFirestoreValue()` safely serializing references, timestamps, and geopoints prior to `postMessage`.
+- **Sticky Column Hover Bleed-Through**:
+  - Fixed semi-transparent hover opacity on sticky ID columns causing scrolled table text to show through on hover; replaced with opaque themed background colors and gradient overlay.
+- **Contextual Toolbar & Empty Collection State**:
+  - Contextual buttons (`__ Protocol`, `_ Envelope`, `Simulate Time`) now hide when corresponding schema fields are absent.
+  - Clean empty collection state view with dedicated actions (`Create Document`, `Refresh`, clear filters) while automatically hiding the busy toolbar on empty collections.
+
 ## [1.9.1] - 2026-10-13
 
 ### Added

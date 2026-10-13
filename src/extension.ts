@@ -27,6 +27,7 @@ import {
 } from "./commands/fieldCommands";
 import {
   openCollectionAsTableCommand,
+  queryCollectionGroupCommand,
   addCollectionCommand,
 } from "./commands/collectionCommands";
 import {
@@ -57,6 +58,15 @@ import {
 } from "./auth/authCommands";
 import { generateSchemaCommand } from "./commands/schemaCommands";
 import { exportCollectionCommand, importCollectionCommand } from "./commands/importExportCommands";
+import {
+  startEmulatorCommand,
+  stopEmulatorCommand,
+  restartEmulatorCommand,
+  openEmulatorUiCommand,
+  discoverEmulatorsCommand,
+  emulatorStatusMenuCommand,
+} from "./commands/emulatorCommands";
+import { EmulatorService } from "./emulator/EmulatorService";
 import { RulesService } from "./rules/RulesService";
 import { scheme } from "./constants";
 import { DocumentFileSystemProvider } from "./editor/DocumentFileSystemProvider";
@@ -71,6 +81,11 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize ConnectionManager singleton
   const connectionManager = ConnectionManager.getInstance();
   context.subscriptions.push(connectionManager);
+
+  // Initialize EmulatorService singleton for auto-discovery and lifecycle
+  const emulatorService = EmulatorService.getInstance();
+  await emulatorService.init(context);
+  context.subscriptions.push(emulatorService);
 
   const explorerDataProvider = new ExplorerDataProvider();
   context.subscriptions.push(explorerDataProvider);
@@ -212,6 +227,30 @@ export async function activate(context: vscode.ExtensionContext) {
       (connectionId?: string) => {
         explorerDataProvider.showMoreAuthUsers(connectionId);
       }
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.startEmulator",
+      startEmulatorCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.stopEmulator",
+      stopEmulatorCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.restartEmulator",
+      restartEmulatorCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openEmulatorUi",
+      openEmulatorUiCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.discoverEmulators",
+      discoverEmulatorsCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.emulatorStatusMenu",
+      emulatorStatusMenuCommand
     )
   );
 
@@ -219,7 +258,11 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.openCollectionAsTable",
-      (item: CollectionItem) => openCollectionAsTableCommand(item)
+      (item?: any) => openCollectionAsTableCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.queryCollectionGroup",
+      (item?: any) => queryCollectionGroupCommand(item)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.addCollection",

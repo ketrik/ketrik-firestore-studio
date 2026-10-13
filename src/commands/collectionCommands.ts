@@ -9,8 +9,134 @@ import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 /**
  * Open collection in table view.
  */
-export function openCollectionAsTableCommand(item: CollectionItem) {
-  openCollectionAsTable(item);
+export async function openCollectionAsTableCommand(item?: CollectionItem | ConnectionTreeItem) {
+  if (item instanceof CollectionItem) {
+    await openCollectionAsTable(item);
+    return;
+  }
+  if (item && (item as any).collectionId && (item as any).connectionId) {
+    await openCollectionAsTable(item as any);
+    return;
+  }
+
+  let connectionId: string;
+  if (item instanceof ConnectionTreeItem) {
+    connectionId = item.config.id;
+  } else {
+    const connections = ConnectionManager.getInstance().getConnections();
+    if (connections.length === 0) {
+      vscode.window.showInformationMessage("No connections configured. Please add a connection first.");
+      return;
+    }
+    if (connections.length === 1) {
+      connectionId = connections[0].id;
+    } else {
+      const picked = await vscode.window.showQuickPick(
+        connections.map((c) => ({ label: c.name, description: c.id, connection: c })),
+        { placeHolder: "Select connection to open collection table" }
+      );
+      if (!picked) return;
+      connectionId = picked.connection.id;
+    }
+  }
+
+  let collections: string[] = [];
+  try {
+    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+    const colRefs = await firestore.listCollections();
+    collections = colRefs.map((c) => c.id);
+  } catch {}
+
+  let targetCollection: string | undefined;
+  if (collections.length > 0) {
+    const pickItems = [
+      ...collections.map((c) => ({ label: `📁 ${c}`, collectionId: c })),
+      { label: "$(edit) Enter custom collection or subcollection path...", collectionId: "__custom__" },
+    ];
+    const picked = await vscode.window.showQuickPick(pickItems, {
+      placeHolder: "Select collection to open as table",
+    });
+    if (!picked) return;
+    if (picked.collectionId === "__custom__") {
+      targetCollection = await vscode.window.showInputBox({
+        title: "Open Collection as Table",
+        prompt: "Enter collection or subcollection path (e.g. users, or users/123/orders)",
+        placeHolder: "users",
+        validateInput: (v) => (v && v.trim() ? null : "Collection path is required"),
+      });
+    } else {
+      targetCollection = picked.collectionId;
+    }
+  } else {
+    targetCollection = await vscode.window.showInputBox({
+      title: "Open Collection as Table",
+      prompt: "Enter collection or subcollection path (e.g. users, or users/123/orders)",
+      placeHolder: "users",
+      validateInput: (v) => (v && v.trim() ? null : "Collection path is required"),
+    });
+  }
+
+  if (!targetCollection || !targetCollection.trim()) return;
+
+  const trimmed = targetCollection.trim();
+  const collId = trimmed.includes("/") ? trimmed.split("/").pop()! : trimmed;
+
+  await openCollectionAsTable({
+    connectionId,
+    collectionId: collId,
+    collectionPath: trimmed,
+  });
+}
+
+/**
+ * Open Collection Group in table view across all matching subcollections.
+ */
+export async function queryCollectionGroupCommand(
+  item?: ConnectionTreeItem | CollectionItem
+): Promise<void> {
+  let connectionId: string;
+  let defaultCollectionId = "";
+
+  if (item instanceof CollectionItem) {
+    connectionId = item.connectionId;
+    defaultCollectionId = item.collectionId;
+  } else if (item instanceof ConnectionTreeItem) {
+    connectionId = item.config.id;
+  } else {
+    const connections = ConnectionManager.getInstance().getConnections();
+    if (connections.length === 0) {
+      vscode.window.showInformationMessage("No connections configured. Please add a connection first.");
+      return;
+    }
+    if (connections.length === 1) {
+      connectionId = connections[0].id;
+    } else {
+      const picked = await vscode.window.showQuickPick(
+        connections.map((c) => ({ label: c.name, description: c.id, connection: c })),
+        { placeHolder: "Select connection to query collection group" }
+      );
+      if (!picked) return;
+      connectionId = picked.connection.id;
+    }
+  }
+
+  const collectionId = await vscode.window.showInputBox({
+    title: "Query Collection Group Across All Subcollections",
+    prompt: "Enter Collection Group ID (e.g. orders, comments, messages, items)",
+    value: defaultCollectionId,
+    placeHolder: "orders",
+    validateInput: (v) => (v && v.trim().length > 0 ? null : "Collection Group ID cannot be empty"),
+  });
+
+  if (!collectionId) {
+    return;
+  }
+
+  await openCollectionAsTable({
+    connectionId,
+    collectionId: collectionId.trim(),
+    isCollectionGroup: true,
+  });
 }
 
 /**

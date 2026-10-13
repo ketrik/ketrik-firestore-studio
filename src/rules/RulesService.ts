@@ -18,17 +18,22 @@ export class RulesService implements vscode.Disposable {
   private context: vscode.ExtensionContext | null = null;
   private virtualRules = new Map<string, string>();
 
-  private static readonly DEFAULT_RULES = `rules_version = '2';
+  public static readonly DEFAULT_STARTER_RULES = `rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Default: lock down all documents
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    // Starter template: rules are not yet configured or downloaded.
+    // Configure your rules and deploy them using Firestore Studio.
   }
 }
 `;
+
+  private static isOldLockdownDefault(rules: string): boolean {
+    const trimmed = rules.replace(/\s+/g, " ").trim();
+    return (
+      trimmed === "rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { // Default: lock down all documents match /{document=**} { allow read, write: if false; } } }" ||
+      trimmed === "rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if false; } } }"
+    );
+  }
 
   private constructor() {
     this.findAndLoadWorkspaceRules();
@@ -244,20 +249,32 @@ service cloud.firestore {
   }
 
   /**
-   * Get virtual or physical rules content for a connection.
+   * Check whether rules have been downloaded or configured for this connection (or in workspace).
    */
-  public getRulesContent(connectionId: string): string {
+  public hasRules(connectionId?: string): boolean {
+    return this.getLoadedRules(connectionId) !== null;
+  }
+
+  /**
+   * Get downloaded or workspace rules content, or null if no rules exist.
+   */
+  public getLoadedRules(connectionId?: string): string | null {
     // 1. Check in-memory virtual cache for this connection
-    if (this.virtualRules.has(connectionId)) {
-      return this.virtualRules.get(connectionId)!;
+    if (connectionId && this.virtualRules.has(connectionId)) {
+      const v = this.virtualRules.get(connectionId)!;
+      if (v && v !== RulesService.DEFAULT_STARTER_RULES && !RulesService.isOldLockdownDefault(v)) {
+        return v;
+      }
     }
 
     // 2. Check workspace globalState for this connection
-    if (this.context) {
+    if (connectionId && this.context) {
       const saved = this.context.globalState.get<string>(`virtual_rules:${connectionId}`);
-      if (saved) {
+      if (saved && saved !== RulesService.DEFAULT_STARTER_RULES && !RulesService.isOldLockdownDefault(saved)) {
         this.virtualRules.set(connectionId, saved);
-        this.parsers.set(connectionId, new RulesParser(saved));
+        if (!this.parsers.has(connectionId)) {
+          this.parsers.set(connectionId, new RulesParser(saved));
+        }
         return saved;
       }
     }
@@ -272,8 +289,18 @@ service cloud.firestore {
       }
     }
 
-    // 4. Default starter template
-    return RulesService.DEFAULT_RULES;
+    return null;
+  }
+
+  /**
+   * Get virtual or physical rules content for a connection, or fallback starter template for the editor.
+   */
+  public getRulesContent(connectionId: string): string {
+    const loaded = this.getLoadedRules(connectionId);
+    if (loaded) {
+      return loaded;
+    }
+    return RulesService.DEFAULT_STARTER_RULES;
   }
 
   /**
@@ -337,13 +364,18 @@ service cloud.firestore {
 
   /**
    * Get the security access classification for a collection path.
+   * Returns null if no rules file has been downloaded or configured.
    */
   public getAccessForCollection(collPath: string, connectionId?: string): CollectionSecurityAccess | null {
     // 1. Prefer the parser corresponding to this connection's rules
     if (connectionId) {
       let parser = this.parsers.get(connectionId);
       if (!parser) {
-        const rules = this.getRulesContent(connectionId);
+        const rules = this.getLoadedRules(connectionId);
+        if (!rules) {
+          // No rules file downloaded or configured: do NOT default to restricted access!
+          return null;
+        }
         parser = new RulesParser(rules);
         this.parsers.set(connectionId, parser);
       }

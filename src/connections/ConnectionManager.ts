@@ -3,6 +3,7 @@ import { Firestore, getFirestore } from "firebase-admin/firestore";
 import { Auth, getAuth } from "firebase-admin/auth";
 import * as vscode from "vscode";
 import * as fs from "fs";
+import { parseHostPort, probePort } from "../emulator/portUtils";
 
 export interface FirestoreConnectionConfig {
   id: string;
@@ -12,6 +13,7 @@ export interface FirestoreConnectionConfig {
   databaseId?: string;
   isEmulator?: boolean;
   emulatorHost?: string;
+  authEmulatorHost?: string;
 }
 
 export class ConnectionManager implements vscode.Disposable {
@@ -110,7 +112,10 @@ export class ConnectionManager implements vscode.Disposable {
     return this._cachedConnections;
   }
 
-  public getConnection(id: string): FirestoreConnectionConfig | undefined {
+  public getConnection(id?: string): FirestoreConnectionConfig | undefined {
+    if (!id) {
+      return this.getConnections()[0];
+    }
     return this.getConnections().find((c) => c.id === id);
   }
 
@@ -224,6 +229,12 @@ export class ConnectionManager implements vscode.Disposable {
    * Get the Firebase Auth instance for a connection.
    */
   public async getAuth(connectionId?: string): Promise<Auth> {
+    const conn = this.getConnection(connectionId);
+    if (conn?.isEmulator) {
+      process.env.FIREBASE_AUTH_EMULATOR_HOST = conn.authEmulatorHost || "127.0.0.1:9099";
+    } else {
+      delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
+    }
     const app = await this.getApp(connectionId);
     return getAuth(app);
   }
@@ -293,6 +304,15 @@ export class ConnectionManager implements vscode.Disposable {
       const tempAppName = `test-conn-${Date.now()}`;
 
       if (conn.isEmulator) {
+        const { host, port } = parseHostPort(conn.emulatorHost);
+        const isUp = await probePort(host, port, 1200);
+        if (!isUp) {
+          return {
+            success: false,
+            message: `Firebase Emulator is not running on ${host}:${port}. Please start the emulator process before connecting (e.g. 'firebase emulators:start').`,
+          };
+        }
+
         testApp = initializeApp(
           {
             projectId: conn.projectId || "demo-project",

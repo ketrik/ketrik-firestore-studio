@@ -26,6 +26,7 @@ export async function openRulesCommand(item?: ConnectionTreeItem | { id: string 
   const connectionId = resolveConnectionId(item);
 
   // 1. Fetch live rules directly from Firebase API
+  let liveFetched = false;
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -33,9 +34,16 @@ export async function openRulesCommand(item?: ConnectionTreeItem | { id: string 
       cancellable: false,
     },
     async () => {
-      await rulesService.fetchLiveRules(connectionId);
+      const content = await rulesService.fetchLiveRules(connectionId);
+      liveFetched = !!content;
     }
   );
+
+  if (!liveFetched && !rulesService.hasRules(connectionId)) {
+    vscode.window.showInformationMessage(
+      "No live rules downloaded from Firebase. Opening starter rules template."
+    );
+  }
 
   // 2. Open virtual firestore.rules for this connection
   const virtualRulesUri = vscode.Uri.from({
@@ -73,6 +81,7 @@ export async function diffRulesCommand(item?: ConnectionTreeItem | { id: string 
   }
 
   // Fetch latest live rules from Firebase
+  let liveFetched = false;
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -80,9 +89,17 @@ export async function diffRulesCommand(item?: ConnectionTreeItem | { id: string 
       cancellable: false,
     },
     async () => {
-      await rulesService.fetchLiveRules(connectionId);
+      const content = await rulesService.fetchLiveRules(connectionId);
+      liveFetched = !!content;
     }
   );
+
+  if (!liveFetched && !rulesService.hasRules(connectionId)) {
+    vscode.window.showErrorMessage(
+      "Could not download live rules from Firebase to compare."
+    );
+    return;
+  }
 
   const liveUri = vscode.Uri.from({
     scheme,

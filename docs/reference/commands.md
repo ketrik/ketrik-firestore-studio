@@ -26,8 +26,22 @@ All commands can be executed via the VS Code Command Palette (`Cmd+Shift+P` / `C
 | Command ID | Title | Context / Location | Description |
 | :--- | :--- | :--- | :--- |
 | `ketrik-firestore-studio.openCollectionAsTable` | **Firestore: Open Collection as Table** | Collection Context Menu / Inline Icon | Launches the interactive collection table webview with sorting, search, single-read doc ID lookup, and server-side where query builder. |
+| `ketrik-firestore-studio.queryCollectionGroup` | **Firestore: Query Collection Group...** | Connection / Collection Menu / Palette | Flattens all subcollections with the given ID database-wide into a unified collection group table view with origin parent document links. |
 | `ketrik-firestore-studio.createDocument` | **Firestore: Create Document** | Collection Context Menu / Inline Icon | Creates a new document within the selected collection. Prompts for auto-generated ID or manual ID and opens in a virtual `.json` editor. |
 | `ketrik-firestore-studio.deleteCollection` | **Firestore: Delete Collection** | Collection Context Menu | Batch deletes all documents within the collection (prompts for confirmation). |
+
+---
+
+## Firebase Emulator Suite
+
+| Command ID | Title | Context / Location | Description |
+| :--- | :--- | :--- | :--- |
+| `ketrik-firestore-studio.emulatorStatusMenu` | **Firestore: Firebase Emulator Status & Actions...** | Status Bar / Title Bar / Palette | Opens interactive status dashboard showing emulator port states, UI links, and fast actions. |
+| `ketrik-firestore-studio.startEmulator` | **Firestore: Start Local Firebase Emulator** | Palette / Status Menu | Launches the local emulator in an integrated VS Code terminal using workspace `firebase.json` configuration. |
+| `ketrik-firestore-studio.stopEmulator` | **Firestore: Stop Local Firebase Emulator** | Palette / Status Menu | Safely terminates running emulator processes in the terminal. |
+| `ketrik-firestore-studio.restartEmulator` | **Firestore: Restart Local Firebase Emulator** | Palette / Status Menu | Restarts the local emulator process cycle. |
+| `ketrik-firestore-studio.openEmulatorUi` | **Firestore: Open Firebase Emulator UI** | Palette / Status Menu | Launches the Firebase Emulator UI web dashboard (`http://localhost:4000`) in the default browser. |
+| `ketrik-firestore-studio.discoverEmulators` | **Firestore: Discover & Connect Local Emulator** | Palette / Status Menu | Probes active ports and connects to running Firestore and Auth emulators without needing credentials. |
 
 ---
 
@@ -48,7 +62,7 @@ All commands can be executed via the VS Code Command Palette (`Cmd+Shift+P` / `C
 
 | Command ID | Title | Context / Location | Description |
 | :--- | :--- | :--- | :--- |
-| `ketrik-firestore-studio.openFieldAsTable` | **Firestore: View as Table** | Map & Array Field Context Menu | Opens an in-document map (`Record<string, T>`) or sequence list (`T[]`) as an interactive tabular grid. |
+| `ketrik-firestore-studio.openFieldAsTable` | **Firestore: View as Table** | Map & Array Field Context Menu / Inline Icon | Opens an in-document map (`Record<string, T>`) or sequence list (`T[]`) as an interactive tabular grid. |
 | `ketrik-firestore-studio.renameField` | **Firestore: Rename Field** | Field Context Menu | Atomically renames a document field using Firestore field delete + set, validating destination collisions and refreshing open editor tabs. |
 | `ketrik-firestore-studio.openField` | **Firestore: Edit Value / Open Field** | Field Double-Click / Context Menu | Quick-edit a scalar field value with type-preserving input. |
 | `ketrik-firestore-studio.addField` | **Firestore: Add Field** | Document / Map Context Menu | Adds a new field with type selection (String, Number, Boolean, Timestamp, GeoPoint, Map, Array, Null). |

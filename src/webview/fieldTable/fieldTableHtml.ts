@@ -32,17 +32,17 @@ export function getFieldTableHtml(params: {
           <span class="badge badge-substrate">${substrateType}</span>
           <span class="badge" title="Connection ID">${connectionId}</span>
         </div>
-        <div class="toolbar-actions">
-          <button id="toggleProtoBtn" class="secondary toggle-btn" title="Toggle visibility of Operational Protocol (__) columns">
+        <div class="toolbar-actions" id="toolbarActions">
+          <button id="toggleProtoBtn" class="secondary toggle-btn" title="Toggle visibility of Operational Protocol (__) columns" style="display:none;">
             <span>🛡️</span> __ Protocol
           </button>
-          <button id="toggleEnvBtn" class="secondary toggle-btn" title="Toggle visibility of System Envelope (_) columns">
+          <button id="toggleEnvBtn" class="secondary toggle-btn" title="Toggle visibility of System Envelope (_) columns" style="display:none;">
             <span>🏷️</span> _ Envelope
           </button>
-          <button id="toggleTimeTravelBtn" class="secondary toggle-btn" title="Simulate time-travel to preview live, scheduled, or expired items">
+          <button id="toggleTimeTravelBtn" class="secondary toggle-btn" title="Simulate time-travel to preview live, scheduled, or expired items" style="display:none;">
             <span>⏱️</span> Simulate Time
           </button>
-          <div class="search-wrapper">
+          <div class="search-wrapper" id="searchWrapper">
             <input id="searchInput" type="text" placeholder="Search rows..." />
           </div>
           <button id="searchBtn">Search</button>
@@ -80,7 +80,7 @@ export function getFieldTableHtml(params: {
           </select>
         </div>
       </div>
-      <div class="info-bar">
+      <div class="info-bar" id="infoBar">
         <div class="info-text">
           Parent doc: <span class="doc-parent-link" id="parentDocLink">${docPath}</span> &nbsp;|&nbsp;
           Showing <b id="row-count">0</b> items
@@ -96,11 +96,21 @@ export function getFieldTableHtml(params: {
           <tbody id="table-body"></tbody>
         </table>
         <div id="empty-state" class="empty-state" style="display:none;">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4; margin-bottom:10px;">
             <path d="M4 4h16v16H4zM4 9h16M9 4v16"/>
           </svg>
-          <h3>No items found</h3>
-          <p id="empty-state-msg">This field has no items or no items matched your search query.</p>
+          <h3 id="empty-state-title" style="margin:0 0 6px 0;">This field is empty</h3>
+          <p id="empty-state-msg" style="margin:0 0 16px 0; color:var(--vscode-descriptionForeground);">No items found in this field.</p>
+          <div id="empty-state-actions" style="display:flex; gap:10px; justify-content:center;">
+            <button id="emptyEditJsonBtn" style="padding:6px 16px;">
+              <span>{ }</span> Edit in JSON Editor
+            </button>
+          </div>
+          <div id="empty-state-filter-actions" style="display:none; justify-content:center;">
+            <button id="emptyClearFilterBtn" class="secondary" style="padding:6px 14px;">
+              Clear Active Filter
+            </button>
+          </div>
         </div>
       </div>
 
@@ -236,12 +246,69 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         }).join('');
       }
 
+      function updateContextualButtons() {
+        const hasProto = currentHeaders.some(h => h.startsWith('__'));
+        const hasEnv = currentHeaders.some(h => h.startsWith('_') && !h.startsWith('__'));
+        const hasLifecycle = allRows.some(d => d && (d.__ !== undefined || d['__.active'] !== undefined || d['__.from'] !== undefined || d['__.exp'] !== undefined));
+
+        const protoBtn = document.getElementById('toggleProtoBtn');
+        if (protoBtn) protoBtn.style.display = hasProto ? 'inline-flex' : 'none';
+
+        const envBtn = document.getElementById('toggleEnvBtn');
+        if (envBtn) envBtn.style.display = hasEnv ? 'inline-flex' : 'none';
+
+        const timeBtn = document.getElementById('toggleTimeTravelBtn');
+        if (timeBtn) timeBtn.style.display = hasLifecycle ? 'inline-flex' : 'none';
+      }
+
       function updateEmptyState(count) {
         const emptyState = document.getElementById('empty-state');
+        const titleEl = document.getElementById('empty-state-title');
+        const msgEl = document.getElementById('empty-state-msg');
+        const emptyActions = document.getElementById('empty-state-actions');
+        const emptyFilterActions = document.getElementById('empty-state-filter-actions');
+        const searchWrapper = document.getElementById('searchWrapper');
+        const searchBtn = document.getElementById('searchBtn');
+        const exportBtn = document.getElementById('exportBtn');
+        const infoBar = document.getElementById('infoBar');
+        const tableContainerTable = document.querySelector('.table-container table');
+
+        updateContextualButtons();
+
+        const isFiltered = (document.getElementById('searchInput').value || '').trim() || lifecycleFilter !== 'all';
+
         if (count === 0) {
           emptyState.style.display = 'block';
+          if (tableContainerTable) tableContainerTable.style.display = 'none';
+
+          if (isFiltered) {
+            if (titleEl) titleEl.textContent = 'No matching items';
+            if (msgEl) msgEl.textContent = 'No items in this field matched your search filter.';
+            if (emptyActions) emptyActions.style.display = 'none';
+            if (emptyFilterActions) emptyFilterActions.style.display = 'flex';
+            if (searchWrapper) searchWrapper.style.display = 'flex';
+            if (searchBtn) searchBtn.style.display = '';
+            if (exportBtn) exportBtn.style.display = '';
+            if (infoBar) infoBar.style.display = 'flex';
+          } else {
+            if (titleEl) titleEl.textContent = 'This field is empty';
+            if (msgEl) msgEl.textContent = 'No items found in this field.';
+            if (emptyActions) emptyActions.style.display = 'flex';
+            if (emptyFilterActions) emptyFilterActions.style.display = 'none';
+            if (searchWrapper) searchWrapper.style.display = 'none';
+            if (searchBtn) searchBtn.style.display = 'none';
+            if (exportBtn) exportBtn.style.display = 'none';
+            if (infoBar) infoBar.style.display = 'none';
+          }
         } else {
           emptyState.style.display = 'none';
+          if (tableContainerTable) tableContainerTable.style.display = 'table';
+          if (emptyActions) emptyActions.style.display = 'none';
+          if (emptyFilterActions) emptyFilterActions.style.display = 'none';
+          if (searchWrapper) searchWrapper.style.display = 'flex';
+          if (searchBtn) searchBtn.style.display = '';
+          if (exportBtn) exportBtn.style.display = '';
+          if (infoBar) infoBar.style.display = 'flex';
         }
       }
 
@@ -423,6 +490,20 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
           document.getElementById('searchBtn').click();
         }
       });
+
+      const emptyEditJsonBtn = document.getElementById('emptyEditJsonBtn');
+      if (emptyEditJsonBtn) {
+        emptyEditJsonBtn.onclick = function() {
+          document.getElementById('openInEditorBtn').click();
+        };
+      }
+
+      const emptyClearFilterBtn = document.getElementById('emptyClearFilterBtn');
+      if (emptyClearFilterBtn) {
+        emptyClearFilterBtn.onclick = function() {
+          document.getElementById('clearSearchBtn').click();
+        };
+      }
 
       vscode.postMessage({ command: 'ready' });
     })();

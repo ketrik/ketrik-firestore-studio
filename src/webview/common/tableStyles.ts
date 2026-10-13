@@ -162,23 +162,29 @@ export function getSharedTableStyles(): string {
       white-space: nowrap;
     }
     th {
-      background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, rgba(128,128,128,0.1)));
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, rgba(128,128,128,0.1))),
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, rgba(128,128,128,0.1)))
+      );
       font-weight: 600;
       color: var(--vscode-editor-foreground);
       position: sticky;
       top: 0;
-      z-index: 2;
+      z-index: 8;
       letter-spacing: 0.02em;
       text-transform: uppercase;
       font-size: 0.78em;
       border-bottom: 2px solid var(--vscode-focusBorder, rgba(128,128,128,0.3));
     }
     th.envelope-header {
-      background: rgba(157, 107, 240, 0.08);
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(rgba(157, 107, 240, 0.08), rgba(157, 107, 240, 0.08));
       border-bottom-color: #9d6bf0;
     }
     th.protocol-header {
-      background: rgba(240, 98, 146, 0.08);
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(rgba(240, 98, 146, 0.08), rgba(240, 98, 146, 0.08));
       border-bottom-color: #f06292;
     }
     .th-tag {
@@ -218,22 +224,31 @@ export function getSharedTableStyles(): string {
       position: sticky;
       left: 0;
       top: 0;
-      z-index: 10;
-      background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, #1e1e1e));
+      z-index: 11;
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, #1e1e1e)),
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, #1e1e1e))
+      );
       border-right: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
     }
     td.sticky-col {
       position: sticky;
       left: 0;
-      z-index: 3;
-      background: var(--vscode-editorWidget-background, var(--vscode-editor-background, #1e1e1e));
+      z-index: 4;
+      background-color: var(--vscode-editor-background);
       border-right: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
     }
     tbody tr:nth-child(even) td.sticky-col {
-      background: var(--vscode-editorWidget-background, var(--vscode-editor-background, #1e1e1e));
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(rgba(128, 128, 128, 0.035), rgba(128, 128, 128, 0.035));
     }
     tbody tr:hover td.sticky-col {
-      background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15));
+      background-color: var(--vscode-editor-background) !important;
+      background-image: linear-gradient(
+        var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15)),
+        var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15))
+      ) !important;
     }
     th.sticky-actions, td.sticky-actions {
       position: sticky;
@@ -241,15 +256,27 @@ export function getSharedTableStyles(): string {
       border-left: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
     }
     th.sticky-actions {
-      z-index: 10;
-      background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, #1e1e1e));
+      z-index: 11;
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, #1e1e1e)),
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, #1e1e1e))
+      );
     }
     td.sticky-actions {
-      z-index: 3;
-      background: var(--vscode-editorWidget-background, var(--vscode-editor-background, #1e1e1e));
+      z-index: 4;
+      background-color: var(--vscode-editor-background);
+    }
+    tbody tr:nth-child(even) td.sticky-actions {
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(rgba(128, 128, 128, 0.035), rgba(128, 128, 128, 0.035));
     }
     tbody tr:hover td.sticky-actions {
-      background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15));
+      background-color: var(--vscode-editor-background) !important;
+      background-image: linear-gradient(
+        var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15)),
+        var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15))
+      ) !important;
     }
     tbody tr {
       transition: background 0.1s ease;

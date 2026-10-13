@@ -20,13 +20,19 @@ export class ConnectionTreeItem extends Item {
     this.contextValue = "connection";
 
     const detail = config.isEmulator
-      ? `Emulator (${config.emulatorHost || "localhost:8080"})`
+      ? `Emulator (${config.emulatorHost || "localhost:8080"})${config.projectId ? ` [${config.projectId}]` : ""}`
       : config.databaseId && config.databaseId !== "(default)"
       ? `${config.projectId || "Project"} [${config.databaseId}]`
       : config.projectId || "Production";
 
     this.description = detail;
-    this.tooltip = `Connection: ${config.name}\nID: ${config.id}\nTarget: ${detail}`;
+    this.tooltip = `Connection: ${config.name}\nID: ${config.id}\nTarget: ${detail}${
+      config.isEmulator
+        ? `\nType: Local Emulator Client (Requires running emulator process on ${config.emulatorHost || "localhost:8080"})${
+            config.authEmulatorHost ? `\nAuth Emulator: ${config.authEmulatorHost}` : ""
+          }`
+        : ""
+    }`;
     this.iconPath = new vscode.ThemeIcon(config.isEmulator ? "server-process" : "database");
   }
 }

@@ -20,6 +20,7 @@ import {
   ShowMoreItemsItem,
 } from "./items";
 import { AuthService } from "../auth/AuthService";
+import { parseHostPort, probePort } from "../emulator/portUtils";
 
 /** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
 const MAX_MAP_SIZE = 200;
@@ -269,6 +270,24 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     };
 
     if (element instanceof ConnectionTreeItem) {
+      if (element.config.isEmulator) {
+        const { host, port } = parseHostPort(element.config.emulatorHost);
+        const isOnline = await probePort(host, port, 1000);
+        if (!isOnline) {
+          const choice = await vscode.window.showWarningMessage(
+            `Cannot connect to '${element.config.name}': Firebase emulator on ${element.config.emulatorHost || `${host}:${port}`} is offline.`,
+            "Start Emulator",
+            "Edit Connection"
+          );
+          if (choice === "Start Emulator") {
+            await vscode.commands.executeCommand("ketrik-firestore-studio.startEmulator");
+          } else if (choice === "Edit Connection") {
+            await vscode.commands.executeCommand("ketrik-firestore-studio.editConnection", element);
+          }
+          return [];
+        }
+      }
+
       try {
         const firestore = await this._connectionManager.getFirestore(element.config.id);
         const refs = (await firestore.listCollections()) as CollectionReference[];
@@ -286,9 +305,28 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const items: Item[] = [authBranch, ...collItems];
         return storeAndReturn(items);
       } catch (err: any) {
-        vscode.window.showErrorMessage(
-          `Failed to load collections for connection '${element.config.name}': ${err.message}`
-        );
+        const isUnavailable =
+          err?.code === 14 ||
+          err?.message?.includes("ECONNREFUSED") ||
+          err?.message?.includes("UNAVAILABLE") ||
+          err?.message?.includes("exceeded");
+
+        if (element.config.isEmulator && isUnavailable) {
+          const choice = await vscode.window.showErrorMessage(
+            `Emulator connection '${element.config.name}' (${element.config.emulatorHost || "localhost:8080"}) is unreachable. Make sure the emulator process is running.`,
+            "Start Emulator",
+            "Edit Connection"
+          );
+          if (choice === "Start Emulator") {
+            await vscode.commands.executeCommand("ketrik-firestore-studio.startEmulator");
+          } else if (choice === "Edit Connection") {
+            await vscode.commands.executeCommand("ketrik-firestore-studio.editConnection", element);
+          }
+        } else {
+          vscode.window.showErrorMessage(
+            `Failed to load collections for connection '${element.config.name}': ${err.message}`
+          );
+        }
         return [];
       }
     } else if (element instanceof AuthUsersBranchItem) {
