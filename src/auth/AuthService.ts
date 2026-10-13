@@ -206,6 +206,48 @@ export class AuthService {
   }
 
   /**
+   * Check if profile documents exist in Firestore for a batch of UIDs in a single round-trip.
+   * Uses firestore.getAll(...) batch RPC rather than serial/concurrent get() calls.
+   */
+  public async checkProfilesExist(
+    connectionId: string,
+    uids: string[],
+    collectionName = "users"
+  ): Promise<Set<string>> {
+    if (!uids || uids.length === 0) {
+      return new Set();
+    }
+    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+    const existingUids = new Set<string>();
+
+    // Chunk in groups of up to 400 (well within Firestore getAll RPC limits)
+    const chunkSize = 400;
+    for (let i = 0; i < uids.length; i += chunkSize) {
+      const chunk = uids.slice(i, i + chunkSize);
+      const refs = chunk.map((uid) => firestore.collection(collectionName).doc(uid));
+      try {
+        const snapshots = await firestore.getAll(...refs);
+        for (const snap of snapshots) {
+          if (snap.exists) {
+            existingUids.add(snap.id);
+          }
+        }
+      } catch {
+        // Fallback to individual checks if batch RPC fails
+        await Promise.all(
+          chunk.map(async (uid) => {
+            const snap = await firestore.collection(collectionName).doc(uid).get();
+            if (snap.exists) {
+              existingUids.add(uid);
+            }
+          })
+        );
+      }
+    }
+    return existingUids;
+  }
+
+  /**
    * Create a Firestore profile document for an Auth user.
    */
   public async createProfileDoc(
@@ -277,5 +319,40 @@ export class AuthService {
     }
     await this.deleteUser(connectionId, uid);
     return { authDeleted: true, profileDeleted };
+  }
+
+  /**
+   * Create a new Firebase Auth user.
+   */
+  public async createUser(
+    connectionId: string,
+    properties: import("firebase-admin/auth").CreateRequest,
+    customClaims?: Record<string, any>
+  ): Promise<UserRecord> {
+    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
+    const user = await auth.createUser(properties);
+    if (customClaims && Object.keys(customClaims).length > 0) {
+      await auth.setCustomUserClaims(user.uid, customClaims);
+    }
+    return user;
+  }
+
+  /**
+   * Get project auth configuration (authorized domains, etc.).
+   */
+  public async getProjectConfig(connectionId: string): Promise<import("firebase-admin/auth").ProjectConfig> {
+    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
+    return auth.projectConfigManager().getProjectConfig();
+  }
+
+  /**
+   * Update project auth configuration.
+   */
+  public async updateProjectConfig(
+    connectionId: string,
+    config: import("firebase-admin/auth").UpdateProjectConfigRequest
+  ): Promise<import("firebase-admin/auth").ProjectConfig> {
+    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
+    return auth.projectConfigManager().updateProjectConfig(config);
   }
 }

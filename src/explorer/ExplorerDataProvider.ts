@@ -125,6 +125,9 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       this._treeCache.delete(`auth:${element.connectionId}`);
       this._authUsersPaging.delete(element.connectionId);
       this._onDidChangeTreeData.fire(undefined);
+    } else if (element instanceof ConnectionTreeItem) {
+      this._treeCache.delete(`conn:${element.config.id}`);
+      this._onDidChangeTreeData.fire(element);
     } else {
       this.refresh();
     }
@@ -224,11 +227,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         if (!state) {
           // Initial batch fetch
           const { users, pageToken } = await authService.listUsers(element.connectionId, pageSize);
-          const userItems = await Promise.all(
-            users.map(async (u) => {
-              const hasProfile = await authService.checkProfileExists(element.connectionId, u.uid);
-              return new AuthUserItem(u, element.connectionId, hasProfile);
-            })
+          const uids = users.map((u) => u.uid);
+          const existingProfiles = await authService.checkProfilesExist(element.connectionId, uids);
+          const userItems = users.map(
+            (u) => new AuthUserItem(u, element.connectionId, existingProfiles.has(u.uid))
           );
 
           this._authUsersPaging.set(element.connectionId, {
@@ -386,12 +388,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       const authService = AuthService.getInstance();
       const pageSize = 25;
       const { users, pageToken } = await authService.listUsers(connId, pageSize, state.nextPageToken);
-
-      const newItems = await Promise.all(
-        users.map(async (u) => {
-          const hasProfile = await authService.checkProfileExists(connId, u.uid);
-          return new AuthUserItem(u, connId, hasProfile);
-        })
+      const uids = users.map((u) => u.uid);
+      const existingProfiles = await authService.checkProfilesExist(connId, uids);
+      const newItems = users.map(
+        (u) => new AuthUserItem(u, connId, existingProfiles.has(u.uid))
       );
 
       this._authUsersPaging.set(connId, {

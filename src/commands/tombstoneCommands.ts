@@ -146,7 +146,7 @@ export async function purgeFieldTombstonesCommand(
     });
 
     documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
-    explorerDataProvider.refresh();
+    explorerDataProvider.refreshNode(item);
 
     vscode.window.showInformationMessage(
       `Successfully purged ${tombstones.length} tombstone(s) from '${item.fieldName}'.`
@@ -313,12 +313,12 @@ export async function purgeCollectionTombstonesCommand(
         for (let i = 0; i < tombstones.length; i += BATCH_SIZE) {
           const chunk = tombstones.slice(i, i + BATCH_SIZE);
           const batch = firestore.batch();
-          for (const item of chunk) {
-            batch.delete(item.ref);
+          for (const t of chunk) {
+            batch.delete(t.ref);
           }
           await batch.commit();
-          for (const item of chunk) {
-            documentFileSystemProvider.invalidateAndNotify(item.ref.firestore.projectId, item.ref.path);
+          for (const t of chunk) {
+            documentFileSystemProvider.invalidateAndNotify(item.connectionId, t.ref.path);
           }
           deletedCount += chunk.length;
           progress.report({

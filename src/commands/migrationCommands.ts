@@ -359,14 +359,21 @@ export async function consolidateCollectionCommand(
           { merge: true }
         );
 
-        // Delete source docs if requested
+        // Delete source docs if requested (in batches of 400 to respect Firestore limit)
         if (deleteSource.value) {
           progress.report({ message: "Cleaning up source documents..." });
-          const batch = firestore.batch();
-          snapshot.docs.forEach((d) => {
-            batch.delete(d.ref);
-          });
-          await batch.commit();
+          const DELETE_BATCH_SIZE = 400;
+          for (let i = 0; i < snapshot.docs.length; i += DELETE_BATCH_SIZE) {
+            const chunk = snapshot.docs.slice(i, i + DELETE_BATCH_SIZE);
+            const batch = firestore.batch();
+            chunk.forEach((d) => {
+              batch.delete(d.ref);
+            });
+            await batch.commit();
+            chunk.forEach((d) => {
+              documentFileSystemProvider.invalidateAndNotify(item.connectionId, d.ref.path);
+            });
+          }
         }
 
         documentFileSystemProvider.invalidateAndNotify(item.connectionId, targetDocRef.path);

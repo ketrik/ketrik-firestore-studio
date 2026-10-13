@@ -2,6 +2,33 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.9.1] - 2026-10-13
+
+### Added
+- **Multi-Document Batch Operations in Table View (`WriteBatch`)**:
+  - Sticky selection checkbox column (`.select-col`) with "Select All" and individual row selection state.
+  - Floating batch actions toolbar with selection counter and clear selection button.
+  - **Batch Field Update**: Update a single field (value or `FieldValue.delete()`) or merge a JSON payload across all selected documents.
+  - **Batch Delete**: High-throughput deletion using chunked Firestore `WriteBatch` (400 documents per batch) with confirmation dialog showing affected document count and write operations.
+- **Native Firestore Aggregations (`count()`, `sum()`, `avg()`)**:
+  - **Collection Count (`count().get()`)**: Instant total document count at ultra-low cost (1 read per 1,000 index entries) with clear quota reporting.
+  - **Numeric Aggregates (`sum()` and `avg()`)**: Calculate server-side numeric sum and average on any collection field without downloading document bodies.
+- **TypeScript Interface & Zod Schema Generator (`ketrik-firestore-studio.generateSchema`)**:
+  - Context menu on collections and documents to reverse-engineer schemas from live data.
+  - Samples $N$ documents (10–50), deducing unified keys, optional fields (`?`), enum string literals, and Firestore primitive types (`Timestamp`, `GeoPoint`, `DocumentReference`).
+  - Generates TypeScript interfaces (`interface <Name> { ... }`) or Zod validation schemas (`z.object({ ... })`).
+  - Output to clipboard, new editor tab, or save directly to a `.d.ts` / `.ts` workspace file.
+- **Data Import & Export Wizard (CSV, JSON, NDJSON)**:
+  - **Export Collection (`ketrik-firestore-studio.exportCollection`)**: Stream entire collections to CSV, formatted JSON, or newline-delimited JSON (NDJSON) with progress reporting.
+  - **Import Data (`ketrik-firestore-studio.importCollection`)**: Import datasets into collections with custom Document ID strategy (Auto-generated Firestore ID, specific property/column, or row index) and automatic type coercion (ISO dates $\rightarrow$ Timestamps, numbers, booleans) executed via chunked `WriteBatch`.
+- **Query Bookmarks & Saved Presets**:
+  - Save multi-clause `where` filter queries as named bookmarks directly from the Collection Table view.
+  - Saved to `.vscode/firestore-queries.json` in the workspace root for team sharing and version control.
+  - Quick-load saved bookmarks directly from the Query Builder dropdown.
+- **Firebase Auth Suite Enhancements**:
+  - **Create Auth User Dialog (`ketrik-firestore-studio.createAuthUser`)**: Scaffold new users directly within VS Code with email, password, display name, photo URL, phone number, and custom claims.
+  - **Project Auth Security & Policies Inspector (`ketrik-firestore-studio.inspectProjectAuthConfig`)**: View project-wide authentication configuration including password complexity policies, email privacy protection, SMS region policies, and multi-factor auth factors.
+
 ## [1.9.0] - 2026-10-13
 
 ### Added

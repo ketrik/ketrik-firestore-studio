@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.9.0",
+  "version": "1.9.1",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -42,9 +42,16 @@
     "languages": [
       {
         "id": "firestore-rules",
-        "aliases": ["Firestore Security Rules", "firestore-rules"],
-        "filenames": ["firestore.rules"],
-        "extensions": [".rules"]
+        "aliases": [
+          "Firestore Security Rules",
+          "firestore-rules"
+        ],
+        "filenames": [
+          "firestore.rules"
+        ],
+        "extensions": [
+          ".rules"
+        ]
       }
     ],
     "grammars": [
@@ -302,6 +309,36 @@
         "icon": "$(trash)"
       },
       {
+        "command": "ketrik-firestore-studio.createAuthUser",
+        "category": "Firestore Studio",
+        "title": "Create New Auth User...",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ketrik-firestore-studio.inspectProjectAuthConfig",
+        "category": "Firestore Studio",
+        "title": "Project Auth Security & Policies",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "ketrik-firestore-studio.generateSchema",
+        "category": "Firestore Studio",
+        "title": "Generate TypeScript / Zod Schema...",
+        "icon": "$(symbol-interface)"
+      },
+      {
+        "command": "ketrik-firestore-studio.exportCollection",
+        "category": "Firestore Studio",
+        "title": "Export Collection (CSV, JSON, NDJSON)...",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "ketrik-firestore-studio.importCollection",
+        "category": "Firestore Studio",
+        "title": "Import Data (CSV, JSON, NDJSON)...",
+        "icon": "$(cloud-upload)"
+      },
+      {
         "command": "ketrik-firestore-studio.openPath",
         "category": "Firestore Studio",
         "title": "Open Path"
@@ -528,6 +565,16 @@
           "group": "1_actions@2"
         },
         {
+          "command": "ketrik-firestore-studio.createAuthUser",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authBranch'",
+          "group": "1_actions@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.inspectProjectAuthConfig",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authBranch'",
+          "group": "1_actions@4"
+        },
+        {
           "command": "ketrik-firestore-studio.openAuthUserClaims",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
           "group": "1_actions@1"
@@ -598,6 +645,21 @@
           "group": "2_filter@3"
         },
         {
+          "command": "ketrik-firestore-studio.generateSchema",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.exportCollection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@5"
+        },
+        {
+          "command": "ketrik-firestore-studio.importCollection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@6"
+        },
+        {
           "command": "ketrik-firestore-studio.copyPath",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'document' || viewItem == 'documentField')",
           "group": "3_utility@1"
@@ -621,6 +683,11 @@
           "command": "ketrik-firestore-studio.copyDocumentJson",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "1_actions@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.generateSchema",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_actions@5"
         },
         {
           "command": "ketrik-firestore-studio.addCollection",

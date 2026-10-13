@@ -17,6 +17,11 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
   - **Session Revocation / Force Logout**: Instantly revoke all active refresh tokens for an account.
   - **Password Reset Links**: Generate secure password reset links directly to clipboard.
   - **Cascade Deletion**: Safely delete Auth user accounts alongside their Firestore profile documents.
+- **Multi-Document Batch Operations**: Select multiple documents via checkboxes in the Collection Table view to perform bulk field updates (single field, atomic `FieldValue.delete()`, or JSON merge) and safe chunked deletions via Firestore `WriteBatch`.
+- **Native Firestore Aggregations**: 1-click total document count (`count().get()`) with minimal quota consumption (1 read per 1,000 index entries) and server-side numeric aggregates (`sum()` and `avg()`) directly in the Table view header.
+- **TypeScript Interface & Zod Schema Generator**: Reverse-engineer data into type-safe TypeScript interfaces (`interface User { ... }`) or runtime Zod validation schemas (`z.object({ ... })`) with sampling, union enum detection, and optional field analysis.
+- **Data Import & Export Wizard**: Stream Firestore collections to CSV, formatted JSON, or NDJSON; import external datasets with customizable Document ID strategies (Auto-ID, specific property, or row index) and automatic type coercion.
+- **Query Bookmarks & History**: Save complex server-side query filters to `.vscode/firestore-queries.json` in the workspace root for team Git sharing, and instantly load them via the Query Builder dropdown.
 - **Dual-Prefix Architecture & Pinned Sticky Tables**: Filter and organize System Envelope (`_*`) and Operational Protocol (`__*`) fields, with sticky column headers and sticky identifier/action columns.
 - **Multiple Firestore Connections**: Connect to multiple Firestore instances simultaneously (Production, Staging, Dev, Local Emulators, and custom Database IDs).
 - **Interactive Tree Explorer**: Browse collections, documents, sub-collections, and root document fields across all your connections in one sidebar view.
@@ -83,6 +88,11 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 | `ketrik-firestore-studio.refreshItem` | Refresh | Refresh a specific document or field without reloading the entire tree |
 | `ketrik-firestore-studio.deleteField` | Delete Field | Delete a root field using `FieldValue.delete()` |
 | `ketrik-firestore-studio.addCollection` | Add Collection | Create a root or sub-collection |
+| `ketrik-firestore-studio.generateSchema` | Generate TypeScript / Zod Schema... | Introspect collection/document data to generate TS interfaces and Zod schemas |
+| `ketrik-firestore-studio.exportCollection` | Export Collection (CSV, JSON, NDJSON)... | Export collection data to CSV, JSON, or NDJSON |
+| `ketrik-firestore-studio.importCollection` | Import Data (CSV, JSON, NDJSON)... | Batch import datasets with ID strategies and type coercion |
+| `ketrik-firestore-studio.createAuthUser` | Create New Auth User... | Scaffold new Firebase Auth account directly from VS Code |
+| `ketrik-firestore-studio.inspectProjectAuthConfig` | Project Auth Security & Policies | Inspect project authentication password policies, email privacy & MFA |
 
 
 ---

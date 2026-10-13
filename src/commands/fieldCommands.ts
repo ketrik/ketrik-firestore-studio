@@ -53,8 +53,9 @@ export async function openFieldCommand(
       await item.parentDocRef.update({
         [item.fieldName]: newValue,
       });
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${newValue}`);
-      explorerDataProvider.refresh();
+      explorerDataProvider.refreshNode(item);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to update field: ${err.message}`);
     }
@@ -82,8 +83,9 @@ export async function openFieldCommand(
       await item.parentDocRef.update({
         [item.fieldName]: newNum,
       });
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${newNum}`);
-      explorerDataProvider.refresh();
+      explorerDataProvider.refreshNode(item);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to update field: ${err.message}`);
     }
@@ -115,14 +117,16 @@ export async function openFieldCommand(
 
     if (typeChoice.type === "object") {
       await item.parentDocRef.update({ [item.fieldName]: {} });
-      explorerDataProvider.refresh();
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+      explorerDataProvider.refreshNode(item);
       await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
       return;
     }
 
     if (typeChoice.type === "array") {
       await item.parentDocRef.update({ [item.fieldName]: [] });
-      explorerDataProvider.refresh();
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+      explorerDataProvider.refreshNode(item);
       await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
       return;
     }
@@ -137,8 +141,9 @@ export async function openFieldCommand(
       }
       const bVal = boolPick.label === "true";
       await item.parentDocRef.update({ [item.fieldName]: bVal });
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${bVal}`);
-      explorerDataProvider.refresh();
+      explorerDataProvider.refreshNode(item);
       return;
     }
 
@@ -152,8 +157,9 @@ export async function openFieldCommand(
       }
       const nVal = Number(numInput);
       await item.parentDocRef.update({ [item.fieldName]: nVal });
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${nVal}`);
-      explorerDataProvider.refresh();
+      explorerDataProvider.refreshNode(item);
       return;
     }
 
@@ -165,8 +171,9 @@ export async function openFieldCommand(
         return;
       }
       await item.parentDocRef.update({ [item.fieldName]: strInput });
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
-      explorerDataProvider.refresh();
+      explorerDataProvider.refreshNode(item);
       return;
     }
     return;
@@ -190,8 +197,9 @@ export async function openFieldCommand(
     await item.parentDocRef.update({
       [item.fieldName]: input,
     });
+    DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
     vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
-    explorerDataProvider.refresh();
+    explorerDataProvider.refreshNode(item);
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to update field: ${err.message}`);
   }
@@ -445,8 +453,11 @@ export async function addFieldCommand(
     await docRef.update({
       [fieldName.trim()]: fieldValue,
     });
+    if (connectionId) {
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
+    }
     vscode.window.showInformationMessage(`Field '${fieldName.trim()}' added!`);
-    explorerDataProvider.refresh();
+    explorerDataProvider.refreshNode(item);
 
     if (shouldOpenInEditor) {
       await openPath(docRef.path, connectionId, fieldName.trim());

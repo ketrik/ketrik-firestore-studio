@@ -3,6 +3,7 @@ import { CollectionItem, ConnectionTreeItem, DocumentItem } from "../explorer/it
 import openPath from "./openPath";
 import { openCollectionAsTable } from "../webview/openCollectionAsTable";
 import { ConnectionManager } from "../connections/ConnectionManager";
+import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 
 /**
@@ -81,9 +82,10 @@ export async function addCollectionCommand(
       : firestore.collection(collectionId.trim());
     const docRef = docId.trim() ? collRef.doc(docId.trim()) : collRef.doc();
     await docRef.set(data);
+    DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
     vscode.window.showInformationMessage(`Collection '${collectionId.trim()}' created!`);
     await openPath(docRef.path, connectionId);
-    explorerDataProvider.refresh();
+    explorerDataProvider.refreshNode(item);
   } catch (err: any) {
     vscode.window.showErrorMessage("Failed to create collection: " + err.message);
   }

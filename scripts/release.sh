@@ -39,38 +39,45 @@ echo "  3) Major bump: ${NEXT_MAJOR} (Breaking changes)"
 echo "  4) Custom version"
 echo ""
 
-# Read from controlling terminal (/dev/tty) so it works interactively
-if [ -t 0 ]; then
-  read -r -p "Enter choice [1-4] (default 1): " CHOICE
+# Support passing version via CLI argument or env var
+if [[ -n "${1:-}" ]]; then
+  NEW_VERSION="${1#v}"
+elif [[ -n "${RELEASE_VERSION:-}" ]]; then
+  NEW_VERSION="${RELEASE_VERSION#v}"
 else
-  read -r -p "Enter choice [1-4] (default 1): " CHOICE </dev/tty || CHOICE="1"
-fi
+  # Read from controlling terminal (/dev/tty) so it works interactively
+  if [ -t 0 ]; then
+    read -r -p "Enter choice [1-4] (default 1): " CHOICE
+  else
+    read -r -p "Enter choice [1-4] (default 1): " CHOICE </dev/tty || CHOICE="1"
+  fi
 
-case "${CHOICE:-1}" in
-  0)
-    NEW_VERSION="${PKG_VERSION}"
-    ;;
-  1)
-    NEW_VERSION="${NEXT_MINOR}"
-    ;;
-  2)
-    NEW_VERSION="${NEXT_PATCH}"
-    ;;
-  3)
-    NEW_VERSION="${NEXT_MAJOR}"
-    ;;
-  4)
-    if [ -t 0 ]; then
-      read -r -p "Enter custom version (e.g. 1.5.0): " NEW_VERSION
-    else
-      read -r -p "Enter custom version (e.g. 1.5.0): " NEW_VERSION </dev/tty
-    fi
-    ;;
-  *)
-    echo "Invalid option. Aborting."
-    exit 1
-    ;;
-esac
+  case "${CHOICE:-1}" in
+    0)
+      NEW_VERSION="${PKG_VERSION}"
+      ;;
+    1)
+      NEW_VERSION="${NEXT_MINOR}"
+      ;;
+    2)
+      NEW_VERSION="${NEXT_PATCH}"
+      ;;
+    3)
+      NEW_VERSION="${NEXT_MAJOR}"
+      ;;
+    4)
+      if [ -t 0 ]; then
+        read -r -p "Enter custom version (e.g. 1.5.0): " NEW_VERSION
+      else
+        read -r -p "Enter custom version (e.g. 1.5.0): " NEW_VERSION </dev/tty
+      fi
+      ;;
+    *)
+      echo "Invalid option. Aborting."
+      exit 1
+      ;;
+  esac
+fi
 
 if [[ -z "${NEW_VERSION:-}" ]]; then
   echo "❌ Error: Version cannot be empty."

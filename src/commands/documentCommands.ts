@@ -41,8 +41,9 @@ export async function jumpToDocumentCommand(
       );
       if (createChoice === "Create") {
         await docRef.set({});
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, docRef.path);
         await openPath(docRef.path, item.connectionId);
-        explorerDataProvider.refresh();
+        explorerDataProvider.refreshNode(item);
       }
       return;
     }
@@ -106,9 +107,10 @@ export async function createDocumentCommand(
   try {
     const ref = docId ? item.reference.doc(docId) : item.reference.doc();
     await ref.set(data);
+    DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, ref.path);
     await openPath(ref.path, item.connectionId);
     vscode.window.showInformationMessage("Document created!");
-    explorerDataProvider.refresh();
+    explorerDataProvider.refreshNode(item);
   } catch (err: any) {
     vscode.window.showErrorMessage("Failed to create document: " + err.message);
   }
@@ -162,6 +164,7 @@ export async function deleteDocumentCommand(
         try {
           const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
           await firestore.recursiveDelete(item.reference);
+          DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.reference.path);
           vscode.window.showInformationMessage(`Deleted document "${item.label}" and all nested subcollections.`);
           explorerDataProvider.refresh();
         } catch (err: any) {
@@ -172,6 +175,7 @@ export async function deleteDocumentCommand(
   } else if (confirm === "Delete" || confirm === "Delete Document Only") {
     try {
       await item.reference.delete();
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.reference.path);
       vscode.window.showInformationMessage("Document deleted!");
       explorerDataProvider.refresh();
     } catch (err: any) {
@@ -214,6 +218,7 @@ export async function duplicateDocumentCommand(
       : item.reference.parent.doc();
 
     await targetRef.set(snapshot.data() || {});
+    DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, targetRef.path);
     vscode.window.showInformationMessage(`Document duplicated as "${targetRef.id}"!`);
     await openPath(targetRef.path, item.connectionId);
     explorerDataProvider.refresh();
@@ -343,11 +348,12 @@ export async function pasteDocumentCommand(
       : item.reference.doc();
 
     await targetRef.set(clipboard.data);
+    DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, targetRef.path);
     vscode.window.showInformationMessage(
       `Pasted document "${targetRef.id}" into "${item.collectionId}"!`
     );
     await openPath(targetRef.path, item.connectionId);
-    explorerDataProvider.refresh();
+    explorerDataProvider.refreshNode(item);
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to paste document: ${err.message}`);
   }

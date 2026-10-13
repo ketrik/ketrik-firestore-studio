@@ -550,3 +550,174 @@ async function pickAuthUser(connectionId: string): Promise<import("firebase-admi
     }
   );
 }
+
+/**
+ * Command: Create a new Firebase Auth user with optional custom claims and profile doc.
+ */
+export async function createAuthUserCommand(
+  item?: AuthUsersBranchItem | ConnectionTreeItem,
+  explorerDataProvider?: ExplorerDataProvider,
+  fsProvider?: DocumentFileSystemProvider
+) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+
+  // 1. Email
+  const email = await vscode.window.showInputBox({
+    title: "Create Firebase Auth User (1/4)",
+    prompt: "Enter email address for new user",
+    placeHolder: "user@example.com",
+    validateInput: (v) => {
+      const trimmed = v.trim();
+      if (!trimmed) return "Email is required";
+      if (!trimmed.includes("@") || !trimmed.includes(".")) return "Invalid email address format";
+      return undefined;
+    },
+  });
+  if (!email) return;
+
+  // 2. Password
+  const password = await vscode.window.showInputBox({
+    title: "Create Firebase Auth User (2/4)",
+    prompt: "Enter initial password (minimum 6 characters)",
+    placeHolder: "Temporary or initial password",
+    password: true,
+    validateInput: (v) => {
+      if (!v || v.length < 6) return "Password must be at least 6 characters";
+      return undefined;
+    },
+  });
+  if (!password) return;
+
+  // 3. Display Name
+  const displayName = await vscode.window.showInputBox({
+    title: "Create Firebase Auth User (3/4)",
+    prompt: "Enter display name (optional)",
+    placeHolder: "Jane Doe",
+  });
+  if (displayName === undefined) return;
+
+  // 4. Custom Claims
+  const claimsJson = await vscode.window.showInputBox({
+    title: "Create Firebase Auth User (4/4)",
+    prompt: "Enter custom claims as JSON (optional, e.g. {\"admin\": true, \"role\": \"editor\"})",
+    value: "{}",
+    validateInput: (v) => {
+      if (!v.trim()) return undefined;
+      try {
+        const parsed = JSON.parse(v);
+        if (typeof parsed !== "object" || Array.isArray(parsed) || parsed === null) {
+          return "Claims must be a JSON object";
+        }
+        return undefined;
+      } catch (e: any) {
+        return `Invalid JSON: ${e.message}`;
+      }
+    },
+  });
+  if (claimsJson === undefined) return;
+
+  let customClaims: Record<string, any> | undefined;
+  try {
+    const parsed = JSON.parse(claimsJson || "{}");
+    if (Object.keys(parsed).length > 0) {
+      customClaims = parsed;
+    }
+  } catch {}
+
+  // Create user
+  try {
+    const user = await authService.createUser(
+      connectionId,
+      {
+        email: email.trim(),
+        password,
+        displayName: displayName?.trim() || undefined,
+        emailVerified: false,
+      },
+      customClaims
+    );
+
+    const action = await vscode.window.showInformationMessage(
+      `Created user '${user.email || user.uid}' (UID: ${user.uid})!`,
+      "Create Firestore Profile",
+      "Dismiss"
+    );
+
+    if (action === "Create Firestore Profile") {
+      await authService.createProfileDoc(connectionId, user, "users", fsProvider);
+      vscode.window.showInformationMessage(`Created Firestore profile document for ${user.uid}!`);
+      await openPath(`users/${user.uid}`, connectionId);
+    }
+
+    if (explorerDataProvider) {
+      explorerDataProvider.refresh();
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to create user: ${err.message}`);
+  }
+}
+
+/**
+ * Command: Inspect and manage project authentication configuration & security policies.
+ */
+export async function inspectProjectAuthConfigCommand(
+  item?: AuthUsersBranchItem | ConnectionTreeItem
+) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+
+  try {
+    const config = await authService.getProjectConfig(connectionId);
+    const pwdPolicy = config.passwordPolicyConfig;
+    const emailPrivacy = config.emailPrivacyConfig;
+    const mfa = config.multiFactorConfig;
+    const sms = config.smsRegionConfig;
+
+    const items: vscode.QuickPickItem[] = [
+      {
+        label: "$(lock) Password Policy",
+        description: pwdPolicy ? `Enforcement: ${pwdPolicy.enforcementState || "OFF"}` : "Not Configured",
+        detail: pwdPolicy
+          ? `Min Length: ${pwdPolicy.constraints?.minLength ?? "none"}, Requirements: [${[
+              pwdPolicy.constraints?.requireUppercase ? "Uppercase" : null,
+              pwdPolicy.constraints?.requireLowercase ? "Lowercase" : null,
+              pwdPolicy.constraints?.requireNumeric ? "Numeric" : null,
+              pwdPolicy.constraints?.requireNonAlphanumeric ? "Special Chars" : null,
+            ]
+              .filter(Boolean)
+              .join(", ") || "none"}]`
+          : "Standard default password constraints apply",
+      },
+      {
+        label: "$(shield) Email Enumeration Privacy",
+        description: emailPrivacy?.enableImprovedEmailPrivacy ? "Enabled (Protected)" : "Disabled",
+        detail: emailPrivacy?.enableImprovedEmailPrivacy
+          ? "Firebase prevents email enumeration in sign-in & password recovery flows"
+          : "Email enumeration protection is off",
+      },
+      {
+        label: "$(device-mobile) Multi-Factor Authentication (MFA)",
+        description: mfa?.state ? `State: ${mfa.state}` : "Disabled",
+        detail: mfa?.factorIds?.length
+          ? `Enabled factors: ${mfa.factorIds.join(", ")}`
+          : "No MFA factors configured",
+      },
+      {
+        label: "$(globe) SMS Region Policies",
+        description: sms?.allowByDefault ? "Allow by default" : "Allowlist only",
+        detail: sms?.allowlistOnly?.allowedRegions?.length
+          ? `Allowed region calling codes: ${sms.allowlistOnly.allowedRegions.join(", ")}`
+          : "All regions permitted or default Firebase policies apply",
+      },
+    ];
+
+    await vscode.window.showQuickPick(items, {
+      title: `Firebase Project Auth Security & Policies (${connectionId})`,
+      placeHolder: "Project Auth Configuration Overview (admin.auth().projectConfigManager())",
+    });
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to inspect project Auth config: ${err.message}`);
+  }
+}
+

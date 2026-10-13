@@ -44,6 +44,50 @@ export function getCollectionTableStyles(): string {
       min-width: 160px;
       flex: 1.5;
     }
+    .batch-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.1));
+      border: 1px solid var(--vscode-focusBorder, #007acc);
+      border-radius: 6px;
+      padding: 10px 16px;
+      margin-bottom: 12px;
+    }
+    .batch-count {
+      font-weight: 600;
+      font-size: 0.92em;
+    }
+    .batch-btn-danger {
+      background: var(--vscode-statusBarItem-errorBackground, #c72e2e) !important;
+      color: #fff !important;
+    }
+    .select-col {
+      width: 36px;
+      min-width: 36px;
+      max-width: 36px;
+      text-align: center;
+      position: sticky;
+      left: 0;
+      z-index: 4;
+      background: var(--vscode-editor-background);
+    }
+    thead th.select-col {
+      z-index: 6;
+      background: var(--vscode-editor-background);
+    }
+    td.sticky-col {
+      left: 36px !important;
+    }
+    thead th.id-header {
+      left: 36px !important;
+    }
+    .row-checkbox {
+      cursor: pointer;
+      width: 15px;
+      height: 15px;
+      accent-color: var(--vscode-button-background, #007acc);
+    }
   `;
 }
 
@@ -89,6 +133,12 @@ export function getCollectionTableHtml(item: { collectionId: string; connectionI
             <input id="jumpInput" type="text" placeholder="Lookup exact Doc ID..." style="width: 170px;" />
           </div>
           <button id="jumpBtn" class="secondary" title="Direct single-read fetch of document ID">Lookup</button>
+          <button id="countCollBtn" class="secondary" title="Get exact total document count in collection (1 read per 1k index entries)">
+            <span>📊</span> Count
+          </button>
+          <button id="calcAggBtn" class="secondary" title="Compute Sum and Average on numeric fields">
+            <span>∑</span> Aggregates...
+          </button>
           <button id="clearSearchBtn" class="secondary" style="display:none;">Clear</button>
           <button id="exportBtn" class="secondary" title="Export current view as JSON">
             <span>⬇</span> Export JSON
@@ -128,6 +178,10 @@ export function getCollectionTableHtml(item: { collectionId: string; connectionI
             <span style="font-size:0.85em; opacity:0.8;">Presets:</span>
             <button id="presetActiveBtn" class="secondary icon-btn" title="Filter docs where __.active == true" style="font-size:0.82em; padding:3px 8px;">⚡ Active Only</button>
             <button id="presetExpiredBtn" class="secondary icon-btn" title="Filter docs where __.active == false" style="font-size:0.82em; padding:3px 8px;">⏱ Inactive</button>
+            <button id="bookmarkCurrentBtn" class="secondary icon-btn" title="Save current query as a named bookmark" style="font-size:0.82em; padding:3px 8px;">⭐ Bookmark</button>
+            <select id="bookmarksDropdown" style="font-size:0.82em; padding:3px 8px; max-width:140px;">
+              <option value="">Saved Queries...</option>
+            </select>
             <button id="addClauseBtn" class="secondary icon-btn">+ Add Clause</button>
             <button id="runQueryBtn">Run Query</button>
             <button id="resetQueryBtn" class="secondary">Reset</button>
@@ -139,6 +193,7 @@ export function getCollectionTableHtml(item: { collectionId: string; connectionI
       <div class="info-bar">
         <div class="info-text">
           Showing <b id="doc-count">0</b> documents
+          <span id="total-count-badge" class="badge" style="display:none; margin-left: 8px; background: rgba(55,148,255,0.15); color: var(--vscode-textLink-foreground, #3794ff); border-color: rgba(55,148,255,0.4);"></span>
           <span class="search-note" id="search-note" style="display:none;">
             — (Filtered over loaded documents)
           </span>
@@ -150,6 +205,13 @@ export function getCollectionTableHtml(item: { collectionId: string; connectionI
           </span>
         </div>
         <div>Click any row to open and edit in VS Code</div>
+      </div>
+
+      <div id="batchToolbar" class="batch-toolbar" style="display:none;">
+        <span class="batch-count" id="batchCountLabel">0 rows selected</span>
+        <button id="batchUpdateBtn" class="secondary">✏️ Batch Update Field...</button>
+        <button id="batchDeleteBtn" class="secondary batch-btn-danger">🗑️ Batch Delete</button>
+        <button id="batchClearBtn" class="secondary">Clear Selection</button>
       </div>
 
       <div class="table-container">
@@ -189,6 +251,34 @@ export function getCollectionTableClientScript(): string {
       let isTimeTravelOpen = false;
       let simulatedTime = Date.now();
       let lifecycleFilter = 'all';
+
+      let selectedDocIds = new Set();
+      let savedBookmarksMap = {};
+
+      function updateBatchToolbar() {
+        const toolbar = document.getElementById('batchToolbar');
+        const countLabel = document.getElementById('batchCountLabel');
+        if (!toolbar || !countLabel) return;
+        if (selectedDocIds.size > 0) {
+          toolbar.style.display = 'flex';
+          countLabel.textContent = selectedDocIds.size + ' row(s) selected';
+        } else {
+          toolbar.style.display = 'none';
+        }
+      }
+
+      function updateBookmarksDropdown(bookmarks) {
+        savedBookmarksMap = bookmarks || {};
+        const dd = document.getElementById('bookmarksDropdown');
+        if (!dd) return;
+        dd.innerHTML = '<option value="">⭐ Saved Queries...</option>';
+        Object.keys(savedBookmarksMap).forEach(name => {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          dd.appendChild(opt);
+        });
+      }
 
       // ── helpers ──────────────────────────────────────────────────────
       function escapeHtml(val) {
@@ -251,7 +341,8 @@ export function getCollectionTableClientScript(): string {
       }
 
       function renderHeaderRow(headers) {
-        return '<th class="id-header">Document ID</th>' +
+        return '<th class="select-col"><input type="checkbox" id="selectAllCheckbox" class="row-checkbox" title="Select All Loaded Rows" /></th>' +
+          '<th class="id-header">Document ID</th>' +
           headers.map(h => renderHeaderCell(h)).join('');
       }
 
@@ -282,6 +373,9 @@ export function getCollectionTableClientScript(): string {
             ? '<span class="lifecycle-pill ' + lc.cls + '" title="Virtual Status: ' + lc.label + '">' + lc.icon + ' ' + lc.label + '</span>'
             : '';
 
+          const isChecked = selectedDocIds.has(docId);
+          const selectCell = '<td class="select-col"><input type="checkbox" class="row-checkbox row-select-checkbox" data-id="' + escapeHtml(docId) + '"' + (isChecked ? ' checked' : '') + ' /></td>';
+
           const idCell = '<td class="sticky-col"><div class="doc-id-cell">' +
             '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1h8l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm7 1v3h3L11 2z"/></svg>' +
             '<span>' + escapeHtml(docId) + '</span>' + pillHtml + '</div></td>';
@@ -293,7 +387,7 @@ export function getCollectionTableClientScript(): string {
             return '<td' + tdCls + '>' + formatCell(doc[h]) + '</td>';
           }).join('');
 
-          return '<tr data-path="' + escapeHtml(doc.__path || '') + '">' + idCell + dataCells + '</tr>';
+          return '<tr data-path="' + escapeHtml(doc.__path || '') + '" data-id="' + escapeHtml(docId) + '">' + selectCell + idCell + dataCells + '</tr>';
         }).join('');
       }
 
@@ -375,6 +469,7 @@ export function getCollectionTableClientScript(): string {
       function reRenderCurrentTable() {
         document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
         document.getElementById('table-body').innerHTML = renderRows(lastDocs, currentHeaders);
+        updateBatchToolbar();
       }
 
       function filterCurrentDocs() {
@@ -400,6 +495,7 @@ export function getCollectionTableClientScript(): string {
         document.getElementById('search-note').style.display = isFiltering ? '' : 'none';
         document.getElementById('loadMoreBtn').style.display = (!isFiltering && hasMoreState) ? '' : 'none';
         updateEmptyState(lastDocs.length);
+        updateBatchToolbar();
       }
 
       function applyClientSearch(term) {
@@ -433,11 +529,52 @@ export function getCollectionTableClientScript(): string {
           lastDocs = allLoadedDocs;
           hasMoreState = !!msg.hasMore;
           updateTimeInputValue();
+          if (msg.bookmarks) {
+            updateBookmarksDropdown(msg.bookmarks);
+          }
           document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
           document.getElementById('table-body').innerHTML = renderRows(lastDocs, currentHeaders);
           document.getElementById('doc-count').textContent = lastDocs.length;
           document.getElementById('loadMoreBtn').style.display = hasMoreState ? '' : 'none';
           updateEmptyState(lastDocs.length);
+          updateBatchToolbar();
+        }
+
+        if (msg.type === 'countResult') {
+          const btn = document.getElementById('countCollBtn');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<span>📊</span> Count';
+          }
+          const badge = document.getElementById('total-count-badge');
+          if (badge) {
+            badge.textContent = 'Total: ' + Number(msg.count).toLocaleString() + ' docs';
+            badge.style.display = 'inline-block';
+          }
+        }
+
+        if (msg.type === 'aggregateResult') {
+          const badge = document.getElementById('total-count-badge');
+          if (badge) {
+            const avgFormatted = msg.avg !== null && msg.avg !== undefined ? Number(msg.avg).toFixed(2) : 'N/A';
+            badge.textContent = msg.field + ': Sum=' + (msg.sum ?? 0) + ' | Avg=' + avgFormatted;
+            badge.style.display = 'inline-block';
+          }
+        }
+
+        if (msg.type === 'batchSuccess') {
+          selectedDocIds.clear();
+          updateBatchToolbar();
+          if (msg.docs) {
+            allLoadedDocs = msg.docs;
+            lastDocs = allLoadedDocs;
+            reRenderCurrentTable();
+            document.getElementById('doc-count').textContent = lastDocs.length;
+          }
+        }
+
+        if (msg.type === 'bookmarksLoaded') {
+          updateBookmarksDropdown(msg.bookmarks);
         }
 
         if (msg.type === 'appendRows') {
@@ -592,6 +729,88 @@ export function getCollectionTableClientScript(): string {
         createClauseRow('__.active', '==', 'false');
       };
 
+      document.getElementById('bookmarkCurrentBtn').onclick = function() {
+        const rows = Array.from(document.querySelectorAll('.clause-row'));
+        const clauses = rows.map(r => ({
+          field: r.querySelector('.clause-field').value.trim(),
+          op: r.querySelector('.clause-op').value,
+          value: r.querySelector('.clause-val').value.trim(),
+        })).filter(c => c.field !== '');
+
+        if (clauses.length === 0) {
+          alert('Add at least one query clause before bookmarking.');
+          return;
+        }
+        vscode.postMessage({ command: 'promptSaveBookmark', clauses });
+      };
+
+      document.getElementById('bookmarksDropdown').onchange = function() {
+        const name = this.value;
+        if (!name || !savedBookmarksMap[name]) return;
+        const clauses = savedBookmarksMap[name];
+        document.getElementById('clauseList').innerHTML = '';
+        clauses.forEach(c => {
+          createClauseRow(c.field, c.op, c.value);
+        });
+      };
+
+      document.getElementById('countCollBtn').onclick = function() {
+        this.disabled = true;
+        this.innerHTML = '<span>⏳</span> Counting...';
+        vscode.postMessage({ command: 'countCollection' });
+      };
+
+      document.getElementById('calcAggBtn').onclick = function() {
+        vscode.postMessage({ command: 'calculateAggregates' });
+      };
+
+      document.getElementById('batchUpdateBtn').onclick = function() {
+        if (selectedDocIds.size === 0) return;
+        vscode.postMessage({ command: 'promptBatchUpdate', docIds: Array.from(selectedDocIds) });
+      };
+
+      document.getElementById('batchDeleteBtn').onclick = function() {
+        if (selectedDocIds.size === 0) return;
+        vscode.postMessage({ command: 'promptBatchDelete', docIds: Array.from(selectedDocIds) });
+      };
+
+      document.getElementById('batchClearBtn').onclick = function() {
+        selectedDocIds.clear();
+        const checkboxes = document.querySelectorAll('.row-select-checkbox, #selectAllCheckbox');
+        checkboxes.forEach(cb => { (cb as any).checked = false; });
+        updateBatchToolbar();
+      };
+
+      document.addEventListener('change', function(event) {
+        const target = event.target;
+        if (!target) return;
+        if (target.id === 'selectAllCheckbox') {
+          const checked = target.checked;
+          const checkboxes = document.querySelectorAll('.row-select-checkbox');
+          checkboxes.forEach(cb => {
+            cb.checked = checked;
+            const id = cb.getAttribute('data-id');
+            if (id) {
+              if (checked) selectedDocIds.add(id);
+              else selectedDocIds.delete(id);
+            }
+          });
+          updateBatchToolbar();
+        } else if (target.classList && target.classList.contains('row-select-checkbox')) {
+          const id = target.getAttribute('data-id');
+          if (id) {
+            if (target.checked) selectedDocIds.add(id);
+            else selectedDocIds.delete(id);
+          }
+          const allCheckboxes = document.querySelectorAll('.row-select-checkbox');
+          const selectAllEl = document.getElementById('selectAllCheckbox');
+          if (selectAllEl) {
+            selectAllEl.checked = allCheckboxes.length > 0 && selectedDocIds.size === allCheckboxes.length;
+          }
+          updateBatchToolbar();
+        }
+      });
+
       document.getElementById('toggleFilterBtn').onclick = function() {
         const panel = document.getElementById('queryBuilderPanel');
         const isVisible = panel.style.display !== 'none';
@@ -671,6 +890,9 @@ export function getCollectionTableClientScript(): string {
       };
 
       document.getElementById('table-body').addEventListener('click', function(event) {
+        if (event.target.closest('.select-col') || event.target.closest('.row-checkbox')) {
+          return;
+        }
         const target = event.target.closest('tr');
         if (target) {
           const path = target.getAttribute('data-path');

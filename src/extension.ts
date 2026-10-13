@@ -52,7 +52,11 @@ import {
   cloneAuthUserCommand,
   mintCustomTokenCommand,
   revokeUserSessionsCommand,
+  createAuthUserCommand,
+  inspectProjectAuthConfigCommand,
 } from "./auth/authCommands";
+import { generateSchemaCommand } from "./commands/schemaCommands";
+import { exportCollectionCommand, importCollectionCommand } from "./commands/importExportCommands";
 import { RulesService } from "./rules/RulesService";
 import { scheme } from "./constants";
 import { DocumentFileSystemProvider } from "./editor/DocumentFileSystemProvider";
@@ -76,7 +80,7 @@ export async function activate(context: vscode.ExtensionContext) {
   rulesService.setContext(context);
   context.subscriptions.push(rulesService);
 
-  const documentFileSystemProvider = new DocumentFileSystemProvider();
+  const documentFileSystemProvider = DocumentFileSystemProvider.getInstance();
   context.subscriptions.push(documentFileSystemProvider);
 
   // Automatically refresh Explorer Tree whenever a document or sub-field is saved in the editor (preserve pagination)
@@ -221,6 +225,26 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.addCollection",
       (item: ConnectionTreeItem | DocumentItem) =>
         addCollectionCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.generateSchema",
+      (item?: CollectionItem | DocumentItem) => generateSchemaCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.exportCollection",
+      (item: CollectionItem) => exportCollectionCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.importCollection",
+      (item: CollectionItem) => importCollectionCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.createAuthUser",
+      (item?: any) => createAuthUserCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.inspectProjectAuthConfig",
+      (item?: any) => inspectProjectAuthConfigCommand(item)
     )
   );
 

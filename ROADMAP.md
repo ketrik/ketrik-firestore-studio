@@ -10,10 +10,10 @@ timeline
         2026-10-08 : v1.2.0 Subdocuments & Atomic Updates : v1.3.0 Jump to Doc ID
         2026-10-09 : v1.4.0 Deep Delete & Cross-Copy : v1.5.0 Server Query Builder & Dual-Contract Table
         2026-10-10 : v1.7.0 Dual-Prefix Protocol & Modular Architecture
-        2026-10-13 : v1.8.0 Security Rules & Auth Table : v1.9.0 User Cloning, Tokens & Force Logout
+        2026-10-13 : v1.8.0 Security Rules & Auth Table : v1.9.0 User Cloning, Tokens & Force Logout : v1.9.1 Batch Tools, Schemas & Aggregations
     section Planned
-        Q4 2026 : v1.9.1 Batch Data Tools, Schema Export & Studio Polish
-        2027 : v2.0.0 Offline Mode, Cross-Project Sync & Rules Simulator
+        Q1 2027 : v1.10.0 Real-Time Streaming, Vector Search & Performance Profiler
+        2027 : v2.0.0 Security Rules Simulator, Cross-Project Sync & Storage Explorer
 ```
 
 ---
@@ -33,8 +33,9 @@ timeline
 | **v1.7.0** | Shipped | 2026-10-10 | Dual-Prefix protocol (`_` & `__`), Tree hierarchy badging, Table column zones & noise toggles, protocol query presets, safe mode mutation guards, cross-substrate paste, modular extension architecture |
 | **v1.8.0** | Shipped | 2026-10-13 | Live Security Rules inspector & diff (`firestore.rules`), TextMate syntax grammar, AST rule permissions parser, Firebase Auth users tree & table view (bulk load, newest-first sort, custom claims editor, profile linker), sticky table columns (pinned ID & actions) |
 | **v1.9.0** | Shipped | 2026-10-13 | Cross-environment user cloning (`cloneAuthUser`), custom token minter (`mintCustomToken` / login as user), session revocation (`revokeUserSessions` / force logout), password reset link generator, cascade profile deletion, user avatar photos in table, clean icon-only rule badges |
-| **v1.9.1** | Planned | Q4 2026 | Pre-2.0 Bridge: Bulk batch operations (batch mutate/delete), TypeScript contract & schema generator, CSV/JSON collection import & export wizard, collection count aggregation, query bookmarks & history |
-| **v2.0.0** | Future | 2027 | Local offline cache & sync, cross-database schema diffing, interactive visual Security Rules simulator & test runner, multi-tab studio dashboard |
+| **v1.9.1** | Shipped | 2026-10-13 | Batch operations (`WriteBatch` update/delete), TypeScript contract & Zod generator, CSV/JSON/NDJSON import & export wizard, collection `count()`/`sum()`/`avg()` aggregations, query bookmarks & history, create user dialog & auth security policies |
+| **v1.10.0** | Planned | Q1 2027 | Live watch mode (`onSnapshot` real-time feed), composite index auto-fixer (`firestore.indexes.json`), query performance profiler (`explain({ analyze: true })`), Firestore vector search (kNN), schema drift analyzer |
+| **v2.0.0** | Future | 2027 | In-IDE Security Rules simulator & test runner, cross-environment data & schema diff viewer (Staging vs Prod), local offline cache & mocking, Firebase Cloud Storage explorer, multi-tab studio dashboard |
 
 ---
 
@@ -91,48 +92,82 @@ timeline
 
 ---
 
-### [v1.9.0] — Batch Operations, Schema Generator & Studio Polish (Target: Q4 2026)
+### [v1.9.1] — Data Power Tools, TypeScript Schema & Aggregations (Shipped: 2026-10-13)
 
-*Theme: Final polish and developer productivity bridge before the v2.0 major milestone.*
+*Theme: Eliminating repetitive data wrangling, adding native Firestore count/sum aggregations, and giving TypeScript developers instant type definitions.*
 
-* **Cross-Environment Auth User Cloning (`Clone / Copy User to Connection...`)**:
-  * Right-click any Auth user or select in Table view $\rightarrow$ **Clone User to Connection...**.
-  * Replicates user account (`uid`, `email`, `displayName`, `photoURL`, `customClaims`, `emailVerified`) to target environment (e.g., Production $\rightarrow$ Staging or Local Emulator).
-  * Optional checkbox to cascade-clone their Firestore profile document (`/users/{uid}`) in the same operation.
-  * Option to generate a fresh password reset link on the target connection.
-* **Bulk Batch Mutation & Deletion**:
-  * Multi-select rows in Collection Table or Auth Users Table.
-  * Batch field update (e.g., set `status: "archived"` across 50 selected documents via `WriteBatch`).
-  * Batched delete with quota warning and dry-run preview.
-* **TypeScript Contract & Schema Generator**:
-  * Right-click any collection or document $\rightarrow$ **Generate TypeScript Interfaces**.
-  * Introspects documents in the collection to deduce inferred TypeScript types (including optional fields and nested structures).
-  * Direct copy or write to `.d.ts` file in the workspace.
-* **Data Import & Export Wizard (CSV & JSON)**:
-  * Import CSV or JSON datasets directly into a Firestore collection with custom ID mapping and field type coercion.
-  * Full collection export to JSON / NDJSON / CSV with streaming batching to avoid memory exhaustion.
-* **Firestore Aggregation Queries**:
-  * Native Firestore `count()`, `sum()`, and `average()` aggregation support in the Table view header (showing exact collection document counts at minimal read cost).
-* **Project Auth Configuration Inspector**:
-  * Dedicated inspector for `admin.auth().projectConfigManager()`: view enabled sign-in providers, authorized domains list with 1-click addition, SMS region policies, and blocking functions (`beforeSignIn`, `beforeCreate`).
+* **Multi-Document Batch Operations in Table View (`WriteBatch`)**:
+  * Multi-select rows in Collection Table via sticky checkbox column.
+  * Batch field update (update a single field, atomic `FieldValue.delete()`, or merge JSON payload across selected documents via chunked `WriteBatch`).
+  * Batched delete with confirmation modal showing count of affected documents, total write operations, and safety confirmation.
+* **Native Firestore Aggregations (`count()`, `sum()`, `avg()`)**:
+  * Native Firestore `count()`, `sum()`, and `avg()` aggregation support in the Table view header.
+  * Instant collection document count at ultra-low cost (1 read per 1,000 index entries) without downloading document bodies.
+  * Calculate field sum and average directly from server aggregation on demand.
+* **Intelligent TypeScript Interface & Zod Schema Generator**:
+  * Right-click any collection or document $\rightarrow$ **Generate TypeScript / Zod Schema...**.
+  * Introspects and samples $N$ documents (10–50), deducing merged keys, optional fields (`?`), union types, and converting Firestore types (`Timestamp`, `GeoPoint`, `DocumentReference`).
+  * Generates pure TypeScript interfaces (`interface UserDoc { ... }`) or Zod schemas (`z.object({ ... })`).
+  * Direct copy to clipboard, open in new editor, or write to `.d.ts` / `.ts` file in the workspace.
+* **Data Import & Export Wizard (CSV, JSON & NDJSON)**:
+  * Import CSV, JSON, or NDJSON datasets directly into a Firestore collection with custom document ID strategy (Auto-ID, specific property, or row index) and automated type coercion (ISO dates $\rightarrow$ Timestamps, numbers, booleans).
+  * Chunked streaming via `WriteBatch` (400 writes/batch) with live progress bar and cancellation controls.
+  * Full collection export to JSON, NDJSON, or CSV with progress reporting.
 * **Query Bookmarks & Search History**:
   * Save frequently used server-side `where` query combinations as named bookmarks per collection.
-  * Quick-access recent queries list.
+  * Stored in workspace configuration (`.vscode/firestore-queries.json`) for team sharing via Git.
+  * Quick-access saved queries dropdown list in the table toolbar.
+* **Firebase Auth Suite Enhancements**:
+  * Create Auth User Dialog (`ketrik-firestore-studio.createAuthUser`): scaffold new user accounts directly in VS Code (email, password, displayName, custom claims).
+  * Project Auth Security & Policies inspector (`ketrik-firestore-studio.inspectProjectAuthConfig`): inspect password policies, email privacy protection, MFA factor IDs, and SMS region policies.
 
 ---
 
-### [v2.0.0] — Enterprise Studio & Offline Experience (Target: 2027)
+### [v1.10.0] — Real-Time Streaming, Vector Search & Performance Profiling (Target: Q1 2027)
 
-*Theme: Next-generation enterprise workflow, offline emulation, and cross-project sync.*
+*Theme: Real-time reactive data, vector similarity search, query indexing intelligence, and performance execution profiling.*
 
-* **Local Offline Cache & Mocking**:
-  * Work offline with local SQLite/IndexedDB caches of remote documents with automatic drift detection and push synchronization.
-* **Cross-Project Schema & Data Diff Viewer**:
-  * Side-by-side graphical diff between environments (e.g. comparing Production vs. Staging collections or document structures).
+* **Live Watch Mode / Real-Time Event Feed (`onSnapshot`)**:
+  * Live Sync toggle (`📡 Live Watch`) on Collection Tables and open document editors.
+  * Subscribes via Firestore `onSnapshot` with subtle animated visual feedback on incoming changes (green flash for newly added docs, amber flash for modified fields, red strike-through for deleted docs).
+  * Real-time event log drawer showing chronological mutation ticker with timestamps.
+  * Quota safety: automatically pauses after 5 minutes of inactivity or configurable threshold.
+* **Composite Index Intelligence & 1-Click Auto-Fixer**:
+  * Automatically catches `FAILED_PRECONDITION: The query requires an index` errors from the Query Builder.
+  * Parses Firebase Console URL to extract collection ID, query fields, and sort orders.
+  * 1-Click action to append formatted composite index definition into workspace `firestore.indexes.json` for deployment via `firebase deploy --only firestore:indexes`.
+  * 1-Click jump to exact Firebase Console index builder.
+* **Query Performance Profiler & Cost Estimator (`explain({ analyze: true })`)**:
+  * Integration with Firestore Explain API (`query.explain({ analyze: true })`).
+  * "Explain Query Plan" button in Query Builder displaying execution latency, documents read vs index entries scanned efficiency ratio, and billable read count breakdown.
+* **Firestore Vector Search & Embeddings Explorer (kNN)**:
+  * Dedicated column renderer for `VectorValue` fields showing dimension count (e.g. `[1536 dims]`) and cosine magnitude preview.
+  * Similarity search query builder: execute kNN queries (`findNearest`) with vector inputs, distance metric (`COSINE`, `EUCLIDEAN`, `DOT_PRODUCT`), and similarity scores per row.
+* **Collection Schema Drift & Anomaly Analyzer**:
+  * Scans collection sample to produce interactive visual health reports: field presence percentages, type consistency matrix (flagging mixed string/timestamp fields), and orphan keys.
+
+---
+
+### [v2.0.0] — Enterprise Studio, Cross-Environment Sync & Security Rules Engine (Target: 2027)
+
+*Theme: True enterprise governance, local offline zero-cost emulation, rules simulation, and cross-service ecosystem integration.*
+
 * **Interactive Security Rules Simulator & Test Runner**:
-  * In-IDE simulation engine to test rules against mock request auth tokens (`request.auth.uid`, `request.auth.token.admin`) before deploying.
-* **Impersonation Token Minter (`Mint Custom Token & Sign-In Link`)**:
-  * Generate minted custom JWT tokens for any user to test client apps and verify security rules permissions directly from that user's perspective.
-* **Multi-Tab Studio Dashboard**:
-  * Unified workspace tab with tabs for Collections, Auth Users, Rules, and Metrics.
+  * In-IDE simulation engine to test rules against mock request auth tokens (`request.auth.uid`, `request.auth.token.role`) and mock resource payloads before deploying.
+  * Line-by-line visual AST evaluation showing exact pass/fail boolean branches.
+  * 1-Click export of simulation scenarios as `@firebase/rules-unit-testing` Jest/Mocha test files.
+* **Cross-Environment Data & Schema Diff Viewer (Staging vs. Production)**:
+  * Side-by-side graphical diff between connections (comparing collections, schemas, or specific config documents like `/config/app_settings`).
+  * 1-Click selective promotion/sync of documents from Staging to Production with diff preview and confirmation.
+* **Local Offline Cache & Mocking Mode (Zero-Quota Development)**:
+  * Snapshot working sets to a local SQLite database for zero-cost offline development on flights/commutes without needing the Java Firebase Local Emulator.
+  * Visual sync manager upon reconnecting with conflict resolution (Keep Remote, Overwrite, Merge).
+* **Firebase Cloud Storage Explorer**:
+  * Dedicated **Storage Buckets** tree view under each connection.
+  * In-line media preview for images, audio, video, and PDFs directly in VS Code.
+  * Signed URL minter with configurable expiration.
+  * Drag-and-drop file upload with automatic generation of Firestore `gs://` paths.
+* **Unified Multi-Tab Studio Dashboard**:
+  * Unified workspace tab integrating Collections, Auth Users, Rules, Storage Buckets, and Metrics.
+
 

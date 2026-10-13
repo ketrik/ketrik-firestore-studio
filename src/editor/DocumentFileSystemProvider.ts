@@ -19,10 +19,18 @@ export interface ParsedDocumentUri {
  * their sub-fields/root-variables as virtual files in the editor, supporting multiple connections.
  */
 export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vscode.Disposable {
+  private static instance: DocumentFileSystemProvider;
   private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
 
   readonly onDidChangeFile: vscode.Event<vscode.FileChangeEvent[]> =
     this._emitter.event;
+
+  public static getInstance(): DocumentFileSystemProvider {
+    if (!DocumentFileSystemProvider.instance) {
+      DocumentFileSystemProvider.instance = new DocumentFileSystemProvider();
+    }
+    return DocumentFileSystemProvider.instance;
+  }
 
   /** In-flight / short-lived document snapshot cache to deduplicate stat() followed immediately by readFile(). */
   private _snapshotCache = new Map<string, { snapshot: import("firebase-admin/firestore").DocumentSnapshot; timestamp: number }>();

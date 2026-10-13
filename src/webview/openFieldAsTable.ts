@@ -126,11 +126,15 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         filters: { JSON: ["json"] },
       });
       if (uri) {
-        await vscode.workspace.fs.writeFile(
-          uri,
-          Buffer.from(JSON.stringify(message.data, null, 2))
-        );
-        vscode.window.showInformationMessage("Exported JSON successfully!");
+        try {
+          await vscode.workspace.fs.writeFile(
+            uri,
+            Buffer.from(JSON.stringify(message.data, null, 2))
+          );
+          vscode.window.showInformationMessage("Exported JSON successfully!");
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to export JSON: ${err.message}`);
+        }
       }
       return;
     }

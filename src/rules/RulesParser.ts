@@ -100,14 +100,14 @@ export class RulesParser {
     const cleaned = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
     // 2. Extract helper functions: function name(...) { return expr; }
-    const fnRegex = /function\s+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{([^}]+)\}/g;
+    const fnRegex = /function\s+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{([\s\S]*?)\}/g;
     let fnMatch: RegExpExecArray | null;
     while ((fnMatch = fnRegex.exec(cleaned)) !== null) {
       const fnName = fnMatch[1];
       const fnBody = fnMatch[2];
-      const retMatch = /return\s+([^;]+);/.exec(fnBody);
+      const retMatch = /return\s+([\s\S]*?);/.exec(fnBody);
       if (retMatch) {
-        this.functions.set(fnName, retMatch[1].trim());
+        this.functions.set(fnName, retMatch[1].replace(/\s+/g, " ").trim());
       }
     }
 
@@ -172,7 +172,7 @@ export class RulesParser {
 
       // Extract allow rules in this block's immediate body (ignoring nested match blocks)
       const localBody = this.stripNestedMatchBlocks(blockBody);
-      const allowRegex = /allow\s+([^:]+):\s*if\s+([^;]+);/g;
+      const allowRegex = /allow\s+([^:]+):\s*if\s+([\s\S]*?);/g;
       let a: RegExpExecArray | null;
 
       const block: RuleMatchBlock = {
@@ -183,7 +183,7 @@ export class RulesParser {
 
       while ((a = allowRegex.exec(localBody)) !== null) {
         const ops = a[1].split(",").map((o) => o.trim());
-        let cond = a[2].trim();
+        let cond = a[2].replace(/\s+/g, " ").trim();
 
         // Expand top-level function calls in condition if known
         for (const [fnName, fnExpr] of this.functions.entries()) {
@@ -279,9 +279,10 @@ export class RulesParser {
   public getAccessForCollection(collPath: string): CollectionSecurityAccess {
     const collSegments = collPath.split("/").filter(Boolean);
 
-    // Find all matching blocks, from most specific to wildcard/fallback
+    // Find all matching blocks, scored by specificity (most specific wins over wildcards)
     let matchedBlock: RuleMatchBlock | null = null;
     let fallbackBlock: RuleMatchBlock | null = null;
+    let bestScore = -1;
 
     for (const b of this.blocks) {
       // Normalize rule segments (strip databases/{database}/documents prefix if present)
@@ -303,8 +304,29 @@ export class RulesParser {
       }
 
       if (this.pathMatches(collSegments, effectiveSegments)) {
-        matchedBlock = b;
-        break;
+        // Specificity scoring: literal segment match > single wildcard > recursive wildcard
+        let score = 0;
+        const isRecursive = effectiveSegments.some((s) => s.includes("=**"));
+        for (let i = 0; i < collSegments.length; i++) {
+          const ruleIdx = i * 2;
+          if (ruleIdx < effectiveSegments.length) {
+            const seg = effectiveSegments[ruleIdx];
+            if (seg === collSegments[i]) {
+              score += 10;
+            } else if (seg.startsWith("{") && !seg.includes("=**")) {
+              score += 5;
+            } else if (seg.includes("=**")) {
+              score += 1;
+            }
+          }
+        }
+        if (!isRecursive) {
+          score += 10;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          matchedBlock = b;
+        }
       }
     }
 

@@ -34,8 +34,9 @@ export function sortHeaders(headerList: string[]): string[] {
 
 /**
  * Parse a raw string filter value into appropriate JavaScript / Firestore types.
+ * Accepts optional WhereFilterOp to guarantee non-empty arrays for 'in', 'not-in', and 'array-contains-any'.
  */
-export function parseFilterValue(valStr: string): any {
+export function parseFilterValue(valStr: string, op?: WhereFilterOp): any {
   const trimmed = valStr.trim();
   if (trimmed === "true") { return true; }
   if (trimmed === "false") { return false; }
@@ -50,33 +51,56 @@ export function parseFilterValue(valStr: string): any {
       return parsedDate;
     }
   }
-  // Try parsing JSON for array filters (e.g. [1, 2], ["a", "b"])
+  // Try parsing JSON for array/map filters (e.g. [1, 2], ["a", "b"])
   if ((trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"))) {
     try {
-      return JSON.parse(trimmed);
+      const parsedJson = JSON.parse(trimmed);
+      return parsedJson;
     } catch {}
   }
+
+  // If operator requires an array ('in', 'not-in', 'array-contains-any'), coerce comma-separated or single values
+  if (op === "in" || op === "not-in" || op === "array-contains-any") {
+    if (trimmed.includes(",")) {
+      return trimmed.split(",").map((s) => parseFilterValue(s.trim()));
+    }
+    return [trimmed];
+  }
+
   return trimmed;
 }
 
 /**
- * In-memory search over record objects.
+ * In-memory search over record objects with null/undefined safety.
  */
 export function filterObjects(items: any[], searchTerm: string, excludedKeys: string[] = ["__path"]): any[] {
-  const term = searchTerm.toLowerCase();
-  return items.filter((item) =>
-    Object.entries(item).some(([key, val]) => {
-      if (excludedKeys.includes(key)) {
+  if (!searchTerm || !searchTerm.trim()) {
+    return items;
+  }
+  const term = searchTerm.toLowerCase().trim();
+  return items.filter((item) => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    return Object.entries(item).some(([key, val]) => {
+      if (excludedKeys.includes(key) || val === undefined || val === null) {
         return false;
       }
-      if (key === "__id" && typeof val === "string") {
-        return val.toLowerCase().includes(term);
+      if (key === "__id" && (typeof val === "string" || typeof val === "number")) {
+        return String(val).toLowerCase().includes(term);
       }
-      return typeof val === "string"
-        ? val.toLowerCase().includes(term)
-        : typeof val === "object" && val !== null
-        ? JSON.stringify(val).toLowerCase().includes(term)
-        : false;
-    })
-  );
+      if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+        return String(val).toLowerCase().includes(term);
+      }
+      if (typeof val === "object") {
+        try {
+          return JSON.stringify(val).toLowerCase().includes(term);
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    });
+  });
 }
+
