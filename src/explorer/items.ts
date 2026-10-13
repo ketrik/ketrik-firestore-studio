@@ -197,7 +197,7 @@ export class CollectionItem extends Item {
 
     if (access) {
       const { badge, tooltip: ruleTooltip } = RulesParser.formatBadge(access);
-      this.description = `${orderDesc}  [${badge}]`;
+      this.description = badge ? `${orderDesc}  ${badge}` : orderDesc;
       this.tooltip = `[${connectionId}] ${reference.path}\n\n${ruleTooltip}`;
     } else {
       this.description = orderDesc;

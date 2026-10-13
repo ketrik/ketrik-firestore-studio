@@ -379,29 +379,20 @@ export class RulesParser {
   }
 
   /**
-   * Format the access level into a compact tree badge.
-   * e.g., "🌐R / 🛡️W", "🔒 Authed", "👤 Owner", "⛔ Locked"
+   * Format the access level into a minimal icon-only indicator for the tree,
+   * keeping all detailed explanations inside the hover tooltip.
    */
   public static formatBadge(access: CollectionSecurityAccess): {
     badge: string;
     tooltip: string;
   } {
-    const roleIcons: Record<AccessRole, string> = {
-      public: "🌐",
-      auth: "🔒",
-      admin: "🛡️",
-      owner: "👤",
-      locked: "⛔",
-      custom: "⚙️",
-    };
-
     const roleLabels: Record<AccessRole, string> = {
-      public: "Public",
-      auth: "Authed",
-      admin: "Admin",
-      owner: "Owner",
-      locked: "Locked",
-      custom: "Custom",
+      public: "Public (Unauthenticated)",
+      auth: "Any Logged-in User",
+      admin: "Admin Role Only",
+      owner: "User-Isolated (Owner Only)",
+      locked: "Backend Only (Admin SDK / Denied to clients)",
+      custom: "Custom Rule",
     };
 
     const r = access.read;
@@ -409,23 +400,29 @@ export class RulesParser {
 
     let badge = "";
 
+    // Minimal icon-only indicator:
     if (r.role === "public" && w.role === "public") {
-      badge = "⚠️ 🌐 Public R/W";
-    } else if (r.role === w.role) {
-      const icon = roleIcons[r.role];
-      const label = roleLabels[r.role];
-      const cond = (r.isConditional || w.isConditional) ? "*" : "";
-      badge = `${icon} ${label}${cond}`;
+      badge = "🚨"; // Critical public read/write
+    } else if (r.role === "public" || w.role === "public") {
+      badge = "⚠️ 🌐"; // Partially public
+    } else if (r.role === "locked" && w.role === "locked") {
+      badge = "🛡️"; // Private backend-only
+    } else if (r.role === "admin" || w.role === "admin") {
+      badge = "🔑"; // Admin restricted
+    } else if (r.role === "owner" || w.role === "owner") {
+      badge = "👤"; // User isolated
+    } else if (r.role === "auth" && w.role === "auth") {
+      badge = "🔒"; // Standard authenticated
     } else {
-      const rIcon = roleIcons[r.role];
-      const wIcon = roleIcons[w.role];
-      badge = `${rIcon}R / ${wIcon}W`;
+      badge = "⚙️"; // Custom rule
     }
 
     const tooltip = [
-      `Firestore Security Access:`,
-      `📖 Read:  ${roleLabels[r.role]} (${r.condition || "none"})`,
-      `✍️ Write: ${roleLabels[w.role]} (${w.condition || "none"})`,
+      `Security Rules Summary:`,
+      `• Read:  ${roleLabels[r.role]} (${r.condition || "default"})`,
+      `• Write: ${roleLabels[w.role]} (${w.condition || "default"})`,
+      (r.role === "public" || w.role === "public") ? `⚠️ WARNING: Unauthenticated public access permitted!` : "",
+      (r.role === "locked" && w.role === "locked") ? `🛡️ Private: Accessible only via Admin SDK / Backend.` : "",
       access.rawRuleSnippet ? `\nRule:\n${access.rawRuleSnippet}` : "",
     ]
       .filter(Boolean)
