@@ -380,19 +380,20 @@ export class RulesParser {
 
   /**
    * Format the access level into a minimal icon-only indicator for the tree,
-   * keeping all detailed explanations inside the hover tooltip.
+   * keeping all detailed explanations inside the hover tooltip with rich icons
+   * for instant visual identification of Read and Write permissions.
    */
   public static formatBadge(access: CollectionSecurityAccess): {
     badge: string;
     tooltip: string;
   } {
-    const roleLabels: Record<AccessRole, string> = {
-      public: "Public (Unauthenticated)",
-      auth: "Any Logged-in User",
-      admin: "Admin Role Only",
-      owner: "User-Isolated (Owner Only)",
-      locked: "Backend Only (Admin SDK / Denied to clients)",
-      custom: "Custom Rule",
+    const roleIcons: Record<AccessRole, string> = {
+      public: "🌐 Public (Unauthenticated)",
+      auth: "🔒 Any Logged-in User",
+      admin: "🔑 Admin Role Only",
+      owner: "👤 Owner Only (User-Isolated)",
+      locked: "🛡️ Backend Only (Admin SDK / Denied)",
+      custom: "⚙️ Custom Rule",
     };
 
     const r = access.read;
@@ -400,7 +401,7 @@ export class RulesParser {
 
     let badge = "";
 
-    // Minimal icon-only indicator:
+    // Minimal icon-only indicator for tree row:
     if (r.role === "public" && w.role === "public") {
       badge = "🚨"; // Critical public read/write
     } else if (r.role === "public" || w.role === "public") {
@@ -417,16 +418,27 @@ export class RulesParser {
       badge = "⚙️"; // Custom rule
     }
 
-    const tooltip = [
-      `Security Rules Summary:`,
-      `• Read:  ${roleLabels[r.role]} (${r.condition || "default"})`,
-      `• Write: ${roleLabels[w.role]} (${w.condition || "default"})`,
-      (r.role === "public" || w.role === "public") ? `⚠️ WARNING: Unauthenticated public access permitted!` : "",
-      (r.role === "locked" && w.role === "locked") ? `🛡️ Private: Accessible only via Admin SDK / Backend.` : "",
-      access.rawRuleSnippet ? `\nRule:\n${access.rawRuleSnippet}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const lines: string[] = [
+      `Security Rules Access:`,
+      `📖 Read:   ${roleIcons[r.role]} [${r.condition || "default"}]`,
+      `✍️ Write:  ${roleIcons[w.role]} [${w.condition || "default"}]`,
+    ];
+
+    if (r.role === "public" && w.role === "public") {
+      lines.push(`🚨 CRITICAL: Anyone on the internet can read and write this collection!`);
+    } else if (r.role === "public") {
+      lines.push(`⚠️ ATTENTION: Public unauthenticated read access is permitted.`);
+    } else if (w.role === "public") {
+      lines.push(`🚨 ATTENTION: Public unauthenticated write access is permitted!`);
+    } else if (r.role === "locked" && w.role === "locked") {
+      lines.push(`🛡️ Private: Accessible only via Admin SDK / server backend.`);
+    }
+
+    if (access.rawRuleSnippet) {
+      lines.push(`\nRule:\n${access.rawRuleSnippet}`);
+    }
+
+    const tooltip = lines.join("\n");
 
     return { badge, tooltip };
   }
