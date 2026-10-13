@@ -10,9 +10,9 @@ timeline
         2026-10-08 : v1.2.0 Subdocuments & Atomic Updates : v1.3.0 Jump to Doc ID
         2026-10-09 : v1.4.0 Deep Delete & Cross-Copy : v1.5.0 Server Query Builder & Dual-Contract Table
         2026-10-10 : v1.7.0 Dual-Prefix Protocol & Modular Architecture
-        2026-10-13 : v1.8.0 Security Rules, Auth Management & Sticky Tables
+        2026-10-13 : v1.8.0 Security Rules & Auth Table : v1.9.0 User Cloning, Tokens & Force Logout
     section Planned
-        Q4 2026 : v1.9.0 Batch Data Tools, Schema Export & Studio Polish
+        Q4 2026 : v1.9.1 Batch Data Tools, Schema Export & Studio Polish
         2027 : v2.0.0 Offline Mode, Cross-Project Sync & Rules Simulator
 ```
 
@@ -32,12 +32,38 @@ timeline
 | **v1.5.0** | Shipped | 2026-10-09 | Server-side query builder (multi-clause `where`), Map/Array field table view (`openFieldAsTable`), atomic field rename, granular refresh |
 | **v1.7.0** | Shipped | 2026-10-10 | Dual-Prefix protocol (`_` & `__`), Tree hierarchy badging, Table column zones & noise toggles, protocol query presets, safe mode mutation guards, cross-substrate paste, modular extension architecture |
 | **v1.8.0** | Shipped | 2026-10-13 | Live Security Rules inspector & diff (`firestore.rules`), TextMate syntax grammar, AST rule permissions parser, Firebase Auth users tree & table view (bulk load, newest-first sort, custom claims editor, profile linker), sticky table columns (pinned ID & actions) |
-| **v1.9.0** | Planned | Q4 2026 | Pre-2.0 Bridge: Bulk batch operations (batch mutate/delete), TypeScript contract & schema generator, CSV/JSON collection import & export wizard, collection count aggregation, query bookmarks & history |
+| **v1.9.0** | Shipped | 2026-10-13 | Cross-environment user cloning (`cloneAuthUser`), custom token minter (`mintCustomToken` / login as user), session revocation (`revokeUserSessions` / force logout), password reset link generator, cascade profile deletion, user avatar photos in table, clean icon-only rule badges |
+| **v1.9.1** | Planned | Q4 2026 | Pre-2.0 Bridge: Bulk batch operations (batch mutate/delete), TypeScript contract & schema generator, CSV/JSON collection import & export wizard, collection count aggregation, query bookmarks & history |
 | **v2.0.0** | Future | 2027 | Local offline cache & sync, cross-database schema diffing, interactive visual Security Rules simulator & test runner, multi-tab studio dashboard |
 
 ---
 
 ## 🚀 Active & Upcoming Releases
+
+### [v1.9.0] — User Cloning, Token Minter & Session Control (Shipped: 2026-10-13)
+
+*Theme: Cross-environment user migration, impersonation token minting, and clean tree ergonomics.*
+
+* **Cross-Environment Auth User Cloning (`ketrik-firestore-studio.cloneAuthUser`)**:
+  * Clone any user account directly across connections (e.g. *Production $\rightarrow$ Staging* or *Local Emulator*).
+  * Copies account metadata (`uid`, `email`, `displayName`, `photoURL`, `phoneNumber`, `disabled`, `emailVerified`) and custom claims.
+  * Option to simultaneously clone their associated Firestore profile document (`/users/{uid}`).
+  * Automatically copies a freshly generated password reset link for the target environment to the clipboard.
+* **Custom Auth Token Minter (`ketrik-firestore-studio.mintCustomToken`)**:
+  * 1-click minting of signed custom JWT auth tokens for any user (`auth.createCustomToken(uid)`).
+  * Enables instant login as any user in client frontends or REST testing to verify security rules and app permissions.
+* **Session Revocation / Force Logout (`ketrik-firestore-studio.revokeUserSessions`)**:
+  * Immediately revokes all active refresh tokens for an account across all sessions and devices.
+* **Password Reset Link Generator (`ketrik-firestore-studio.resetAuthUserPassword`)**:
+  * Generates secure out-of-band password reset links directly from tree context menus or table rows, copied straight to clipboard with optional browser jump.
+* **Cascade User & Profile Deletion (`ketrik-firestore-studio.deleteAuthUser`)**:
+  * Delete an Auth user with intelligent prompt to also delete their `/users/{uid}` Firestore profile document.
+* **Avatar & Photo Display in Auth Users Table**:
+  * Renders user profile avatars (`photoURL`) with automated fallback to stylized user initial badges.
+* **Ergonomic Icon-Only Security Badges**:
+  * Replaced bulky text badges in the tree view with minimal single-character status icons (`🚨`, `⚠️ 🌐`, `👤`, `🛡️`, `🔑`, `🔒`), preserving full readable analysis inside hover tooltips.
+
+---
 
 ### [v1.8.0] — Security Rules & Auth User Management (Shipped: 2026-10-13)
 

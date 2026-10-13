@@ -36,3 +36,6 @@ This repository contains **Ketrik Firestore Studio**, an enterprise-grade Visual
 ### Releases & Version Bumps
 - Release script is located at `./scripts/release.sh`.
 - The script interactively prompts for the version bump (Minor, Patch, Major, or Custom), verifies git working directory status, runs test/build, updates `package.json`, stamps `CHANGELOG.md`, creates a git tag, and commits.
+- **MANDATORY**: Whenever releasing or pushing a new version tag, **`ROADMAP.md` MUST be updated**:
+  - Move the released version from the `Planned` / `Upcoming` section to the `Shipped` milestone table and timeline diagram with the release date.
+  - Plan the next upcoming version milestone before proceeding.

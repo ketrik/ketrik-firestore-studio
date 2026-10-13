@@ -115,6 +115,12 @@ if grep -q "## \[Unreleased\]" CHANGELOG.md; then
   "
 fi
 
+# 5. Verify ROADMAP.md is updated for NEW_VERSION
+if ! grep -q "v${NEW_VERSION}" ROADMAP.md; then
+  echo "⚠️ Warning: ROADMAP.md does not mention v${NEW_VERSION}."
+  echo "👉 Remember to update ROADMAP.md with milestone status and plan the next release."
+fi
+
 # 5. Safety check: Run type checks and build package
 echo "🔍 Running pre-release checks..."
 npm run check-types
