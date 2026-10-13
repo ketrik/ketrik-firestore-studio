@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.7.0",
+  "version": "1.8.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -39,6 +39,21 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "firestore-rules",
+        "aliases": ["Firestore Security Rules", "firestore-rules"],
+        "filenames": ["firestore.rules"],
+        "extensions": [".rules"]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "firestore-rules",
+        "scopeName": "source.firestore-rules",
+        "path": "./syntaxes/firestore-rules.tmLanguage.json"
+      }
+    ],
     "configuration": {
       "title": "Ketrik Firestore Studio",
       "properties": {
@@ -209,6 +224,54 @@
         "icon": "$(zap)"
       },
       {
+        "command": "ketrik-firestore-studio.openSecurityRules",
+        "category": "Firestore Studio",
+        "title": "Open Live Security Rules (firestore.rules)",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "ketrik-firestore-studio.diffSecurityRules",
+        "category": "Firestore Studio",
+        "title": "Diff Security Rules (Live vs Local)",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "ketrik-firestore-studio.deploySecurityRules",
+        "category": "Firestore Studio",
+        "title": "Deploy Security Rules to Active Connection",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "ketrik-firestore-studio.manageAuthUsers",
+        "category": "Firestore Studio",
+        "title": "Manage Auth Users & Custom Claims",
+        "icon": "$(organization)"
+      },
+      {
+        "command": "ketrik-firestore-studio.openAuthUsersAsTable",
+        "category": "Firestore Studio",
+        "title": "Open Auth Users as Table",
+        "icon": "$(table)"
+      },
+      {
+        "command": "ketrik-firestore-studio.openAuthUserClaims",
+        "category": "Firestore Studio",
+        "title": "Edit Custom Claims",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "ketrik-firestore-studio.createAuthUserProfile",
+        "category": "Firestore Studio",
+        "title": "Create Firestore Profile",
+        "icon": "$(account)"
+      },
+      {
+        "command": "ketrik-firestore-studio.openAuthUserProfile",
+        "category": "Firestore Studio",
+        "title": "Open Firestore Profile Document",
+        "icon": "$(file-code)"
+      },
+      {
         "command": "ketrik-firestore-studio.openPath",
         "category": "Firestore Studio",
         "title": "Open Path"
@@ -334,6 +397,30 @@
         "category": "Firestore Studio",
         "title": "Add Collection",
         "icon": "$(new-folder)"
+      },
+      {
+        "command": "ketrik-firestore-studio.explodeField",
+        "category": "Firestore Studio",
+        "title": "Explode Field to Collection...",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "ketrik-firestore-studio.consolidateCollection",
+        "category": "Firestore Studio",
+        "title": "Consolidate Collection to Field...",
+        "icon": "$(combine)"
+      },
+      {
+        "command": "ketrik-firestore-studio.purgeFieldTombstones",
+        "category": "Firestore Studio",
+        "title": "Purge Field Tombstones...",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "ketrik-firestore-studio.purgeCollectionTombstones",
+        "category": "Firestore Studio",
+        "title": "Purge Collection Tombstones...",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
@@ -366,9 +453,64 @@
           "group": "1_manage@1"
         },
         {
-          "command": "ketrik-firestore-studio.deleteConnection",
+          "command": "ketrik-firestore-studio.openSecurityRules",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_manage@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.diffSecurityRules",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_manage@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.deploySecurityRules",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_manage@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.manageAuthUsers",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_manage@5"
+        },
+        {
+          "command": "ketrik-firestore-studio.openAuthUsersAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_manage@6"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteConnection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_manage@7"
+        },
+        {
+          "command": "ketrik-firestore-studio.openAuthUsersAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authBranch'",
+          "group": "inline@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.openAuthUsersAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authBranch'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.manageAuthUsers",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authBranch'",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.openAuthUserClaims",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.createAuthUserProfile",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.openAuthUserProfile",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
+          "group": "1_actions@3"
         },
         {
           "command": "ketrik-firestore-studio.openCollectionAsTable",
@@ -394,6 +536,16 @@
           "command": "ketrik-firestore-studio.orderBy",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
           "group": "2_filter@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.consolidateCollection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.purgeCollectionTombstones",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@3"
         },
         {
           "command": "ketrik-firestore-studio.copyPath",
@@ -461,9 +613,19 @@
           "group": "1_actions@5"
         },
         {
+          "command": "ketrik-firestore-studio.explodeField",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "group": "1_actions@6"
+        },
+        {
+          "command": "ketrik-firestore-studio.purgeFieldTombstones",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "group": "1_actions@7"
+        },
+        {
           "command": "ketrik-firestore-studio.refreshItem",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
-          "group": "1_actions@6"
+          "group": "1_actions@8"
         },
         {
           "command": "ketrik-firestore-studio.deleteField",

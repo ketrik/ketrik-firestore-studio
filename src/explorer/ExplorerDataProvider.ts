@@ -7,14 +7,19 @@ import {
 import * as vscode from "vscode";
 
 import { ConnectionManager } from "../connections/ConnectionManager";
+import { RulesService } from "../rules/RulesService";
 import {
+  AuthUserItem,
+  AuthUsersBranchItem,
   CollectionItem,
   ConnectionTreeItem,
   DocumentFieldItem,
   DocumentItem,
   Item,
+  ShowMoreAuthUsersItem,
   ShowMoreItemsItem,
 } from "./items";
+import { AuthService } from "../auth/AuthService";
 
 /** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
 const MAX_MAP_SIZE = 200;
@@ -40,8 +45,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   private readonly _connectionManager = ConnectionManager.getInstance();
 
   private _paging = new Map<string, number>();
+  private _authUsersPaging = new Map<string, { items: AuthUserItem[]; nextPageToken?: string }>();
   private _orderBy = new Map<string, { field: string | undefined; direction: "asc" | "desc" }>();
   private _connectionListener: vscode.Disposable;
+  private _rulesListener: vscode.Disposable;
 
   /** Cache tree children (collections, docs, fields) to avoid re-requesting on repeated expand/collapse. */
   private _treeCache = new Map<string, { items: Item[]; timestamp: number }>();
@@ -51,6 +58,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
   constructor() {
     this._connectionListener = this._connectionManager.onDidChangeConnections(() => {
+      this.refresh(true);
+    });
+
+    this._rulesListener = RulesService.getInstance().onDidChangeRules(() => {
       this.refresh(true);
     });
   }
@@ -64,8 +75,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
   dispose(): void {
     this._connectionListener.dispose();
+    this._rulesListener.dispose();
     this._onDidChangeTreeData.dispose();
     this._paging.clear();
+    this._authUsersPaging.clear();
     this._orderBy.clear();
     this._treeCache.clear();
   }
@@ -74,6 +87,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     this._treeCache.clear();
     if (resetState) {
       this._paging.clear();
+      this._authUsersPaging.clear();
       this._orderBy.clear();
     }
     this._onDidChangeTreeData.fire(undefined);
@@ -103,6 +117,14 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         }
       }
       this._onDidChangeTreeData.fire(element);
+    } else if (element instanceof AuthUsersBranchItem) {
+      this._treeCache.delete(`auth:${element.connectionId}`);
+      this._authUsersPaging.delete(element.connectionId);
+      this._onDidChangeTreeData.fire(element);
+    } else if (element instanceof AuthUserItem) {
+      this._treeCache.delete(`auth:${element.connectionId}`);
+      this._authUsersPaging.delete(element.connectionId);
+      this._onDidChangeTreeData.fire(undefined);
     } else {
       this.refresh();
     }
@@ -175,17 +197,61 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const firestore = await this._connectionManager.getFirestore(element.config.id);
         const refs = (await firestore.listCollections()) as CollectionReference[];
 
-        const items = refs.map((ref: CollectionReference) => {
+        const collItems = refs.map((ref: CollectionReference) => {
           const sortKey = `${element.config.id}:${ref.path}`;
           return new CollectionItem(ref.id, ref, element.config.id, {
             fieldName: this._orderBy.get(sortKey)?.field ?? "id",
             direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
           });
         });
+
+        // Add Authentication (Users & Claims) node alongside Root Collections
+        const authBranch = new AuthUsersBranchItem(element.config.id);
+        const items: Item[] = [authBranch, ...collItems];
         return storeAndReturn(items);
       } catch (err: any) {
         vscode.window.showErrorMessage(
           `Failed to load collections for connection '${element.config.name}': ${err.message}`
+        );
+        return [];
+      }
+    } else if (element instanceof AuthUsersBranchItem) {
+      try {
+        const authService = AuthService.getInstance();
+        const pageSize = 25;
+        const state = this._authUsersPaging.get(element.connectionId);
+
+        if (!state) {
+          // Initial batch fetch
+          const { users, pageToken } = await authService.listUsers(element.connectionId, pageSize);
+          const userItems = await Promise.all(
+            users.map(async (u) => {
+              const hasProfile = await authService.checkProfileExists(element.connectionId, u.uid);
+              return new AuthUserItem(u, element.connectionId, hasProfile);
+            })
+          );
+
+          this._authUsersPaging.set(element.connectionId, {
+            items: userItems,
+            nextPageToken: pageToken,
+          });
+
+          const result: Item[] = [...userItems];
+          if (pageToken) {
+            result.push(new ShowMoreAuthUsersItem(element.connectionId, pageToken, pageSize));
+          }
+          return storeAndReturn(result);
+        } else {
+          // Return accumulated items + show more if token exists
+          const result: Item[] = [...state.items];
+          if (state.nextPageToken) {
+            result.push(new ShowMoreAuthUsersItem(element.connectionId, state.nextPageToken, pageSize));
+          }
+          return storeAndReturn(result);
+        }
+      } catch (err: any) {
+        vscode.window.showErrorMessage(
+          `Failed to load Firebase Auth users: ${err.message}`
         );
         return [];
       }
@@ -300,6 +366,45 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     evictIfNeeded(this._paging, MAX_MAP_SIZE);
 
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /**
+   * Load the next page of Firebase Auth users for a connection.
+   */
+  async showMoreAuthUsers(connectionId?: string) {
+    const connId =
+      connectionId ||
+      this._connectionManager.getConnections()[0]?.id ||
+      "default";
+
+    const state = this._authUsersPaging.get(connId);
+    if (!state || !state.nextPageToken) {
+      return;
+    }
+
+    try {
+      const authService = AuthService.getInstance();
+      const pageSize = 25;
+      const { users, pageToken } = await authService.listUsers(connId, pageSize, state.nextPageToken);
+
+      const newItems = await Promise.all(
+        users.map(async (u) => {
+          const hasProfile = await authService.checkProfileExists(connId, u.uid);
+          return new AuthUserItem(u, connId, hasProfile);
+        })
+      );
+
+      this._authUsersPaging.set(connId, {
+        items: [...state.items, ...newItems],
+        nextPageToken: pageToken,
+      });
+
+      // Invalidate tree cache for auth branch so getChildren returns updated accumulated items
+      this._treeCache.delete(`auth:${connId}`);
+      this._onDidChangeTreeData.fire(undefined);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to load more users: ${err.message}`);
+    }
   }
 
   async orderBy(

@@ -1,5 +1,6 @@
 import { App, initializeApp, getApps, deleteApp, cert } from "firebase-admin/app";
 import { Firestore, getFirestore } from "firebase-admin/firestore";
+import { Auth, getAuth } from "firebase-admin/auth";
 import * as vscode from "vscode";
 import * as fs from "fs";
 
@@ -194,6 +195,37 @@ export class ConnectionManager implements vscode.Disposable {
 
     this._initInFlight.set(conn.id, promise);
     return promise;
+  }
+
+  /**
+   * Get the underlying initialized Firebase App for a connection.
+   */
+  public async getApp(connectionId?: string): Promise<App> {
+    const connections = this.getConnections();
+    const conn = connectionId
+      ? connections.find((c) => c.id === connectionId)
+      : connections[0];
+
+    if (!conn) {
+      throw new Error(`Connection with ID '${connectionId}' not found.`);
+    }
+
+    // Ensure firestore and app are initialized
+    await this.getFirestore(conn.id);
+    const appName = `firestore-app-${conn.id}`;
+    const app = getApps().find((a) => a?.name === appName);
+    if (!app) {
+      throw new Error(`Firebase App for connection '${conn.name}' not found.`);
+    }
+    return app;
+  }
+
+  /**
+   * Get the Firebase Auth instance for a connection.
+   */
+  public async getAuth(connectionId?: string): Promise<Auth> {
+    const app = await this.getApp(connectionId);
+    return getAuth(app);
   }
 
   /**

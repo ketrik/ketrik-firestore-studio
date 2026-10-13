@@ -1,6 +1,8 @@
 import { DocumentReference, CollectionReference, OrderByDirection } from "firebase-admin/firestore";
 import * as vscode from "vscode";
 import { FirestoreConnectionConfig } from "../connections/ConnectionManager";
+import { RulesService } from "../rules/RulesService";
+import { RulesParser } from "../rules/RulesParser";
 
 export abstract class Item extends vscode.TreeItem {
   abstract reference?: DocumentReference | CollectionReference;
@@ -186,7 +188,21 @@ export class CollectionItem extends Item {
       "folder",
       new vscode.ThemeColor("charts.orange")
     );
-    this.description = (orderBy.direction === "asc" ? "↑" : "↓") + orderBy.fieldName;
+
+    const orderDesc = (orderBy.direction === "asc" ? "↑" : "↓") + orderBy.fieldName;
+
+    // Evaluate security access badge from rules
+    const rulesService = RulesService.getInstance();
+    const access = rulesService.getAccessForCollection(reference.path, connectionId);
+
+    if (access) {
+      const { badge, tooltip: ruleTooltip } = RulesParser.formatBadge(access);
+      this.description = `${orderDesc}  [${badge}]`;
+      this.tooltip = `[${connectionId}] ${reference.path}\n\n${ruleTooltip}`;
+    } else {
+      this.description = orderDesc;
+      this.tooltip = `[${connectionId}] ${reference.path}`;
+    }
   }
 }
 
@@ -214,6 +230,101 @@ export class ShowMoreItemsItem extends Item {
       command: "ketrik-firestore-studio.showMoreItems",
       title: "More Items",
       arguments: [reference.path, connectionId],
+    };
+  }
+}
+
+/**
+ * A Tree View item representing the Authentication & Users branch of a connection.
+ */
+export class AuthUsersBranchItem extends Item {
+  reference = undefined;
+
+  constructor(public connectionId: string) {
+    super("Authentication (Users & Claims)", vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `auth:${connectionId}`;
+    this.contextValue = "authBranch";
+    this.iconPath = new vscode.ThemeIcon("shield", new vscode.ThemeColor("charts.purple"));
+    this.tooltip = "Firebase Authentication Users & Custom Claims";
+  }
+}
+
+/**
+ * A Tree View item representing an individual Firebase Auth User.
+ */
+export class AuthUserItem extends Item {
+  reference = undefined;
+
+  constructor(
+    public user: import("firebase-admin/auth").UserRecord,
+    public connectionId: string,
+    public hasProfileDoc = false
+  ) {
+    const label = user.email || user.displayName || user.phoneNumber || user.uid;
+    super(label, vscode.TreeItemCollapsibleState.None);
+
+    this.id = `authUser:${connectionId}:${user.uid}`;
+    this.contextValue = "authUser";
+
+    const claims = user.customClaims || {};
+    const claimKeys = Object.keys(claims);
+    let claimsLabel = "";
+    if (claims.admin === true) {
+      claimsLabel = "🛡️ admin";
+    } else if (claims.role) {
+      claimsLabel = `🔑 ${claims.role}`;
+    } else if (claimKeys.length > 0) {
+      claimsLabel = `⚙️ ${claimKeys.length} claims`;
+    }
+
+    const docStatus = hasProfileDoc ? "📄 Profile exists" : "⚠️ No Profile doc";
+    this.description = [claimsLabel, docStatus].filter(Boolean).join(" • ");
+
+    this.tooltip = [
+      `User: ${label}`,
+      `UID: ${user.uid}`,
+      user.email ? `Email: ${user.email} (${user.emailVerified ? "Verified" : "Unverified"})` : "",
+      user.displayName ? `Name: ${user.displayName}` : "",
+      user.disabled ? "Status: ⛔ Disabled" : "Status: Active",
+      claimsLabel ? `Custom Claims: ${JSON.stringify(claims)}` : "Custom Claims: (none)",
+      `Firestore Profile: ${hasProfileDoc ? "Created" : "Not found in /users"}`,
+    ].filter(Boolean).join("\n");
+
+    this.iconPath = new vscode.ThemeIcon(
+      user.disabled ? "circle-slash" : "person",
+      user.customClaims?.admin
+        ? new vscode.ThemeColor("charts.red")
+        : hasProfileDoc
+        ? new vscode.ThemeColor("charts.green")
+        : new vscode.ThemeColor("charts.yellow")
+    );
+
+    this.command = {
+      command: "ketrik-firestore-studio.openAuthUserClaims",
+      title: "Edit Custom Claims",
+      arguments: [this],
+    };
+  }
+}
+
+/**
+ * A Tree View item representing "Load more users" for paginating through thousands of Auth users.
+ */
+export class ShowMoreAuthUsersItem extends Item {
+  reference = undefined;
+
+  constructor(
+    public connectionId: string,
+    public pageToken: string,
+    pageSize: number
+  ) {
+    super(`Load ${pageSize} more users...`, vscode.TreeItemCollapsibleState.None);
+    this.id = `authShowMore:${connectionId}:${pageToken}`;
+    this.iconPath = new vscode.ThemeIcon("more");
+    this.command = {
+      command: "ketrik-firestore-studio.showMoreAuthUsers",
+      title: "Load More Users",
+      arguments: [connectionId],
     };
   }
 }

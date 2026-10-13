@@ -1,0 +1,128 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Firestore Security Rules",
+  "scopeName": "source.firestore-rules",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#booleans"
+    },
+    {
+      "include": "#path-expressions"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#builtins"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.firestore-rules",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.firestore-rules",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.firestore-rules",
+          "match": "\\b(rules_version|service|match|allow|if|return|function)\\b"
+        },
+        {
+          "name": "keyword.operator.firestore-rules",
+          "match": "(&&|\\|\\||!|==|!=|<|<=|>|>=|in)"
+        },
+        {
+          "name": "support.type.permission.firestore-rules",
+          "match": "\\b(read|write|get|list|create|update|delete)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.firestore-rules",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.firestore-rules",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.firestore-rules",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.firestore-rules",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.firestore-rules",
+          "match": "\\b\\d+(\\.\\d+)?\\b"
+        }
+      ]
+    },
+    "booleans": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.firestore-rules",
+          "match": "\\b(true|false|null)\\b"
+        }
+      ]
+    },
+    "path-expressions": {
+      "patterns": [
+        {
+          "name": "variable.parameter.path-variable.firestore-rules",
+          "match": "\\{[a-zA-Z0-9_]+(=(\\*\\*|\\*))?\\}"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.firestore-rules",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.variable.firestore-rules",
+          "match": "\\b(request|resource|database|documents|auth|token|data|time|duration|latlng|math|string)\\b"
+        }
+      ]
+    }
+  }
+}

@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import * as vscode from "vscode";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { scheme } from "../constants";
+import { RulesService } from "../rules/RulesService";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -10,6 +11,7 @@ export interface ParsedDocumentUri {
   connectionId: string;
   docPath: string;
   fieldPath?: string;
+  isRules?: boolean;
 }
 
 /**
@@ -122,6 +124,19 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     let connectionId = uri.authority;
     let pathStr = uri.path.startsWith("/") ? uri.path.slice(1) : uri.path;
 
+    // Check if the URI targets virtual firestore.rules
+    if (pathStr === "firestore.rules" || pathStr.endsWith("/firestore.rules")) {
+      if (!connectionId) {
+        const parts = pathStr.split("/");
+        if (parts.length > 1 && connections.some((c) => c.id === parts[0])) {
+          connectionId = parts[0];
+        } else {
+          connectionId = connections[0]?.id || "default";
+        }
+      }
+      return { connectionId, docPath: "firestore.rules", isRules: true };
+    }
+
     // Strip trailing .json if present
     if (pathStr.endsWith(".json")) {
       pathStr = pathStr.slice(0, -5);
@@ -158,9 +173,21 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
    * Return document (or field) metadata. Confirms whether the document/field exists.
    */
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
-    const { connectionId, docPath, fieldPath } = this.parseUri(uri);
-    const doc = await this.getCachedSnapshot(connectionId, docPath);
+    const parsed = this.parseUri(uri);
+    const { connectionId, docPath, fieldPath, isRules } = parsed;
     const now = Date.now();
+
+    if (isRules) {
+      const content = RulesService.getInstance().getRulesContent(connectionId);
+      return {
+        type: vscode.FileType.File,
+        ctime: now,
+        mtime: now,
+        size: encoder.encode(content).length,
+      };
+    }
+
+    const doc = await this.getCachedSnapshot(connectionId, docPath);
 
     if (!doc.exists) {
       throw vscode.FileSystemError.FileNotFound(uri);
@@ -192,7 +219,14 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   }
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    const { connectionId, docPath, fieldPath } = this.parseUri(uri);
+    const parsed = this.parseUri(uri);
+    const { connectionId, docPath, fieldPath, isRules } = parsed;
+
+    if (isRules) {
+      const text = RulesService.getInstance().getRulesContent(connectionId);
+      return encoder.encode(text);
+    }
+
     const doc = await this.getCachedSnapshot(connectionId, docPath);
 
     if (!doc.exists) {
@@ -284,7 +318,16 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     content: Uint8Array,
     _options: { readonly create: boolean; readonly overwrite: boolean }
   ): Promise<void> {
-    const { connectionId, docPath, fieldPath } = this.parseUri(uri);
+    const parsed = this.parseUri(uri);
+    const { connectionId, docPath, fieldPath, isRules } = parsed;
+
+    if (isRules) {
+      const text = decoder.decode(content);
+      await RulesService.getInstance().saveRulesContent(connectionId, text);
+      this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+      return;
+    }
+
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
 
     // Invalidate cached snapshot on write

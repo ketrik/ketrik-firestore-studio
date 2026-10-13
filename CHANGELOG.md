@@ -2,6 +2,34 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.8.0] - 2026-10-13
+
+### Added
+- **Live Security Rules Inspector, Diff & Deploy (`firestore.rules`)**:
+  - Pulls currently deployed security rules directly from active Google Cloud / Firebase project via the Firebase Rules API (`firebase.securityRules.get`).
+  - View live rules in a virtual file tab (`ketrik-firestore-studio://rules/firestore.rules`) with full syntax highlighting.
+  - **Rules Diff**: Compare deployed remote rules against your local `firestore.rules` file in the workspace to spot uncommitted or drift changes.
+  - **Rules Deploy**: Deploy workspace `firestore.rules` directly to the active Firestore connection with confirmation and feedback.
+  - **Full Syntax Highlighting Grammar**: Added comprehensive TextMate syntax grammar for `.rules` and `firestore.rules` files (keywords, functions, match blocks, operators, comments).
+  - **AST Rules Permission Parser**: Parse rules with nested match blocks, wildcards (`{document=**}`), functions (`isAuthenticated()`, `isAdmin()`), and fallback permissions to dynamically indicate locked vs readable collections.
+- **Firebase Authentication & User Management Suite**:
+  - Added dedicated **Authentication (Users & Claims)** tree branch under each connection.
+  - Cursor-based tree pagination (`listUsers(pageSize, pageToken)`) in safe batches (25 users) with `Load more users...` button to handle projects with thousands of users without lag or memory exhaustion.
+  - **Webview Auth Users Table View (`ketrik-firestore-studio.openAuthUsersAsTable`)**:
+    - High-performance bulk fetching (up to 1,000 users per request, zero Firestore quota cost).
+    - In-memory instantaneous sorting by **Created Date (Newest First)**, **Last Sign-in**, **Email / Name**, and **Status**.
+    - Real-time client-side filter by email, UID, display name, and custom claims.
+    - Interactive row actions: Edit Custom Claims (`admin`, roles), Check/Create Firestore Profile (`users/{uid}`), and Disable/Enable user.
+    - JSON Export of loaded/filtered users.
+- **Sticky Column Layout Across All Webview Tables**:
+  - Pinned left-hand identifier column (`Document ID`, `Email / Name`, `Row ID`) with `position: sticky; left: 0;` across horizontal scrolling.
+  - Pinned right-hand `Actions` column with `position: sticky; right: 0;` on Auth Users Table.
+  - Pinned top header rows across vertical scrolling.
+- **Substrate Migrations & Tombstone Purge Tools**:
+  - **Explode Field to Subcollection**: Migrate an embedded Map/Array to a standalone subcollection.
+  - **Consolidate Collection to Field**: Collapse a collection of documents into an embedded array or keyed map in a parent doc.
+  - **Purge Tombstones**: Safely clean deleted/tombstoned entries (`__deleted: true`).
+
 ## [1.7.0] - 2026-10-10
 
 ### Added

@@ -29,11 +29,32 @@ import {
   openCollectionAsTableCommand,
   addCollectionCommand,
 } from "./commands/collectionCommands";
+import {
+  explodeFieldCommand,
+  consolidateCollectionCommand,
+} from "./commands/migrationCommands";
+import {
+  purgeFieldTombstonesCommand,
+  purgeCollectionTombstonesCommand,
+} from "./commands/tombstoneCommands";
+import {
+  openRulesCommand,
+  diffRulesCommand,
+  deployRulesCommand,
+} from "./rules/rulesCommands";
+import {
+  editAuthUserClaimsCommand,
+  createAuthUserProfileCommand,
+  openAuthUserProfileCommand,
+  manageAuthUsersCommand,
+} from "./auth/authCommands";
+import { RulesService } from "./rules/RulesService";
 import { scheme } from "./constants";
 import { DocumentFileSystemProvider } from "./editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "./explorer/ExplorerDataProvider";
 import { CollectionItem, ConnectionTreeItem, DocumentFieldItem, DocumentItem, Item } from "./explorer/items";
 import { openFieldAsTable } from "./webview/openFieldAsTable";
+import { openAuthUsersAsTable } from "./webview/openAuthUsersAsTable";
 import { ConnectionManager } from "./connections/ConnectionManager";
 import { TemplateService } from "./services/TemplateService";
 
@@ -44,6 +65,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const explorerDataProvider = new ExplorerDataProvider();
   context.subscriptions.push(explorerDataProvider);
+
+  // Initialize RulesService singleton to watch firestore.rules
+  const rulesService = RulesService.getInstance();
+  rulesService.setContext(context);
+  context.subscriptions.push(rulesService);
 
   const documentFileSystemProvider = new DocumentFileSystemProvider();
   context.subscriptions.push(documentFileSystemProvider);
@@ -91,8 +117,53 @@ export async function activate(context: vscode.ExtensionContext) {
       testConnectionCommand
     ),
     vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openSecurityRules",
+      openRulesCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.diffSecurityRules",
+      diffRulesCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.deploySecurityRules",
+      deployRulesCommand
+    ),
+    vscode.commands.registerCommand(
       "ketrik-firestore-studio.setServiceAccountKeyPath",
       openServiceAccountSettings
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openAuthUserClaims",
+      (item?: any) => editAuthUserClaimsCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.createAuthUserProfile",
+      (item?: any) => createAuthUserProfileCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openAuthUserProfile",
+      (item?: any) => openAuthUserProfileCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.manageAuthUsers",
+      (item?: any) => manageAuthUsersCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openAuthUsersAsTable",
+      async (item?: any) => {
+        let connId = "default";
+        if (typeof item === "string") {
+          connId = item;
+        } else if (item?.connectionId) {
+          connId = item.connectionId;
+        } else if (item?.config?.id) {
+          connId = item.config.id;
+        } else {
+          const conns = ConnectionManager.getInstance().getConnections();
+          connId = conns[0]?.id || "default";
+        }
+        await openAuthUsersAsTable(connId, documentFileSystemProvider);
+      }
     ),
     vscode.commands.registerCommand("ketrik-firestore-studio.init", init),
     vscode.commands.registerCommand("ketrik-firestore-studio.openPath", openPath),
@@ -105,6 +176,12 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.showMoreItems",
       (path: string, connectionId?: string) => {
         explorerDataProvider.showMoreItems(path, connectionId);
+      }
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.showMoreAuthUsers",
+      (connectionId?: string) => {
+        explorerDataProvider.showMoreAuthUsers(connectionId);
       }
     )
   );
@@ -208,6 +285,26 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.addField",
       (item: DocumentItem | DocumentFieldItem) =>
         addFieldCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.explodeField",
+      (item: DocumentFieldItem) =>
+        explodeFieldCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.consolidateCollection",
+      (item: CollectionItem) =>
+        consolidateCollectionCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.purgeFieldTombstones",
+      (item: DocumentFieldItem) =>
+        purgeFieldTombstonesCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.purgeCollectionTombstones",
+      (item: CollectionItem) =>
+        purgeCollectionTombstonesCommand(item, explorerDataProvider, documentFileSystemProvider)
     )
   );
 
@@ -221,11 +318,22 @@ export async function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  // Automatically enforce JSON syntax highlighting for all opened Firestore documents
+  // Automatically enforce JSON syntax highlighting for all opened Firestore JSON documents
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((document) => {
-      if (document.uri.scheme === scheme && document.languageId !== "json") {
-        vscode.languages.setTextDocumentLanguage(document, "json");
+      if (document.uri.scheme === scheme) {
+        if (
+          (document.uri.path.endsWith(".rules") || document.uri.path.endsWith("/firestore.rules")) &&
+          document.languageId !== "firestore-rules"
+        ) {
+          vscode.languages.setTextDocumentLanguage(document, "firestore-rules");
+        } else if (
+          !document.uri.path.endsWith(".rules") &&
+          !document.uri.path.endsWith("/firestore.rules") &&
+          document.languageId !== "json"
+        ) {
+          vscode.languages.setTextDocumentLanguage(document, "json");
+        }
       }
     })
   );
