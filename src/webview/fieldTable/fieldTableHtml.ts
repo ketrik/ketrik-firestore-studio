@@ -245,12 +245,29 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         }
       }
 
+      function rowMatchesSearch(row, term) {
+        if (!term) return true;
+        for (const k in row) {
+          if (k === '__path' || k === '__index') continue;
+          const v = row[k];
+          if (v === null || v === undefined) continue;
+          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+            if (String(v).toLowerCase().includes(term)) return true;
+          } else if (typeof v === 'object') {
+            try {
+              if (JSON.stringify(v).toLowerCase().includes(term)) return true;
+            } catch (e) {}
+          }
+        }
+        return false;
+      }
+
       function filterCurrentRows() {
         const searchTerm = (document.getElementById('searchInput').value || '').trim().toLowerCase();
         let list = allRows;
 
         if (searchTerm) {
-          list = list.filter(row => JSON.stringify(row).toLowerCase().includes(searchTerm));
+          list = list.filter(row => rowMatchesSearch(row, searchTerm));
         }
 
         if (lifecycleFilter !== 'all') {
@@ -358,16 +375,10 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
       };
 
       document.getElementById('exportBtn').onclick = function() {
-        const rows = Array.from(document.querySelectorAll('#table-body tr'));
-        const headers = Array.from(document.querySelectorAll('thead th')).map(th => th.textContent.trim());
-        const data = rows.map(row => {
-          const cells = Array.from(row.children);
-          const obj = {};
-          headers.forEach((h, i) => {
-            try { obj[h] = JSON.parse(cells[i].textContent); }
-            catch { obj[h] = cells[i].textContent; }
-          });
-          return obj;
+        const sourceRows = (currentRows && currentRows.length > 0) ? currentRows : allRows;
+        const data = sourceRows.map(r => {
+          const { __path, __index, ...rest } = r;
+          return rest;
         });
         vscode.postMessage({ command: 'exportJson', data });
       };
@@ -376,6 +387,15 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         const value = document.getElementById('searchInput').value;
         applyClientSearch(value);
       };
+
+      let searchDebounceTimer = null;
+      document.getElementById('searchInput').addEventListener('input', function() {
+        if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+        const val = this.value;
+        searchDebounceTimer = setTimeout(() => {
+          applyClientSearch(val);
+        }, 150);
+      });
 
       document.getElementById('clearSearchBtn').onclick = function() {
         document.getElementById('searchInput').value = '';
@@ -399,6 +419,7 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
 
       document.getElementById('searchInput').addEventListener('keydown', function(event) {
         if (event.key === 'Enter') {
+          if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
           document.getElementById('searchBtn').click();
         }
       });

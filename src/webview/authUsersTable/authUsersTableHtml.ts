@@ -247,11 +247,11 @@ export function getAuthUsersTableHtml(connectionId: string): string {
         let valB = b[sortCol];
 
         if (sortCol === 'createdAt') {
-          valA = a.metadata?.creationTime ? new Date(a.metadata.creationTime).getTime() : 0;
-          valB = b.metadata?.creationTime ? new Date(b.metadata.creationTime).getTime() : 0;
+          valA = a.metadata?.creationMs !== undefined ? a.metadata.creationMs : (a.metadata?.creationTime ? Date.parse(a.metadata.creationTime) || 0 : 0);
+          valB = b.metadata?.creationMs !== undefined ? b.metadata.creationMs : (b.metadata?.creationTime ? Date.parse(b.metadata.creationTime) || 0 : 0);
         } else if (sortCol === 'lastSignInTime') {
-          valA = a.metadata?.lastSignInTime ? new Date(a.metadata.lastSignInTime).getTime() : 0;
-          valB = b.metadata?.lastSignInTime ? new Date(b.metadata.lastSignInTime).getTime() : 0;
+          valA = a.metadata?.lastSignInMs !== undefined ? a.metadata.lastSignInMs : (a.metadata?.lastSignInTime ? Date.parse(a.metadata.lastSignInTime) || 0 : 0);
+          valB = b.metadata?.lastSignInMs !== undefined ? b.metadata.lastSignInMs : (b.metadata?.lastSignInTime ? Date.parse(b.metadata.lastSignInTime) || 0 : 0);
         } else if (sortCol === 'email') {
           valA = (a.email || a.displayName || a.uid).toLowerCase();
           valB = (b.email || b.displayName || b.uid).toLowerCase();
@@ -343,66 +343,6 @@ export function getAuthUsersTableHtml(connectionId: string): string {
         });
       }
 
-      // Wire row action buttons
-      tbody.querySelectorAll('.claims-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const uid = btn.getAttribute('data-uid');
-          vscode.postMessage({ command: 'editClaims', uid });
-        });
-      });
-
-      tbody.querySelectorAll('.profile-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const uid = btn.getAttribute('data-uid');
-          vscode.postMessage({ command: 'openProfile', uid });
-        });
-      });
-
-      tbody.querySelectorAll('.clone-user-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const uid = btn.getAttribute('data-uid');
-          vscode.postMessage({ command: 'cloneUser', uid });
-        });
-      });
-
-      tbody.querySelectorAll('.mint-token-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const uid = btn.getAttribute('data-uid');
-          vscode.postMessage({ command: 'mintToken', uid });
-        });
-      });
-
-      tbody.querySelectorAll('.reset-pwd-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const uid = btn.getAttribute('data-uid');
-          const email = btn.getAttribute('data-email');
-          vscode.postMessage({ command: 'resetPassword', uid, email });
-        });
-      });
-
-      tbody.querySelectorAll('.toggle-disable-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const uid = btn.getAttribute('data-uid');
-          const currentDisabled = btn.getAttribute('data-disabled') === 'true';
-          vscode.postMessage({ command: 'toggleDisable', uid, disabled: !currentDisabled });
-        });
-      });
-
-      tbody.querySelectorAll('.delete-user-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const uid = btn.getAttribute('data-uid');
-          const email = btn.getAttribute('data-email');
-          vscode.postMessage({ command: 'deleteUser', uid, email });
-        });
-      });
-
-      tbody.querySelectorAll('.check-profile-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const uid = btn.getAttribute('data-uid');
-          vscode.postMessage({ command: 'checkProfile', uid });
-        });
-      });
-
       // Update status & pagination
       statusBar.innerHTML = 'Showing <b>' + filtered.length + '</b> of <b>' + allUsers.length + '</b> loaded users' +
         (currentFilter ? ' (filtered)' : '') +
@@ -416,6 +356,33 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       }
     }
 
+    // Delegated event listener on tbody handles all row actions without per-row listener allocations
+    tbody.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const uid = btn.getAttribute('data-uid');
+      if (btn.classList.contains('claims-btn')) {
+        vscode.postMessage({ command: 'editClaims', uid });
+      } else if (btn.classList.contains('profile-btn')) {
+        vscode.postMessage({ command: 'openProfile', uid });
+      } else if (btn.classList.contains('clone-user-btn')) {
+        vscode.postMessage({ command: 'cloneUser', uid });
+      } else if (btn.classList.contains('mint-token-btn')) {
+        vscode.postMessage({ command: 'mintToken', uid });
+      } else if (btn.classList.contains('reset-pwd-btn')) {
+        const email = btn.getAttribute('data-email');
+        vscode.postMessage({ command: 'resetPassword', uid, email });
+      } else if (btn.classList.contains('toggle-disable-btn')) {
+        const currentDisabled = btn.getAttribute('data-disabled') === 'true';
+        vscode.postMessage({ command: 'toggleDisable', uid, disabled: !currentDisabled });
+      } else if (btn.classList.contains('delete-user-btn')) {
+        const email = btn.getAttribute('data-email');
+        vscode.postMessage({ command: 'deleteUser', uid, email });
+      } else if (btn.classList.contains('check-profile-btn')) {
+        vscode.postMessage({ command: 'checkProfile', uid });
+      }
+    });
+
     function escapeHtml(str) {
       if (!str) return '';
       return String(str)
@@ -425,16 +392,24 @@ export function getAuthUsersTableHtml(connectionId: string): string {
         .replace(/"/g, '&quot;');
     }
 
-    // Filter controls
+    // Filter controls with debouncing
+    let searchDebounceTimer = null;
     function applySearch() {
       currentFilter = searchInput.value;
       clearSearchBtn.style.display = currentFilter ? 'inline-flex' : 'none';
       renderTable();
     }
 
-    searchInput.addEventListener('input', applySearch);
-    searchBtn.addEventListener('click', applySearch);
+    searchInput.addEventListener('input', () => {
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(applySearch, 150);
+    });
+    searchBtn.addEventListener('click', () => {
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      applySearch();
+    });
     clearSearchBtn.addEventListener('click', () => {
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
       searchInput.value = '';
       applySearch();
     });

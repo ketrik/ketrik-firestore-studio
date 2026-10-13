@@ -35,6 +35,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   /** In-flight / short-lived document snapshot cache to deduplicate stat() followed immediately by readFile(). */
   private _snapshotCache = new Map<string, { snapshot: import("firebase-admin/firestore").DocumentSnapshot; timestamp: number }>();
   private _snapshotInFlight = new Map<string, Promise<import("firebase-admin/firestore").DocumentSnapshot>>();
+  private static readonly MAX_SNAPSHOTS = 200;
 
   /** Version (update time + content hash) each open file was last loaded/saved with, for conflict detection. */
   private _baselines = new Map<string, { updateTime: string; hash: string }>();
@@ -45,16 +46,29 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
    * causing any open editor tabs to reload from Firestore.
    */
   public invalidateAndNotify(connectionId: string, docPath: string): void {
-    const key = `${connectionId}:${docPath}`;
-    this._snapshotCache.delete(key);
-    this._snapshotInFlight.delete(key);
+    this.invalidateAndNotifyMany([{ connectionId, docPath }]);
+  }
 
-    const docUri = vscode.Uri.from({
-      scheme,
-      authority: connectionId,
-      path: `/${docPath}.json`,
-    });
-    this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: docUri }]);
+  /**
+   * Invalidate multiple document snapshots in a single batch file change event,
+   * preventing redundant event dispatching on batch updates or deletes.
+   */
+  public invalidateAndNotifyMany(entries: Array<{ connectionId: string; docPath: string }>): void {
+    if (!entries.length) return;
+    const events: vscode.FileChangeEvent[] = [];
+    for (const { connectionId, docPath } of entries) {
+      const key = `${connectionId}:${docPath}`;
+      this._snapshotCache.delete(key);
+      this._snapshotInFlight.delete(key);
+
+      const docUri = vscode.Uri.from({
+        scheme,
+        authority: connectionId,
+        path: `/${docPath}.json`,
+      });
+      events.push({ type: vscode.FileChangeType.Changed, uri: docUri });
+    }
+    this._emitter.fire(events);
   }
 
   dispose(): void {
@@ -98,7 +112,14 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
           this._snapshotInFlight.delete(key);
           const timestamp = Date.now();
           if (ttl > 0) {
+            this._snapshotCache.delete(key);
             this._snapshotCache.set(key, { snapshot, timestamp });
+            if (this._snapshotCache.size > DocumentFileSystemProvider.MAX_SNAPSHOTS) {
+              const oldest = this._snapshotCache.keys().next().value;
+              if (oldest !== undefined) {
+                this._snapshotCache.delete(oldest);
+              }
+            }
             // Evict after TTL so the cache cannot grow unbounded.
             const timer = setTimeout(() => {
               if (this._snapshotCache.get(key)?.timestamp === timestamp) {

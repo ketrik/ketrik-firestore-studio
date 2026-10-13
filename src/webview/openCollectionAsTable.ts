@@ -418,15 +418,19 @@ export async function openCollectionAsTable(item: CollectionItem) {
           await batch.commit();
         }
 
-        for (const id of docIds) {
-          DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, `${item.reference.path}/${id}`);
-        }
+        DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
+          docIds.map((id) => ({
+            connectionId: item.connectionId,
+            docPath: `${item.reference.path}/${id}`,
+          }))
+        );
 
         vscode.window.showInformationMessage(`Successfully updated field '${fieldName.trim()}' across ${docIds.length} document(s)!`);
 
-        // Update in-memory loaded docs
+        // Update in-memory loaded docs using O(1) Set lookup
+        const docIdSet = new Set(docIds);
         loadedDocs = loadedDocs.map((doc: any) => {
-          if (docIds.includes(doc.__id)) {
+          if (docIdSet.has(doc.__id)) {
             const updated = { ...doc };
             if (isDeleteField) {
               delete updated[fieldName.trim()];
@@ -477,12 +481,16 @@ export async function openCollectionAsTable(item: CollectionItem) {
           await batch.commit();
         }
 
-        for (const id of docIds) {
-          DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, `${item.reference.path}/${id}`);
-        }
+        DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
+          docIds.map((id) => ({
+            connectionId: item.connectionId,
+            docPath: `${item.reference.path}/${id}`,
+          }))
+        );
 
         vscode.window.showInformationMessage(`Successfully deleted ${docIds.length} document(s)!`);
-        loadedDocs = loadedDocs.filter((doc: any) => !docIds.includes(doc.__id));
+        const delDocIdSet = new Set(docIds);
+        loadedDocs = loadedDocs.filter((doc: any) => !delDocIdSet.has(doc.__id));
 
         panel.webview.postMessage({
           type: "batchSuccess",

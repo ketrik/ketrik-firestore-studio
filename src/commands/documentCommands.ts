@@ -166,7 +166,8 @@ export async function deleteDocumentCommand(
           await firestore.recursiveDelete(item.reference);
           DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.reference.path);
           vscode.window.showInformationMessage(`Deleted document "${item.label}" and all nested subcollections.`);
-          explorerDataProvider.refresh();
+          const parentItem = new CollectionItem(item.reference.parent.id, item.reference.parent, item.connectionId);
+          explorerDataProvider.refreshNode(parentItem);
         } catch (err: any) {
           vscode.window.showErrorMessage(`Failed deep delete: ${err.message}`);
         }
@@ -177,7 +178,8 @@ export async function deleteDocumentCommand(
       await item.reference.delete();
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.reference.path);
       vscode.window.showInformationMessage("Document deleted!");
-      explorerDataProvider.refresh();
+      const parentItem = new CollectionItem(item.reference.parent.id, item.reference.parent, item.connectionId);
+      explorerDataProvider.refreshNode(parentItem);
     } catch (err: any) {
       vscode.window.showErrorMessage("Failed to delete document: " + err.message);
     }
@@ -221,7 +223,8 @@ export async function duplicateDocumentCommand(
     DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, targetRef.path);
     vscode.window.showInformationMessage(`Document duplicated as "${targetRef.id}"!`);
     await openPath(targetRef.path, item.connectionId);
-    explorerDataProvider.refresh();
+    const parentItem = new CollectionItem(item.reference.parent.id, item.reference.parent, item.connectionId);
+    explorerDataProvider.refreshNode(parentItem);
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to duplicate document: ${err.message}`);
   }

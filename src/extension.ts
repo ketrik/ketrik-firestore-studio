@@ -83,10 +83,10 @@ export async function activate(context: vscode.ExtensionContext) {
   const documentFileSystemProvider = DocumentFileSystemProvider.getInstance();
   context.subscriptions.push(documentFileSystemProvider);
 
-  // Automatically refresh Explorer Tree whenever a document or sub-field is saved in the editor (preserve pagination)
+  // Automatically refresh Explorer Tree whenever a document or sub-field is saved in the editor (granular, debounced)
   context.subscriptions.push(
-    documentFileSystemProvider.onDidChangeFile(() => {
-      explorerDataProvider.refresh(false);
+    documentFileSystemProvider.onDidChangeFile((events) => {
+      explorerDataProvider.handleFileChanges(events);
     })
   );
 

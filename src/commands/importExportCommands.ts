@@ -169,7 +169,6 @@ export async function exportCollectionCommand(item: CollectionItem) {
           for (const doc of snapshot.docs) {
             allDocs.push({
               id: doc.id,
-              __id: doc.id,
               ...doc.data(),
             });
           }
@@ -188,12 +187,9 @@ export async function exportCollectionCommand(item: CollectionItem) {
 
         let outputContent = "";
         if (formatChoice.format === "json") {
-          // Clean internal helper keys before writing JSON
-          const cleanDocs = allDocs.map(({ __path, __id, ...rest }) => rest);
-          outputContent = JSON.stringify(cleanDocs, null, 2);
+          outputContent = JSON.stringify(allDocs, null, 2);
         } else if (formatChoice.format === "ndjson") {
-          const cleanDocs = allDocs.map(({ __path, __id, ...rest }) => rest);
-          outputContent = cleanDocs.map((d) => JSON.stringify(d)).join("\n");
+          outputContent = allDocs.map((d) => JSON.stringify(d)).join("\n");
         } else if (formatChoice.format === "csv") {
           outputContent = recordsToCsv(allDocs);
         }

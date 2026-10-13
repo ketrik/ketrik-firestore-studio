@@ -288,6 +288,7 @@ export class ConnectionManager implements vscode.Disposable {
 
   public async testConnection(conn: FirestoreConnectionConfig): Promise<{ success: boolean; message?: string }> {
     let testApp: App | undefined;
+    let testFirestore: Firestore | undefined;
     try {
       const tempAppName = `test-conn-${Date.now()}`;
 
@@ -314,12 +315,17 @@ export class ConnectionManager implements vscode.Disposable {
         );
       }
 
-      const firestore = this._openFirestore(testApp, conn);
-      await firestore.listCollections();
+      testFirestore = this._openFirestore(testApp, conn);
+      await testFirestore.listCollections();
       return { success: true };
     } catch (err: any) {
       return { success: false, message: err.message };
     } finally {
+      if (testFirestore) {
+        try {
+          await testFirestore.terminate();
+        } catch {}
+      }
       if (testApp) {
         try {
           await deleteApp(testApp);

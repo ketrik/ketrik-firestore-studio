@@ -23,6 +23,8 @@ import { AuthService } from "../auth/AuthService";
 
 /** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
 const MAX_MAP_SIZE = 200;
+/** Maximum number of tree branch results cached in memory (LRU eviction). */
+const MAX_TREE_CACHE_SIZE = 250;
 
 /**
  * Evict the oldest entry from a Map when it exceeds maxSize.
@@ -52,6 +54,8 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
   /** Cache tree children (collections, docs, fields) to avoid re-requesting on repeated expand/collapse. */
   private _treeCache = new Map<string, { items: Item[]; timestamp: number }>();
+  private _debounceTimer: NodeJS.Timeout | undefined;
+  private _pendingInvalidations = new Set<string>();
 
   readonly onDidChangeTreeData: vscode.Event<Item | undefined> =
     this._onDidChangeTreeData.event;
@@ -74,6 +78,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   }
 
   dispose(): void {
+    if (this._debounceTimer) {
+      clearTimeout(this._debounceTimer);
+    }
+    this._pendingInvalidations.clear();
     this._connectionListener.dispose();
     this._rulesListener.dispose();
     this._onDidChangeTreeData.dispose();
@@ -90,6 +98,69 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       this._authUsersPaging.clear();
       this._orderBy.clear();
     }
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /**
+   * Handle virtual file change events from DocumentFileSystemProvider with debouncing
+   * and granular branch invalidation. Avoids full tree cache flushes on document saves.
+   */
+  public handleFileChanges(events: readonly vscode.FileChangeEvent[]): void {
+    for (const ev of events) {
+      const uri = ev.uri;
+      const connectionId = uri.authority;
+      let pathStr = uri.path.startsWith("/") ? uri.path.slice(1) : uri.path;
+      if (pathStr.endsWith(".json")) {
+        pathStr = pathStr.slice(0, -5);
+      }
+      if (pathStr === "firestore.rules" || pathStr.endsWith("/firestore.rules")) {
+        continue;
+      }
+      const segments = pathStr.split("/").filter(Boolean);
+      // If odd segments >= 3, last segment was a fieldPath
+      if (segments.length % 2 === 1 && segments.length >= 3) {
+        segments.pop();
+      }
+      const docPath = segments.join("/");
+      if (docPath && connectionId) {
+        this._pendingInvalidations.add(`${connectionId}:${docPath}`);
+      }
+    }
+
+    if (this._debounceTimer) {
+      clearTimeout(this._debounceTimer);
+    }
+
+    this._debounceTimer = setTimeout(() => {
+      this._flushPendingInvalidations();
+    }, 60);
+  }
+
+  private _flushPendingInvalidations(): void {
+    if (this._pendingInvalidations.size === 0) return;
+
+    for (const key of this._pendingInvalidations) {
+      const sep = key.indexOf(":");
+      if (sep === -1) continue;
+      const connectionId = key.substring(0, sep);
+      const docPath = key.substring(sep + 1);
+
+      // Invalidate the document node cache
+      this._treeCache.delete(`doc:${connectionId}:${docPath}`);
+
+      // Invalidate the parent collection node cache
+      const parentCollPath = docPath.includes("/") ? docPath.substring(0, docPath.lastIndexOf("/")) : "";
+      if (parentCollPath) {
+        const prefix = `col:${connectionId}:${parentCollPath}:`;
+        for (const k of this._treeCache.keys()) {
+          if (k.startsWith(prefix)) {
+            this._treeCache.delete(k);
+          }
+        }
+      }
+    }
+
+    this._pendingInvalidations.clear();
     this._onDidChangeTreeData.fire(undefined);
   }
 
@@ -190,7 +261,9 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
     const storeAndReturn = (items: Item[]): Item[] => {
       if (cacheKey && ttl > 0) {
+        this._treeCache.delete(cacheKey);
         this._treeCache.set(cacheKey, { items, timestamp: Date.now() });
+        evictIfNeeded(this._treeCache, MAX_TREE_CACHE_SIZE);
       }
       return items;
     };
@@ -366,6 +439,14 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
     this._paging.set(key, newLimit);
     evictIfNeeded(this._paging, MAX_MAP_SIZE);
+
+    // Evict previous cached collection items under the old limit
+    const prefix = `col:${connId}:${path}:`;
+    for (const k of this._treeCache.keys()) {
+      if (k.startsWith(prefix)) {
+        this._treeCache.delete(k);
+      }
+    }
 
     this._onDidChangeTreeData.fire(undefined);
   }

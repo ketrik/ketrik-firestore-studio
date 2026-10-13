@@ -30,13 +30,11 @@ export async function openAuthUsersAsTable(
   const authService = AuthService.getInstance();
   let currentNextPageToken: string | undefined = undefined;
 
-  async function loadInitialBatch() {
-    panel.webview.postMessage({ type: "setLoading", loading: true, text: "Loading Firebase Auth users (up to 1,000)..." });
-    try {
-      const result = await authService.listUsers(connectionId, 1000);
-      currentNextPageToken = result.pageToken;
-
-      const userSummaries = result.users.map((u) => ({
+  function mapUsers(users: import("firebase-admin/auth").UserRecord[]) {
+    return users.map((u) => {
+      const creationMs = u.metadata?.creationTime ? Date.parse(u.metadata.creationTime) || 0 : 0;
+      const lastSignInMs = u.metadata?.lastSignInTime ? Date.parse(u.metadata.lastSignInTime) || 0 : 0;
+      return {
         uid: u.uid,
         email: u.email,
         displayName: u.displayName,
@@ -45,15 +43,25 @@ export async function openAuthUsersAsTable(
         emailVerified: u.emailVerified,
         customClaims: u.customClaims || {},
         metadata: {
-          creationTime: u.metadata.creationTime,
-          lastSignInTime: u.metadata.lastSignInTime,
+          creationTime: u.metadata?.creationTime,
+          lastSignInTime: u.metadata?.lastSignInTime,
+          creationMs,
+          lastSignInMs,
         },
         hasProfileDoc: undefined, // Lazy checked
-      }));
+      };
+    });
+  }
+
+  async function loadInitialBatch() {
+    panel.webview.postMessage({ type: "setLoading", loading: true, text: "Loading Firebase Auth users (up to 1,000)..." });
+    try {
+      const result = await authService.listUsers(connectionId, 1000);
+      currentNextPageToken = result.pageToken;
 
       panel.webview.postMessage({
         type: "setUsers",
-        users: userSummaries,
+        users: mapUsers(result.users),
         hasMore: !!result.pageToken,
         pageToken: result.pageToken,
       });
@@ -72,24 +80,9 @@ export async function openAuthUsersAsTable(
       const result = await authService.listUsers(connectionId, 1000, currentNextPageToken);
       currentNextPageToken = result.pageToken;
 
-      const userSummaries = result.users.map((u) => ({
-        uid: u.uid,
-        email: u.email,
-        displayName: u.displayName,
-        photoURL: u.photoURL,
-        disabled: u.disabled,
-        emailVerified: u.emailVerified,
-        customClaims: u.customClaims || {},
-        metadata: {
-          creationTime: u.metadata.creationTime,
-          lastSignInTime: u.metadata.lastSignInTime,
-        },
-        hasProfileDoc: undefined,
-      }));
-
       panel.webview.postMessage({
         type: "appendUsers",
-        users: userSummaries,
+        users: mapUsers(result.users),
         hasMore: !!result.pageToken,
         pageToken: result.pageToken,
       });
@@ -117,24 +110,9 @@ export async function openAuthUsersAsTable(
             const result = await authService.listUsers(connectionId, 1000, currentNextPageToken);
             currentNextPageToken = result.pageToken;
 
-            const userSummaries = result.users.map((u) => ({
-              uid: u.uid,
-              email: u.email,
-              displayName: u.displayName,
-              photoURL: u.photoURL,
-              disabled: u.disabled,
-              emailVerified: u.emailVerified,
-              customClaims: u.customClaims || {},
-              metadata: {
-                creationTime: u.metadata.creationTime,
-                lastSignInTime: u.metadata.lastSignInTime,
-              },
-              hasProfileDoc: undefined,
-            }));
-
             panel.webview.postMessage({
               type: "appendUsers",
-              users: userSummaries,
+              users: mapUsers(result.users),
               hasMore: !!result.pageToken,
               pageToken: result.pageToken,
             });
@@ -147,7 +125,7 @@ export async function openAuthUsersAsTable(
     );
   }
 
-  panel.webview.onDidReceiveMessage(async (msg) => {
+  const messageSubscription = panel.webview.onDidReceiveMessage(async (msg) => {
     switch (msg.command) {
       case "ready":
       case "refresh":
@@ -363,5 +341,9 @@ export async function openAuthUsersAsTable(
         break;
       }
     }
+  });
+
+  panel.onDidDispose(() => {
+    messageSubscription.dispose();
   });
 }

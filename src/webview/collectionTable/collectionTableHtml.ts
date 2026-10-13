@@ -472,12 +472,29 @@ export function getCollectionTableClientScript(): string {
         updateBatchToolbar();
       }
 
+      function docMatchesSearch(doc, term) {
+        if (!term) return true;
+        for (const k in doc) {
+          if (k === '__path') continue;
+          const v = doc[k];
+          if (v === null || v === undefined) continue;
+          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+            if (String(v).toLowerCase().includes(term)) return true;
+          } else if (typeof v === 'object') {
+            try {
+              if (JSON.stringify(v).toLowerCase().includes(term)) return true;
+            } catch (e) {}
+          }
+        }
+        return false;
+      }
+
       function filterCurrentDocs() {
         const searchTerm = (document.getElementById('searchInput').value || '').trim().toLowerCase();
         let docs = allLoadedDocs;
 
         if (searchTerm) {
-          docs = docs.filter(d => JSON.stringify(d).toLowerCase().includes(searchTerm));
+          docs = docs.filter(d => docMatchesSearch(d, searchTerm));
         }
 
         if (lifecycleFilter !== 'all') {
@@ -845,16 +862,10 @@ export function getCollectionTableClientScript(): string {
       };
 
       document.getElementById('exportBtn').onclick = function() {
-        const rows = Array.from(document.querySelectorAll('#table-body tr'));
-        const headers = Array.from(document.querySelectorAll('thead th')).map(th => th.textContent.trim());
-        const data = rows.map(row => {
-          const cells = Array.from(row.children);
-          const obj = {};
-          headers.forEach((h, i) => {
-            try { obj[h] = JSON.parse(cells[i].textContent); }
-            catch { obj[h] = cells[i].textContent; }
-          });
-          return obj;
+        const sourceDocs = (lastDocs && lastDocs.length > 0) ? lastDocs : allLoadedDocs;
+        const data = sourceDocs.map(d => {
+          const { __path, ...rest } = d;
+          return rest;
         });
         vscode.postMessage({ command: 'exportJson', data });
       };
@@ -863,6 +874,15 @@ export function getCollectionTableClientScript(): string {
         const value = document.getElementById('searchInput').value;
         applyClientSearch(value);
       };
+
+      let searchDebounceTimer = null;
+      document.getElementById('searchInput').addEventListener('input', function() {
+        if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+        const val = this.value;
+        searchDebounceTimer = setTimeout(() => {
+          applyClientSearch(val);
+        }, 150);
+      });
 
       document.getElementById('jumpBtn').onclick = function() {
         const docId = document.getElementById('jumpInput').value.trim();
@@ -902,6 +922,7 @@ export function getCollectionTableClientScript(): string {
 
       document.getElementById('searchInput').addEventListener('keydown', function(event) {
         if (event.key === 'Enter') {
+          if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
           document.getElementById('searchBtn').click();
         }
       });

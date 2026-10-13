@@ -84,6 +84,7 @@ function classifyCondition(conditionStr?: string): OperationAccess {
 export class RulesParser {
   private blocks: RuleMatchBlock[] = [];
   private functions = new Map<string, string>();
+  private _accessCache = new Map<string, CollectionSecurityAccess>();
 
   constructor(rulesContent: string) {
     this.parse(rulesContent);
@@ -95,6 +96,7 @@ export class RulesParser {
   private parse(content: string): void {
     this.blocks = [];
     this.functions.clear();
+    this._accessCache.clear();
 
     // 1. Strip comments
     const cleaned = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -277,6 +279,11 @@ export class RulesParser {
    * Determine the access level for a specific collection path (e.g., "registers", "users", or "users/123/posts").
    */
   public getAccessForCollection(collPath: string): CollectionSecurityAccess {
+    const cached = this._accessCache.get(collPath);
+    if (cached) {
+      return cached;
+    }
+
     const collSegments = collPath.split("/").filter(Boolean);
 
     // Find all matching blocks, scored by specificity (most specific wins over wildcards)
@@ -333,10 +340,12 @@ export class RulesParser {
     const chosenBlock = matchedBlock || fallbackBlock;
 
     if (!chosenBlock) {
-      return {
+      const defaultDeny: CollectionSecurityAccess = {
         read: { role: "locked", condition: "no rule matched (default deny)" },
         write: { role: "locked", condition: "no rule matched (default deny)" },
       };
+      this._accessCache.set(collPath, defaultDeny);
+      return defaultDeny;
     }
 
     // Combine access: specific block might specify only read or only write, fallback can satisfy the other!
@@ -350,11 +359,13 @@ export class RulesParser {
       (fallbackBlock ? (fallbackBlock.write || fallbackBlock.create || fallbackBlock.update || fallbackBlock.delete) : undefined) ||
       { role: "locked", condition: "denied" };
 
-    return {
+    const result: CollectionSecurityAccess = {
       read: readAccess,
       write: writeAccess,
       rawRuleSnippet: chosenBlock.snippet,
     };
+    this._accessCache.set(collPath, result);
+    return result;
   }
 
   /**
