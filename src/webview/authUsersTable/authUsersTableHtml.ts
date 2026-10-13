@@ -42,6 +42,39 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       color: var(--vscode-charts-red, #f44747);
       font-weight: 500;
     }
+    .user-cell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .user-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
+      border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
+      flex-shrink: 0;
+    }
+    .user-avatar-fallback {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--vscode-badge-background, rgba(128, 128, 128, 0.2));
+      color: var(--vscode-editor-foreground);
+      font-size: 0.85em;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
+    }
+    .user-details {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
     .btn-icon {
       padding: 3px 8px;
       font-size: 0.85em;
@@ -275,10 +308,20 @@ export function getAuthUsersTableHtml(connectionId: string): string {
               ? '<span style="color:var(--vscode-charts-yellow, #cca700);">⚠️ Missing</span>'
               : '<button class="secondary btn-icon check-profile-btn" data-uid="' + escapeHtml(u.uid) + '" title="Check Firestore doc">Check</button>');
 
+          const initial = ((u.displayName || u.email || u.uid || '?')[0] || '?').toUpperCase();
+          const avatarHtml = u.photoURL
+            ? '<img class="user-avatar" src="' + escapeHtml(u.photoURL) + '" alt="' + escapeHtml(initial) + '" onerror="this.style.display=\\'none\\'; this.nextElementSibling.style.display=\\'inline-flex\\';" /><span class="user-avatar-fallback" style="display:none;">' + escapeHtml(initial) + '</span>'
+            : '<span class="user-avatar-fallback">' + escapeHtml(initial) + '</span>';
+
           tr.innerHTML = \`
             <td class="sticky-col">
-              <div style="font-weight: 500;">\${escapeHtml(u.email || u.uid)}</div>
-              \${nameHtml}
+              <div class="user-cell">
+                \${avatarHtml}
+                <div class="user-details">
+                  <div style="font-weight: 500;">\${escapeHtml(u.email || u.uid)}</div>
+                  \${nameHtml}
+                </div>
+              </div>
             </td>
             <td><code style="font-size: 0.85em; user-select: all;">\${escapeHtml(u.uid)}</code></td>
             <td>\${formatDate(u.metadata?.creationTime)}</td>
@@ -289,7 +332,11 @@ export function getAuthUsersTableHtml(connectionId: string): string {
             <td class="actions-col sticky-actions">
               <button class="secondary btn-icon claims-btn" data-uid="\${escapeHtml(u.uid)}" title="Edit Custom Claims">Claims</button>
               <button class="secondary btn-icon profile-btn" data-uid="\${escapeHtml(u.uid)}" title="Open / Create Firestore Profile Doc">Profile</button>
+              <button class="secondary btn-icon clone-user-btn" data-uid="\${escapeHtml(u.uid)}" title="Clone User to Another Connection">Clone</button>
+              <button class="secondary btn-icon mint-token-btn" data-uid="\${escapeHtml(u.uid)}" title="Mint Custom Token (Login As User)">Token</button>
+              <button class="secondary btn-icon reset-pwd-btn" data-uid="\${escapeHtml(u.uid)}" data-email="\${escapeHtml(u.email || '')}" title="Generate Password Reset Link">Reset</button>
               <button class="secondary btn-icon toggle-disable-btn" data-uid="\${escapeHtml(u.uid)}" data-disabled="\${u.disabled}" title="\${u.disabled ? 'Enable User' : 'Disable User'}">\${u.disabled ? 'Enable' : 'Disable'}</button>
+              <button class="secondary btn-icon delete-user-btn" data-uid="\${escapeHtml(u.uid)}" data-email="\${escapeHtml(u.email || u.uid)}" title="Delete Auth User & Profile" style="color:var(--vscode-charts-red, #ff5555);">Delete</button>
             </td>
           \`;
           tbody.appendChild(tr);
@@ -311,11 +358,41 @@ export function getAuthUsersTableHtml(connectionId: string): string {
         });
       });
 
+      tbody.querySelectorAll('.clone-user-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const uid = btn.getAttribute('data-uid');
+          vscode.postMessage({ command: 'cloneUser', uid });
+        });
+      });
+
+      tbody.querySelectorAll('.mint-token-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const uid = btn.getAttribute('data-uid');
+          vscode.postMessage({ command: 'mintToken', uid });
+        });
+      });
+
+      tbody.querySelectorAll('.reset-pwd-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const uid = btn.getAttribute('data-uid');
+          const email = btn.getAttribute('data-email');
+          vscode.postMessage({ command: 'resetPassword', uid, email });
+        });
+      });
+
       tbody.querySelectorAll('.toggle-disable-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           const uid = btn.getAttribute('data-uid');
           const currentDisabled = btn.getAttribute('data-disabled') === 'true';
           vscode.postMessage({ command: 'toggleDisable', uid, disabled: !currentDisabled });
+        });
+      });
+
+      tbody.querySelectorAll('.delete-user-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const uid = btn.getAttribute('data-uid');
+          const email = btn.getAttribute('data-email');
+          vscode.postMessage({ command: 'deleteUser', uid, email });
         });
       });
 
@@ -415,6 +492,11 @@ export function getAuthUsersTableHtml(connectionId: string): string {
             allUsers[idx] = { ...allUsers[idx], ...msg.user };
             renderTable();
           }
+          break;
+
+        case 'userDeleted':
+          allUsers = allUsers.filter(u => u.uid !== msg.uid);
+          renderTable();
           break;
 
         case 'setLoading':

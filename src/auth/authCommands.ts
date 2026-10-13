@@ -197,7 +197,12 @@ export async function manageAuthUsersCommand(
     [
       { label: "$(shield) Edit Custom Claims", action: "claims" },
       { label: "$(file-code) Open / Create Firestore Profile", action: "profile" },
-      { label: "$(copy) Copy UID", action: "copyUid" },
+      { label: "$(copy) Clone User to Another Connection...", action: "clone" },
+      { label: "$(key) Mint Custom Auth Token (Login As User)", action: "mintToken" },
+      { label: "$(mail) Generate Password Reset Link", action: "resetPassword" },
+      { label: "$(history) Force Logout (Revoke Sessions)", action: "revokeSessions" },
+      { label: "$(clippy) Copy UID", action: "copyUid" },
+      { label: "$(trash) Delete User & Profile...", action: "delete" },
     ],
     {
       placeHolder: `Action for user: ${picked.email || picked.uid}`,
@@ -214,9 +219,289 @@ export async function manageAuthUsersCommand(
     await editAuthUserClaimsCommand(dummyItem, explorerDataProvider);
   } else if (action.action === "profile") {
     await openAuthUserProfileCommand(dummyItem, explorerDataProvider, fsProvider);
+  } else if (action.action === "clone") {
+    await cloneAuthUserCommand(dummyItem, explorerDataProvider, fsProvider);
+  } else if (action.action === "mintToken") {
+    await mintCustomTokenCommand(dummyItem);
+  } else if (action.action === "resetPassword") {
+    await resetAuthUserPasswordCommand(dummyItem);
+  } else if (action.action === "revokeSessions") {
+    await revokeUserSessionsCommand(dummyItem);
   } else if (action.action === "copyUid") {
     await vscode.env.clipboard.writeText(picked.uid);
     vscode.window.showInformationMessage(`Copied UID: ${picked.uid}`);
+  } else if (action.action === "delete") {
+    await deleteAuthUserCommand(dummyItem, explorerDataProvider, fsProvider);
+  }
+}
+
+/**
+ * Clone user from one connection to another target connection.
+ */
+export async function cloneAuthUserCommand(
+  item?: AuthUserItem,
+  explorerDataProvider?: ExplorerDataProvider,
+  fsProvider?: DocumentFileSystemProvider
+) {
+  const authService = AuthService.getInstance();
+  const sourceConnectionId = resolveConnectionId(item);
+  let uid = item?.user?.uid;
+  let userIdentifier = item?.user?.email || item?.user?.uid;
+
+  if (!uid) {
+    const picked = await pickAuthUser(sourceConnectionId);
+    if (!picked) {
+      return;
+    }
+    uid = picked.uid;
+    userIdentifier = picked.email || picked.uid;
+  }
+
+  // Get available target connections
+  const connections = ConnectionManager.getInstance().getConnections();
+  const targetConnections = connections.filter((c) => c.id !== sourceConnectionId);
+
+  if (targetConnections.length === 0) {
+    vscode.window.showWarningMessage(
+      "No other connection configured. Please add a second connection (e.g. Staging or Local Emulator) to clone to."
+    );
+    return;
+  }
+
+  const selectedConn = await vscode.window.showQuickPick(
+    targetConnections.map((c) => ({
+      label: c.name,
+      description: `ID: ${c.id} • Project: ${c.projectId || "default"}`,
+      connection: c,
+    })),
+    {
+      placeHolder: `Select target connection to clone '${userIdentifier}' into`,
+    }
+  );
+
+  if (!selectedConn) {
+    return;
+  }
+
+  const targetConnectionId = selectedConn.connection.id;
+  const hasProfile = await authService.checkProfileExists(sourceConnectionId, uid);
+
+  const cloneProfileChoice = hasProfile
+    ? await vscode.window.showQuickPick(
+        [
+          { label: "Clone User Account & Firestore Profile (/users)", cloneProfile: true },
+          { label: "Clone User Account Only", cloneProfile: false },
+        ],
+        { placeHolder: "Do you want to copy the user's Firestore profile doc as well?" }
+      )
+    : { cloneProfile: false };
+
+  if (cloneProfileChoice === undefined) {
+    return;
+  }
+
+  try {
+    const result = await authService.cloneUserToConnection(
+      sourceConnectionId,
+      targetConnectionId,
+      uid,
+      {
+        cloneProfile: cloneProfileChoice.cloneProfile,
+        generateResetLink: true,
+      },
+      fsProvider
+    );
+
+    let msg = `Successfully cloned '${userIdentifier}' into '${selectedConn.connection.name}'.`;
+    if (result.profileCloned) {
+      msg += " Copied Firestore profile doc.";
+    }
+
+    if (result.resetLink) {
+      await vscode.env.clipboard.writeText(result.resetLink);
+      vscode.window.showInformationMessage(
+        `${msg} A password reset link for the target connection was copied to your clipboard!`
+      );
+    } else {
+      vscode.window.showInformationMessage(msg);
+    }
+
+    if (explorerDataProvider) {
+      explorerDataProvider.refresh();
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to clone user: ${err.message}`);
+  }
+}
+
+/**
+ * Mint custom auth token for user to test client apps / simulate login.
+ */
+export async function mintCustomTokenCommand(item?: AuthUserItem) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+  let uid = item?.user?.uid;
+  let userIdentifier = item?.user?.email || item?.user?.uid;
+
+  if (!uid) {
+    const picked = await pickAuthUser(connectionId);
+    if (!picked) {
+      return;
+    }
+    uid = picked.uid;
+    userIdentifier = picked.email || picked.uid;
+  }
+
+  try {
+    const token = await authService.createCustomToken(connectionId, uid);
+    await vscode.env.clipboard.writeText(token);
+    vscode.window.showInformationMessage(
+      `Minted custom JWT token for '${userIdentifier}' (UID: ${uid}) and copied to clipboard!`
+    );
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to mint custom token: ${err.message}`);
+  }
+}
+
+/**
+ * Revoke all active refresh tokens for user (force logout).
+ */
+export async function revokeUserSessionsCommand(item?: AuthUserItem) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+  let uid = item?.user?.uid;
+  let userIdentifier = item?.user?.email || item?.user?.uid;
+
+  if (!uid) {
+    const picked = await pickAuthUser(connectionId);
+    if (!picked) {
+      return;
+    }
+    uid = picked.uid;
+    userIdentifier = picked.email || picked.uid;
+  }
+
+  const confirm = await vscode.window.showWarningMessage(
+    `Are you sure you want to revoke all active sessions for '${userIdentifier}'? They will be logged out of all devices.`,
+    { modal: true },
+    "Revoke Sessions",
+    "Cancel"
+  );
+
+  if (confirm !== "Revoke Sessions") {
+    return;
+  }
+
+  try {
+    await authService.revokeRefreshTokens(connectionId, uid);
+    vscode.window.showInformationMessage(`Successfully revoked all sessions for '${userIdentifier}'.`);
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to revoke sessions: ${err.message}`);
+  }
+}
+
+/**
+ * Generate password reset link for a user.
+ */
+export async function resetAuthUserPasswordCommand(item?: AuthUserItem) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+  let email = item?.user?.email;
+
+  if (!email) {
+    const picked = await pickAuthUser(connectionId);
+    if (!picked) {
+      return;
+    }
+    email = picked.email;
+  }
+
+  if (!email) {
+    vscode.window.showWarningMessage("Selected user does not have an email address associated with their account.");
+    return;
+  }
+
+  try {
+    const link = await authService.generatePasswordResetLink(connectionId, email);
+    await vscode.env.clipboard.writeText(link);
+    const choice = await vscode.window.showInformationMessage(
+      `Password reset link generated for ${email} and copied to clipboard!`,
+      "Open Link in Browser"
+    );
+    if (choice === "Open Link in Browser") {
+      await vscode.env.openExternal(vscode.Uri.parse(link));
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to generate password reset link: ${err.message}`);
+  }
+}
+
+/**
+ * Delete a user from Firebase Auth, with option to cascade-delete their Firestore profile document.
+ */
+export async function deleteAuthUserCommand(
+  item?: AuthUserItem,
+  explorerDataProvider?: ExplorerDataProvider,
+  fsProvider?: DocumentFileSystemProvider
+) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+  let uid = item?.user?.uid;
+  let userIdentifier = item?.user?.email || item?.user?.uid;
+
+  if (!uid) {
+    const picked = await pickAuthUser(connectionId);
+    if (!picked) {
+      return;
+    }
+    uid = picked.uid;
+    userIdentifier = picked.email || picked.uid;
+  }
+
+  const hasProfile = await authService.checkProfileExists(connectionId, uid);
+
+  // Present explicit confirmation options with safe cancel
+  const deleteProfileOption = hasProfile
+    ? "Delete Auth User & Profile Doc (/users)"
+    : "Delete Auth User Only";
+
+  const options = hasProfile
+    ? [deleteProfileOption, "Delete Auth User Only", "Cancel"]
+    : ["Delete Auth User Only", "Cancel"];
+
+  const choice = await vscode.window.showWarningMessage(
+    `Are you sure you want to permanently delete user '${userIdentifier}' (UID: ${uid})?` +
+      (hasProfile ? " A Firestore profile document also exists at '/users/" + uid + "'." : ""),
+    { modal: true },
+    ...options
+  );
+
+  if (!choice || choice === "Cancel") {
+    return;
+  }
+
+  const shouldDeleteProfile = choice.includes("Profile Doc");
+
+  try {
+    const result = await authService.deleteUserAndProfile(
+      connectionId,
+      uid,
+      shouldDeleteProfile,
+      "users",
+      fsProvider
+    );
+
+    const msg = result.profileDeleted
+      ? `Successfully deleted Auth user '${userIdentifier}' and associated Firestore profile doc.`
+      : `Successfully deleted Auth user '${userIdentifier}'.`;
+
+    vscode.window.showInformationMessage(msg);
+
+    if (explorerDataProvider) {
+      explorerDataProvider.refreshNode(item);
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to delete user '${userIdentifier}': ${err.message}`);
   }
 }
 

@@ -47,6 +47,11 @@ import {
   createAuthUserProfileCommand,
   openAuthUserProfileCommand,
   manageAuthUsersCommand,
+  deleteAuthUserCommand,
+  resetAuthUserPasswordCommand,
+  cloneAuthUserCommand,
+  mintCustomTokenCommand,
+  revokeUserSessionsCommand,
 } from "./auth/authCommands";
 import { RulesService } from "./rules/RulesService";
 import { scheme } from "./constants";
@@ -147,6 +152,26 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.manageAuthUsers",
       (item?: any) => manageAuthUsersCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.deleteAuthUser",
+      (item?: any) => deleteAuthUserCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.resetAuthUserPassword",
+      (item?: any) => resetAuthUserPasswordCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.cloneAuthUser",
+      (item?: any) => cloneAuthUserCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.mintCustomToken",
+      (item?: any) => mintCustomTokenCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.revokeUserSessions",
+      (item?: any) => revokeUserSessionsCommand(item)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.openAuthUsersAsTable",

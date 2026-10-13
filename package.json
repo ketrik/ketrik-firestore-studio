@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.8.0",
+  "version": "1.9.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -272,6 +272,36 @@
         "icon": "$(file-code)"
       },
       {
+        "command": "ketrik-firestore-studio.resetAuthUserPassword",
+        "category": "Firestore Studio",
+        "title": "Generate Password Reset Link",
+        "icon": "$(mail)"
+      },
+      {
+        "command": "ketrik-firestore-studio.cloneAuthUser",
+        "category": "Firestore Studio",
+        "title": "Clone User to Connection...",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "ketrik-firestore-studio.mintCustomToken",
+        "category": "Firestore Studio",
+        "title": "Mint Custom Auth Token",
+        "icon": "$(key)"
+      },
+      {
+        "command": "ketrik-firestore-studio.revokeUserSessions",
+        "category": "Firestore Studio",
+        "title": "Force Logout (Revoke Sessions)",
+        "icon": "$(history)"
+      },
+      {
+        "command": "ketrik-firestore-studio.deleteAuthUser",
+        "category": "Firestore Studio",
+        "title": "Delete User & Profile...",
+        "icon": "$(trash)"
+      },
+      {
         "command": "ketrik-firestore-studio.openPath",
         "category": "Firestore Studio",
         "title": "Open Path"
@@ -511,6 +541,26 @@
           "command": "ketrik-firestore-studio.openAuthUserProfile",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
           "group": "1_actions@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.resetAuthUserPassword",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
+          "group": "1_actions@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.cloneAuthUser",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
+          "group": "1_actions@5"
+        },
+        {
+          "command": "ketrik-firestore-studio.mintCustomToken",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
+          "group": "1_actions@6"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteAuthUser",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
+          "group": "1_actions@7"
         },
         {
           "command": "ketrik-firestore-studio.openCollectionAsTable",

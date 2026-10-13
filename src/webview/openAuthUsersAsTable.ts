@@ -3,6 +3,7 @@ import { AuthService } from "../auth/AuthService";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import { getAuthUsersTableHtml } from "./authUsersTable/authUsersTableHtml";
 import openPath from "../commands/openPath";
+import { cloneAuthUserCommand, mintCustomTokenCommand } from "../auth/authCommands";
 
 /**
  * Open the Firebase Authentication users in a fast tabular webview.
@@ -232,6 +233,28 @@ export async function openAuthUsersAsTable(
         break;
       }
 
+      case "cloneUser": {
+        try {
+          const user = await authService.getUser(connectionId, msg.uid);
+          const dummyItem = { user, connectionId } as any;
+          await cloneAuthUserCommand(dummyItem, undefined, fsProvider);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to clone user: ${err.message}`);
+        }
+        break;
+      }
+
+      case "mintToken": {
+        try {
+          const user = await authService.getUser(connectionId, msg.uid);
+          const dummyItem = { user, connectionId } as any;
+          await mintCustomTokenCommand(dummyItem);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to mint custom token: ${err.message}`);
+        }
+        break;
+      }
+
       case "toggleDisable": {
         try {
           const updated = await authService.updateUser(connectionId, msg.uid, {
@@ -246,6 +269,82 @@ export async function openAuthUsersAsTable(
           });
         } catch (err: any) {
           vscode.window.showErrorMessage(`Failed to update user: ${err.message}`);
+        }
+        break;
+      }
+
+      case "resetPassword": {
+        try {
+          let email = msg.email;
+          if (!email) {
+            const user = await authService.getUser(connectionId, msg.uid);
+            email = user.email;
+          }
+          if (!email) {
+            vscode.window.showWarningMessage(`User '${msg.uid}' has no email address associated with their account.`);
+            break;
+          }
+          const link = await authService.generatePasswordResetLink(connectionId, email);
+          await vscode.env.clipboard.writeText(link);
+          const copyChoice = await vscode.window.showInformationMessage(
+            `Password reset link generated for ${email} and copied to clipboard!`,
+            "Open Link in Browser"
+          );
+          if (copyChoice === "Open Link in Browser") {
+            await vscode.env.openExternal(vscode.Uri.parse(link));
+          }
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to generate password reset link: ${err.message}`);
+        }
+        break;
+      }
+
+      case "deleteUser": {
+        try {
+          const uid = msg.uid;
+          const userIdentifier = msg.email || uid;
+          const hasProfile = await authService.checkProfileExists(connectionId, uid);
+
+          const deleteProfileOption = hasProfile
+            ? "Delete Auth User & Profile Doc (/users)"
+            : "Delete Auth User Only";
+
+          const options = hasProfile
+            ? [deleteProfileOption, "Delete Auth User Only", "Cancel"]
+            : ["Delete Auth User Only", "Cancel"];
+
+          const choice = await vscode.window.showWarningMessage(
+            `Are you sure you want to permanently delete user '${userIdentifier}' (UID: ${uid})?` +
+              (hasProfile ? " A Firestore profile document also exists at '/users/" + uid + "'." : ""),
+            { modal: true },
+            ...options
+          );
+
+          if (!choice || choice === "Cancel") {
+            break;
+          }
+
+          const shouldDeleteProfile = choice.includes("Profile Doc");
+          const result = await authService.deleteUserAndProfile(
+            connectionId,
+            uid,
+            shouldDeleteProfile,
+            "users",
+            fsProvider
+          );
+
+          vscode.window.showInformationMessage(
+            result.profileDeleted
+              ? `Deleted Auth user '${userIdentifier}' and associated Firestore profile doc.`
+              : `Deleted Auth user '${userIdentifier}'.`
+          );
+
+          panel.webview.postMessage({
+            type: "userDeleted",
+            uid,
+          });
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to delete user: ${err.message}`);
         }
         break;
       }

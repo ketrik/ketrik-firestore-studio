@@ -2,6 +2,26 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.9.0] - 2026-10-13
+
+### Added
+- **Cross-Environment Auth User Cloning (`ketrik-firestore-studio.cloneAuthUser`)**:
+  - Clone any user account directly across connections (e.g. *Production $\rightarrow$ Staging* or *Local Emulator*).
+  - Copies account metadata (`uid`, `email`, `displayName`, `photoURL`, `phoneNumber`, `disabled`, `emailVerified`) and custom claims.
+  - Option to simultaneously clone their associated Firestore profile document (`/users/{uid}`).
+  - Automatically copies a freshly generated password reset link for the target environment to the clipboard.
+- **Custom Auth Token Minter (`ketrik-firestore-studio.mintCustomToken`)**:
+  - 1-click minting of signed custom JWT auth tokens for any user (`auth.createCustomToken(uid)`).
+  - Enables instant login as any user in client frontends or REST testing to verify security rules and app permissions.
+- **Session Revocation / Force Logout (`ketrik-firestore-studio.revokeUserSessions`)**:
+  - Immediately revokes all active refresh tokens for an account across all sessions and devices.
+- **Password Reset Link Generator (`ketrik-firestore-studio.resetAuthUserPassword`)**:
+  - Generates secure out-of-band password reset links directly from tree context menus or table rows, copied straight to clipboard with optional browser jump.
+- **Cascade User & Profile Deletion (`ketrik-firestore-studio.deleteAuthUser`)**:
+  - Delete an Auth user with intelligent prompt to also delete their `/users/{uid}` Firestore profile document.
+- **Avatar & Photo Display in Auth Users Table**:
+  - Renders user profile avatars (`photoURL`) with automated fallback to stylized user initial badges.
+
 ## [1.8.0] - 2026-10-13
 
 ### Added
