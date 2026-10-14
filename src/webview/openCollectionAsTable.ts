@@ -1,11 +1,12 @@
-import { QueryDocumentSnapshot, Query, AggregateField, FieldValue, FieldPath } from "firebase-admin/firestore";
+import { QueryDocumentSnapshot, Query, AggregateField, FieldValue, FieldPath, Filter } from "firebase-admin/firestore";
 import * as vscode from "vscode";
-import { CollectionItem } from "../explorer/items";
+import { CollectionItem, DocumentFieldItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import openPath from "../commands/openPath";
 import { QueryClause, sortHeaders, parseFilterValue } from "./common/tableUtils";
 import { getCollectionTableHtml } from "./collectionTable/collectionTableHtml";
+import { openFieldAsTable } from "./openFieldAsTable";
 
 export { QueryClause };
 
@@ -29,6 +30,9 @@ function sanitizeFirestoreValue(val: any): any {
   }
   if (typeof val.path === "string" && (val._firestore || val.constructor?.name === "DocumentReference")) {
     return `[Ref: ${val.path}]`;
+  }
+  if (Buffer.isBuffer(val) || val instanceof Uint8Array) {
+    return `[Blob: ${val.length} bytes]`;
   }
   if (Array.isArray(val)) {
     return val.map(sanitizeFirestoreValue);
@@ -69,6 +73,7 @@ export async function openCollectionAsTable(
   let lastDoc: QueryDocumentSnapshot | null = null;
   let headers: string[] = [];
   let activeQueryClauses: QueryClause[] = [];
+  let activeMatchMode: "and" | "or" = "and";
   let isLoading = false;
 
   /**
@@ -85,12 +90,41 @@ export async function openCollectionAsTable(
   /** Build an executable Firestore query applying all active where clauses. */
   async function buildBaseQuery(): Promise<Query> {
     let q: Query = await getBaseQueryTarget();
+    if (activeQueryClauses.length === 0) {
+      return q;
+    }
+
+    const filters: import("firebase-admin/firestore").Filter[] = [];
+
     for (const clause of activeQueryClauses) {
-      if (clause.field && clause.op) {
+      if (!clause.field || !clause.op) continue;
+
+      if (clause.op === "starts-with") {
+        const prefix = String(clause.value || "");
+        const endPrefix = prefix + "\uf8ff";
+        // Compiles to field >= prefix AND field < prefix + \uf8ff
+        filters.push(
+          Filter.and(
+            Filter.where(clause.field, ">=", prefix),
+            Filter.where(clause.field, "<", endPrefix)
+          )
+        );
+      } else {
         const parsedVal = parseFilterValue(clause.value, clause.op);
-        q = q.where(clause.field, clause.op, parsedVal);
+        filters.push(Filter.where(clause.field, clause.op, parsedVal));
       }
     }
+
+    if (filters.length === 0) {
+      return q;
+    }
+
+    if (activeMatchMode === "or") {
+      q = q.where(Filter.or(...filters));
+    } else {
+      q = q.where(Filter.and(...filters));
+    }
+
     return q;
   }
 
@@ -261,6 +295,7 @@ export async function openCollectionAsTable(
 
     if (message.command === "runServerQuery") {
       activeQueryClauses = (message.clauses as QueryClause[]) || [];
+      activeMatchMode = message.matchMode === "or" ? "or" : "and";
       loadedDocs = [];
       lastDoc = null;
       headers = [];
@@ -283,6 +318,7 @@ export async function openCollectionAsTable(
 
     if (message.command === "resetServerQuery") {
       activeQueryClauses = [];
+      activeMatchMode = "and";
       loadedDocs = [];
       lastDoc = null;
       headers = [];
@@ -301,6 +337,11 @@ export async function openCollectionAsTable(
       } finally {
         isLoading = false;
       }
+    }
+
+    if (message.command === "openRef" && message.refPath) {
+      openPath(message.refPath, connectionId);
+      return;
     }
 
     if (message.command === "refresh") {
@@ -377,6 +418,69 @@ export async function openCollectionAsTable(
 
     if (message.command === "openDoc" && message.path) {
       openPath(message.path, connectionId);
+    }
+
+    if (message.command === "updateField" && message.docPath && message.field !== undefined) {
+      const { docPath, field, value } = message;
+      try {
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        const docRef = firestore.doc(docPath);
+
+        // Sanitize value for Firestore write
+        let writeVal: any = value;
+        if (value && typeof value === "object" && typeof value._seconds === "number" && typeof value._nanoseconds === "number") {
+          const { Timestamp } = await import("firebase-admin/firestore");
+          writeVal = new Timestamp(value._seconds, value._nanoseconds);
+        }
+
+        await docRef.update(new FieldPath(field), writeVal);
+
+        // Invalidate DocumentFileSystemProvider cache so open JSON editors sync immediately
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docPath);
+
+        // Update local loadedDocs state
+        const targetDoc = loadedDocs.find((d) => d.__path === docPath);
+        if (targetDoc) {
+          targetDoc[field] = sanitizeFirestoreValue(writeVal);
+        }
+
+        panel.webview.postMessage({
+          type: "fieldUpdated",
+          docPath,
+          field,
+          value: sanitizeFirestoreValue(writeVal),
+        });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to update '${field}': ${err.message}`);
+        panel.webview.postMessage({
+          type: "fieldUpdateFailed",
+          docPath,
+          field,
+          error: err.message,
+        });
+      }
+      return;
+    }
+
+    if (message.command === "openFieldAsTable" && message.docPath && message.field) {
+      try {
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        const docSnap = await firestore.doc(message.docPath).get();
+        if (docSnap.exists) {
+          const data = docSnap.data() || {};
+          const fieldVal = data[message.field];
+          const fieldItem = new DocumentFieldItem(
+            message.field,
+            fieldVal,
+            docSnap.ref,
+            connectionId
+          );
+          await openFieldAsTable(fieldItem);
+        }
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to open field table: ${err.message}`);
+      }
+      return;
     }
 
     if (message.command === "exportJson") {

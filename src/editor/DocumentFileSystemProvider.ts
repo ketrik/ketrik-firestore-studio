@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import * as vscode from "vscode";
+import { FieldPath } from "firebase-admin/firestore";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { scheme } from "../constants";
 import { RulesService } from "../rules/RulesService";
@@ -381,10 +382,8 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     try {
       let writeTime: import("firebase-admin/firestore").Timestamp;
       if (fieldPath !== undefined) {
-        // Atomic partial update: only update the targeted root field
-        writeTime = (await firestore.doc(docPath).update({
-          [fieldPath]: json,
-        })).writeTime;
+        // Atomic partial update: only update the targeted root field using FieldPath to handle dots safely
+        writeTime = (await firestore.doc(docPath).update(new FieldPath(fieldPath), json)).writeTime;
       } else {
         writeTime = (await firestore.doc(docPath).set(json)).writeTime;
       }
@@ -403,7 +402,9 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     _uri: vscode.Uri,
     _options: { readonly recursive: boolean }
   ): void | Thenable<void> {
-    throw new Error("Delete Method not implemented.");
+    throw vscode.FileSystemError.NoPermissions(
+      "Deleting virtual Firestore document files directly via filesystem is not permitted. Use the explorer context menu."
+    );
   }
 
   rename(
@@ -411,6 +412,8 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     _newUri: vscode.Uri,
     _options: { readonly overwrite: boolean }
   ): void | Thenable<void> {
-    throw new Error("Rename Method not implemented.");
+    throw vscode.FileSystemError.NoPermissions(
+      "Renaming virtual Firestore document files directly via filesystem is not permitted."
+    );
   }
 }

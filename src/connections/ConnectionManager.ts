@@ -225,6 +225,43 @@ export class ConnectionManager implements vscode.Disposable {
     return app;
   }
 
+  private _authQueue: Promise<any> = Promise.resolve();
+
+  /**
+   * Execute an operation with the Firebase Auth instance for a connection,
+   * safely managing process.env.FIREBASE_AUTH_EMULATOR_HOST so that emulator
+   * and production connections (or multiple emulator hosts) do not contaminate each other.
+   */
+  public async withAuth<T>(
+    connectionId: string | undefined,
+    fn: (auth: Auth) => Promise<T>
+  ): Promise<T> {
+    const run = async () => {
+      const prevHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+      const conn = this.getConnection(connectionId);
+      if (conn?.isEmulator) {
+        process.env.FIREBASE_AUTH_EMULATOR_HOST = conn.authEmulatorHost || "127.0.0.1:9099";
+      } else {
+        delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
+      }
+      try {
+        const app = await this.getApp(connectionId);
+        const auth = getAuth(app);
+        return await fn(auth);
+      } finally {
+        if (prevHost !== undefined) {
+          process.env.FIREBASE_AUTH_EMULATOR_HOST = prevHost;
+        } else {
+          delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
+        }
+      }
+    };
+
+    const result = this._authQueue.then(run, run);
+    this._authQueue = result.catch(() => {});
+    return result;
+  }
+
   /**
    * Get the Firebase Auth instance for a connection.
    */

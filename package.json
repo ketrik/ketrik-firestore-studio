@@ -1,7 +1,7 @@
 {
   "name": "ketrik-firestore-studio",
   "displayName": "Ketrik Firestore Studio",
-  "description": "The complete Firebase & Google Cloud Firestore studio: tree explorer, table view, atomic editor, security rules, and auth management.",
+  "description": "Firebase & Firestore database explorer, query builder, and editor with table views, security rules, and emulator suite.",
   "keywords": [
     "firebase",
     "firestore",
@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.9.2",
+  "version": "1.10.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -59,6 +59,15 @@
         "language": "firestore-rules",
         "scopeName": "source.firestore-rules",
         "path": "./syntaxes/firestore-rules.tmLanguage.json"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          "*.dash.json",
+          "*.dry.json"
+        ],
+        "url": "./schemas/dashboard-dry.schema.json"
       }
     ],
     "configuration": {
@@ -489,6 +498,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "ketrik-firestore-studio.deleteMultipleFields",
+        "category": "Firestore Studio",
+        "title": "Delete Multiple Fields...",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "ketrik-firestore-studio.addField",
         "category": "Firestore Studio",
         "title": "Add Field...",
@@ -565,9 +580,27 @@
         "category": "Firestore Studio",
         "title": "Query Collection Group...",
         "icon": "$(layers)"
+      },
+      {
+        "command": "ketrik-firestore-studio.convertDashboardFormat",
+        "category": "Firestore Studio",
+        "title": "Convert / Compile Dashboard Format (DRY ⇄ Runtime)",
+        "icon": "$(file-submodule)"
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "ketrik-firestore-studio.deleteMultipleFields",
+          "when": "resourceScheme == ketrik-firestore-studio",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.convertDashboardFormat",
+          "when": "resourceScheme == ketrik-firestore-studio",
+          "group": "navigation@2"
+        }
+      ],
       "view/title": [
         {
           "command": "ketrik-firestore-studio.addConnection",
@@ -787,6 +820,11 @@
           "group": "1_actions@5"
         },
         {
+          "command": "ketrik-firestore-studio.convertDashboardFormat",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_actions@6"
+        },
+        {
           "command": "ketrik-firestore-studio.addCollection",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "2_sub@1"
@@ -797,14 +835,24 @@
           "group": "2_sub@2"
         },
         {
-          "command": "ketrik-firestore-studio.refreshItem",
+          "command": "ketrik-firestore-studio.deleteMultipleFields",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "2_sub@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.refreshItem",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "2_sub@4"
         },
         {
           "command": "ketrik-firestore-studio.openFieldAsTable",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
           "group": "inline@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteField",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "group": "inline@2"
         },
         {
           "command": "ketrik-firestore-studio.openFieldAsTable",
@@ -847,9 +895,14 @@
           "group": "1_actions@8"
         },
         {
-          "command": "ketrik-firestore-studio.deleteField",
+          "command": "ketrik-firestore-studio.deleteMultipleFields",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
           "group": "2_danger@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteField",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "group": "2_danger@2"
         }
       ],
       "commandPalette": [
@@ -920,6 +973,20 @@
         {
           "command": "ketrik-firestore-studio.addCollection",
           "when": "false"
+        }
+      ],
+      "keybindings": [
+        {
+          "command": "ketrik-firestore-studio.deleteField",
+          "key": "Delete",
+          "mac": "Backspace",
+          "when": "focusedView == 'ketrik-firestore-studio-view'"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteMultipleFields",
+          "key": "shift+Delete",
+          "mac": "shift+Backspace",
+          "when": "focusedView == 'ketrik-firestore-studio-view' || resourceScheme == 'ketrik-firestore-studio'"
         }
       ]
     }

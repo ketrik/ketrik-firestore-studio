@@ -3,7 +3,8 @@ import { DocumentFieldItem, DocumentItem } from "../explorer/items";
 import openPath from "./openPath";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
-import { FieldValue } from "firebase-admin/firestore";
+import { ConnectionManager } from "../connections/ConnectionManager";
+import { FieldPath, FieldValue } from "firebase-admin/firestore";
 
 /**
  * Handle opening or quick-editing a field.
@@ -50,9 +51,7 @@ export async function openFieldCommand(
     }
 
     try {
-      await item.parentDocRef.update({
-        [item.fieldName]: newValue,
-      });
+      await item.parentDocRef.update(new FieldPath(item.fieldName), newValue);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${newValue}`);
       explorerDataProvider.refreshNode(item);
@@ -80,9 +79,7 @@ export async function openFieldCommand(
     }
 
     try {
-      await item.parentDocRef.update({
-        [item.fieldName]: newNum,
-      });
+      await item.parentDocRef.update(new FieldPath(item.fieldName), newNum);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${newNum}`);
       explorerDataProvider.refreshNode(item);
@@ -116,7 +113,7 @@ export async function openFieldCommand(
     }
 
     if (typeChoice.type === "object") {
-      await item.parentDocRef.update({ [item.fieldName]: {} });
+      await item.parentDocRef.update(new FieldPath(item.fieldName), {});
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       explorerDataProvider.refreshNode(item);
       await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
@@ -124,7 +121,7 @@ export async function openFieldCommand(
     }
 
     if (typeChoice.type === "array") {
-      await item.parentDocRef.update({ [item.fieldName]: [] });
+      await item.parentDocRef.update(new FieldPath(item.fieldName), []);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       explorerDataProvider.refreshNode(item);
       await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
@@ -140,7 +137,7 @@ export async function openFieldCommand(
         return;
       }
       const bVal = boolPick.label === "true";
-      await item.parentDocRef.update({ [item.fieldName]: bVal });
+      await item.parentDocRef.update(new FieldPath(item.fieldName), bVal);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${bVal}`);
       explorerDataProvider.refreshNode(item);
@@ -156,7 +153,7 @@ export async function openFieldCommand(
         return;
       }
       const nVal = Number(numInput);
-      await item.parentDocRef.update({ [item.fieldName]: nVal });
+      await item.parentDocRef.update(new FieldPath(item.fieldName), nVal);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${nVal}`);
       explorerDataProvider.refreshNode(item);
@@ -170,7 +167,7 @@ export async function openFieldCommand(
       if (strInput === undefined) {
         return;
       }
-      await item.parentDocRef.update({ [item.fieldName]: strInput });
+      await item.parentDocRef.update(new FieldPath(item.fieldName), strInput);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
       explorerDataProvider.refreshNode(item);
@@ -194,9 +191,7 @@ export async function openFieldCommand(
   }
 
   try {
-    await item.parentDocRef.update({
-      [item.fieldName]: input,
-    });
+    await item.parentDocRef.update(new FieldPath(item.fieldName), input);
     DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
     vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
     explorerDataProvider.refreshNode(item);
@@ -284,10 +279,12 @@ export async function renameFieldCommand(
 
     const existingValue = data[item.fieldName];
 
-    await item.parentDocRef.update({
-      [targetName]: existingValue,
-      [item.fieldName]: FieldValue.delete(),
-    });
+    await item.parentDocRef.update(
+      new FieldPath(targetName),
+      existingValue,
+      new FieldPath(item.fieldName),
+      FieldValue.delete()
+    );
 
     documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
     vscode.window.showInformationMessage(`Renamed '${item.fieldName}' to '${targetName}'`);
@@ -301,21 +298,45 @@ export async function renameFieldCommand(
  * Delete a field atomically with Safe Mode protection.
  */
 export async function deleteFieldCommand(
-  item: DocumentFieldItem,
+  item: DocumentFieldItem | undefined,
   explorerDataProvider: ExplorerDataProvider,
   documentFileSystemProvider: DocumentFileSystemProvider
 ) {
-  if (!item?.parentDocRef || !item?.fieldName) {
+  let targetItem = item;
+
+  // Fallback to active editor if triggered without an item argument (e.g. keybinding or command palette)
+  if (!targetItem?.parentDocRef || !targetItem?.fieldName) {
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor && activeEditor.document.uri.scheme === "ketrik-firestore-studio") {
+      const parsed = documentFileSystemProvider.parseUri(activeEditor.document.uri);
+      if (parsed.connectionId && parsed.docPath && parsed.fieldPath) {
+        try {
+          const firestore = await ConnectionManager.getInstance().getFirestore(parsed.connectionId);
+          const docRef = firestore.doc(parsed.docPath);
+          targetItem = {
+            parentDocRef: docRef,
+            fieldName: parsed.fieldPath,
+            connectionId: parsed.connectionId,
+          } as DocumentFieldItem;
+        } catch {
+          // Ignore fallback resolution failure
+        }
+      }
+    }
+  }
+
+  if (!targetItem?.parentDocRef || !targetItem?.fieldName) {
+    vscode.window.showErrorMessage("No field selected to delete.");
     return;
   }
 
   const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
   const protectSystemKeys = config.get<boolean>("protectSystemKeys", true);
-  const isSystemKey = item.fieldName.startsWith("_");
+  const isSystemKey = targetItem.fieldName.startsWith("_");
 
   const promptText = (protectSystemKeys && isSystemKey)
-    ? `⚠️ Safe Mode Warning: "${item.fieldName}" is a System Envelope or Protocol key. Deleting it may break query filtering or lifecycle rules. Are you sure?`
-    : `Are you sure you want to delete the field "${item.fieldName}" from document "${item.parentDocRef.id}"?`;
+    ? `⚠️ Safe Mode Warning: "${targetItem.fieldName}" is a System Envelope or Protocol key. Deleting it may break query filtering or lifecycle rules. Are you sure?`
+    : `Are you sure you want to delete the field "${targetItem.fieldName}" from document "${targetItem.parentDocRef.id}"?`;
 
   const confirm = await vscode.window.showWarningMessage(
     promptText,
@@ -326,15 +347,159 @@ export async function deleteFieldCommand(
 
   if (confirm === "Delete Field") {
     try {
-      await item.parentDocRef.update({
-        [item.fieldName]: FieldValue.delete(),
-      });
-      documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
-      vscode.window.showInformationMessage(`Field "${item.fieldName}" deleted!`);
-      explorerDataProvider.refreshNode(item);
+      await targetItem.parentDocRef.update(new FieldPath(targetItem.fieldName), FieldValue.delete());
+      documentFileSystemProvider.invalidateAndNotify(targetItem.connectionId, targetItem.parentDocRef.path);
+      vscode.window.showInformationMessage(`Field "${targetItem.fieldName}" deleted!`);
+      explorerDataProvider.refreshNode(targetItem);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to delete field: ${err.message}`);
     }
+  }
+}
+
+/**
+ * Delete multiple fields atomically from a document using a multi-select QuickPick checklist.
+ */
+export async function deleteMultipleFieldsCommand(
+  item: DocumentItem | DocumentFieldItem | vscode.Uri | undefined,
+  explorerDataProvider: ExplorerDataProvider,
+  documentFileSystemProvider: DocumentFileSystemProvider
+) {
+  let docRef: import("firebase-admin/firestore").DocumentReference | undefined;
+  let connectionId: string | undefined;
+  let refreshTarget: any = item;
+
+  if (item instanceof DocumentItem) {
+    docRef = item.reference;
+    connectionId = item.connectionId;
+  } else if (item instanceof DocumentFieldItem) {
+    docRef = item.parentDocRef;
+    connectionId = item.connectionId;
+  } else if (item instanceof vscode.Uri) {
+    const parsed = documentFileSystemProvider.parseUri(item);
+    connectionId = parsed.connectionId;
+    if (parsed.docPath && !parsed.isRules) {
+      const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+      docRef = firestore.doc(parsed.docPath);
+    }
+  } else {
+    // Check active text editor
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor && activeEditor.document.uri.scheme === "ketrik-firestore-studio") {
+      const parsed = documentFileSystemProvider.parseUri(activeEditor.document.uri);
+      connectionId = parsed.connectionId;
+      if (parsed.docPath && !parsed.isRules) {
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        docRef = firestore.doc(parsed.docPath);
+      }
+    }
+  }
+
+  if (!docRef || !connectionId) {
+    vscode.window.showErrorMessage("No document selected. Open a document or select one in Firestore Studio.");
+    return;
+  }
+
+  try {
+    const snapshot = await docRef.get();
+    if (!snapshot.exists) {
+      vscode.window.showErrorMessage(`Document "${docRef.id}" does not exist.`);
+      return;
+    }
+
+    const data = snapshot.data() || {};
+    const keys = Object.keys(data);
+
+    if (keys.length === 0) {
+      vscode.window.showInformationMessage(`Document "${docRef.id}" has no fields to delete.`);
+      return;
+    }
+
+    // Build QuickPick items
+    interface FieldPickItem extends vscode.QuickPickItem {
+      key: string;
+      isSystem: boolean;
+    }
+
+    const items: FieldPickItem[] = keys.map((key) => {
+      const val = data[key];
+      const valType = Array.isArray(val) ? "array" : val === null ? "null" : typeof val;
+      const isProtocol = key.startsWith("__");
+      const isEnvelope = key.startsWith("_") && !isProtocol;
+      const isSystem = isProtocol || isEnvelope;
+
+      let typePreview = valType;
+      if (valType === "object" && val !== null) {
+        typePreview = `{${Object.keys(val).length} keys}`;
+      } else if (valType === "array") {
+        typePreview = `[${val.length}]`;
+      } else if (valType === "string") {
+        typePreview = `"${val.length > 25 ? val.slice(0, 22) + "..." : val}"`;
+      } else {
+        typePreview = String(val);
+      }
+
+      const icon = isProtocol ? "$(shield)" : isEnvelope ? "$(tag)" : "$(symbol-field)";
+      const systemBadge = isProtocol ? " [Protocol]" : isEnvelope ? " [Envelope]" : "";
+
+      return {
+        label: `${icon} ${key}${systemBadge}`,
+        description: `(${typePreview})`,
+        picked: false,
+        key,
+        isSystem,
+      };
+    });
+
+    const selected = await vscode.window.showQuickPick(items, {
+      canPickMany: true,
+      placeHolder: `Select fields to delete from '${docRef.id}' (${keys.length} available)`,
+      title: `Delete Multiple Fields (${docRef.id})`,
+    });
+
+    if (!selected || selected.length === 0) {
+      return;
+    }
+
+    const selectedKeys = selected.map((s) => s.key);
+    const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+    const protectSystemKeys = config.get<boolean>("protectSystemKeys", true);
+    const hasSystemKeys = selected.some((s) => s.isSystem);
+
+    let confirmPrompt = `Are you sure you want to delete ${selectedKeys.length} field(s) (${selectedKeys.slice(0, 5).join(", ")}${selectedKeys.length > 5 ? "..." : ""}) from document "${docRef.id}"?`;
+    if (protectSystemKeys && hasSystemKeys) {
+      const systemKeyNames = selected.filter((s) => s.isSystem).map((s) => s.key).join(", ");
+      confirmPrompt = `⚠️ Safe Mode Warning: You selected System Envelope / Protocol keys (${systemKeyNames}). Deleting them may disrupt lifecycle operations. Proceed with deleting all ${selectedKeys.length} fields?`;
+    }
+
+    const confirm = await vscode.window.showWarningMessage(
+      confirmPrompt,
+      { modal: true },
+      `Delete ${selectedKeys.length} Field${selectedKeys.length > 1 ? "s" : ""}`,
+      "Cancel"
+    );
+
+    if (confirm !== `Delete ${selectedKeys.length} Field${selectedKeys.length > 1 ? "s" : ""}`) {
+      return;
+    }
+
+    // Build atomic update payload
+    const updatePayload: Record<string, any> = {};
+    for (const key of selectedKeys) {
+      updatePayload[key] = FieldValue.delete();
+    }
+
+    await docRef.update(updatePayload);
+    documentFileSystemProvider.invalidateAndNotify(connectionId, docRef.path);
+    vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} field(s) from "${docRef.id}".`);
+
+    if (refreshTarget) {
+      explorerDataProvider.refreshNode(refreshTarget);
+    } else {
+      explorerDataProvider.refresh();
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to delete fields: ${err.message}`);
   }
 }
 
@@ -450,9 +615,7 @@ export async function addFieldCommand(
   }
 
   try {
-    await docRef.update({
-      [fieldName.trim()]: fieldValue,
-    });
+    await docRef.update(new FieldPath(fieldName.trim()), fieldValue);
     if (connectionId) {
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
     }

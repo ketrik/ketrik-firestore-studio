@@ -1,8 +1,10 @@
 import { WhereFilterOp } from "firebase-admin/firestore";
 
+export type ExtendedFilterOp = WhereFilterOp | "starts-with";
+
 export interface QueryClause {
   field: string;
-  op: WhereFilterOp;
+  op: ExtendedFilterOp;
   value: string;
 }
 

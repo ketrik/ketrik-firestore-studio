@@ -1,0 +1,173 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Ketrik Dashboard (DRY Format)",
+  "description": "Compact, declarative schema for authoring dashboards with centralized presets and templates.",
+  "type": "object",
+  "required": ["header", "presets", "groups"],
+  "properties": {
+    "$format": {
+      "type": "string",
+      "const": "ketrik-dashboard-dry-v1",
+      "description": "Format identifier for Ketrik Dashboard DRY format"
+    },
+    "header": {
+      "type": "string",
+      "description": "Dashboard title displayed at the top"
+    },
+    "initData": {
+      "type": "array",
+      "description": "Optional initial data payload"
+    },
+    "presets": {
+      "type": "object",
+      "required": ["styles", "rules", "tableTemplates"],
+      "properties": {
+        "styles": {
+          "type": "object",
+          "description": "Named color styles mapping to CSS properties",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "background": { "type": "string" },
+              "color": { "type": "string" }
+            }
+          }
+        },
+        "rules": {
+          "type": "object",
+          "description": "Named threshold rules evaluated against cell values",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["result"],
+              "properties": {
+                "<=": { "type": "number", "description": "Value <= threshold" },
+                "<": { "type": "number", "description": "Value < threshold" },
+                ">=": { "type": "number", "description": "Value >= threshold" },
+                ">": { "type": "number", "description": "Value > threshold" },
+                "==": { "description": "Value == target" },
+                "!=": { "description": "Value != target" },
+                "between": {
+                  "type": "array",
+                  "items": { "type": "number" },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "[min, max] range (value > min and value < max)"
+                },
+                "result": {
+                  "type": "string",
+                  "description": "Target style name from presets.styles"
+                }
+              }
+            }
+          }
+        },
+        "tableTemplates": {
+          "type": "object",
+          "description": "Reusable table configurations defining column sets, widths, and visuals",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["columns"],
+            "properties": {
+              "density": { "type": "string", "enum": ["comfortable", "compact", "standard"], "default": "comfortable" },
+              "idColumnName": { "type": "string", "default": "Metric" },
+              "pageSize": { "type": "number", "default": 100 },
+              "hideFooter": { "type": "boolean", "default": true },
+              "defaultColumnWidth": { "type": "number", "default": 150 },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id"],
+                  "properties": {
+                    "id": { "type": "string", "description": "Field key in row data" },
+                    "title": { "type": "string", "description": "Header title" },
+                    "width": { "type": "number", "description": "Column width in pixels" },
+                    "align": { "type": "string", "enum": ["center", "left", "right"], "default": "center" },
+                    "format": { "type": "string", "enum": ["currency", "percent", "number", "date"], "default": "number" },
+                    "colorRule": { "type": "string", "description": "Reference to a rule in presets.rules" },
+                    "visual": {
+                      "type": "object",
+                      "properties": {
+                        "type": { "type": "string", "enum": ["sparkline", "info"] },
+                        "config": { "type": "object" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "description": "Grid sections containing widgets",
+      "items": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "header": { "type": "string" },
+          "itemSize": {
+            "type": "object",
+            "properties": {
+              "md": { "type": "number", "minimum": 1, "maximum": 12 },
+              "sm": { "type": "number" },
+              "xs": { "type": "number" }
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["type", "dataKey"],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["table", "areaChart", "chart", "plotly"]
+                },
+                "dataKey": { "type": "string", "description": "Unique key linking widget to data" },
+                "title": { "type": "string" },
+                "subheader": { "type": "string" },
+                "template": { "type": "string", "description": "Template name in presets.tableTemplates" },
+                "size": {
+                  "type": "object",
+                  "properties": {
+                    "md": { "type": "number", "minimum": 1, "maximum": 12 }
+                  }
+                },
+                "formatters": {
+                  "type": "object",
+                  "description": "Per-column data format overrides (e.g. { current: 'currency' })"
+                },
+                "colorRules": {
+                  "type": "object",
+                  "description": "Per-column rule overrides (e.g. { current: 'threshold_0' })"
+                },
+                "height": { "type": "number", "description": "Chart height in px" },
+                "series": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["dataKey"],
+                    "properties": {
+                      "dataKey": { "type": "string" },
+                      "label": { "type": "string" },
+                      "color": { "type": "string" },
+                      "showMark": { "type": "boolean" }
+                    }
+                  }
+                },
+                "xAxisKey": { "type": "string" },
+                "scaleType": { "type": "string", "enum": ["band", "point", "linear"] },
+                "notation": { "type": "string", "enum": ["compact", "standard"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

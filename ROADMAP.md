@@ -11,8 +11,8 @@ timeline
         2026-10-09 : v1.4.0 Deep Delete & Cross-Copy : v1.5.0 Server Query Builder & Dual-Contract Table
         2026-10-10 : v1.7.0 Dual-Prefix Protocol & Modular Architecture
         2026-10-13 : v1.8.0 Security Rules & Auth Table : v1.9.0 User Cloning, Tokens & Force Logout : v1.9.1 Batch Tools, Schemas & Aggregations : v1.9.2 Local Emulator, Collection Groups & UX Polish
+        2026-10-14 : v1.10.0 In-Table Editing Suite, 2-Column Inspector Drawer, Storage Media Preview & Filter.or()
     section Planned
-        Nov 2026 : v1.10.0 Storage Media Preview, Document Links & Filter.or()
         Dec 2026 : v1.11.0 Cloud Functions Triggers, Live Watch & Scripting Shell
         Q1 2027 : v1.12.0 Storage Explorer, Auth Import/Export & Vector Search
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
@@ -37,7 +37,7 @@ timeline
 | **v1.9.0** | Shipped | 2026-10-13 | Cross-environment user cloning (`cloneAuthUser`), custom token minter (`mintCustomToken` / login as user), session revocation (`revokeUserSessions` / force logout), password reset link generator, cascade profile deletion, user avatar photos in table, clean icon-only rule badges |
 | **v1.9.1** | Shipped | 2026-10-13 | Batch operations (`WriteBatch` update/delete), TypeScript contract & Zod generator, CSV/JSON/NDJSON import & export wizard, collection `count()`/`sum()`/`avg()` aggregations, query bookmarks & history, create user dialog & auth security policies |
 | **v1.9.2** | Shipped | 2026-10-13 | Local Firebase Emulator suite, collection group queries, inline table icons, aggregation QuickPick, rule caching |
-| **v1.10.0** | Planned | Nov 2026 | Cloud Storage in-field media preview, DocumentReference jump & preview, disjunctive queries (`Filter.or()`), starts-with filter helper |
+| **v1.10.0** | Shipped | 2026-10-14 | In-table spreadsheet editing suite (in-cell primitives, 2-column Key-Value Property Drawer for Maps/Arrays, atomic `FieldPath` updates), Bulk Field Deletion Checklist (`deleteMultipleFields`), inline hover trash icon (`$(trash)`), Cloud Storage media preview, DocumentReference jump, disjunctive queries (`Filter.or()`), starts-with operator |
 | **v1.11.0** | Planned | Dec 2026 | Cloud Functions trigger AST badging & simulation, live trigger logs filter, JS/TS Admin SDK query shell (`.firestore.ts`), live watch mode (`onSnapshot`), query explain profiler |
 | **v1.12.0** | Planned | Q1 2027 | Dedicated Cloud Storage explorer (buckets/files), drag-and-drop upload to fields, cascade orphan file cleanup, Auth bulk import/export & email links, vector search (kNN) |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer, local offline cache & mocking |
@@ -162,10 +162,23 @@ timeline
 
 ---
 
-### [v1.10.0] — Storage Media Preview, Document Links & Advanced Filters (Target: November 2026)
+### [v1.10.0] — In-Table Editing Suite, Drawer Inspector & Storage Previews (Shipped: 2026-10-14)
 
-*Theme: Rich media inspection, relational graph navigation, and advanced query composition.*
+*Theme: Interactive spreadsheet-like data mutation, 2-column complex object inspector, rich media inspection, and advanced query composition.*
 
+* **In-Table Spreadsheet Editing Suite (Primitives)**:
+  * Direct in-place cell editing for scalar fields (strings, numbers, booleans, timestamps, nulls) via double-click or `Enter`/`F2`.
+  * Keyboard spreadsheet navigation (`Tab`, `Shift+Tab`, `Arrow keys`).
+  * Type-preserving atomic field updates via `docRef.update(new FieldPath(field), value)` with instant UI flash feedback and live virtual filesystem cache invalidation (`invalidateAndNotify`).
+  * Document opening decoupled: clicking the Document ID link or dedicated `📄` action opens the virtual JSON file.
+* **Slide-out Property Inspector Drawer (2-Column Key:Value for Maps & Arrays)**:
+  * Double-clicking or clicking any complex Map or Array cell slides out a focused right-hand drawer (500px wide, zero horizontal scrolling).
+  * **2-Column Property Grid**:
+    * Left column: Property Key (editable) or Array Index `[0]`.
+    * Right column: In-place type-safe input, boolean switches, and sub-object chips.
+    * Row actions: Add Property (`➕`), delete property (`🗑️`).
+  * **Dual Modes**: 1-click toggle between interactive **Property Grid** and **Raw JSON** textarea with real-time bidirectional syncing.
+  * **Escape Hatch (`↗ Open as Table`)**: 1-click jump from the drawer to open the Map/Array in the multi-column `openFieldAsTable` substrate view.
 * **Cloud Storage In-Field Media Preview**:
   * Automatic detection of Storage download URLs (`https://firebasestorage.googleapis.com/...`) and `gs://` paths in table cells and document JSON.
   * Interactive image thumbnails with hover-zoom, audio waveform playback, video preview, and PDF badge.

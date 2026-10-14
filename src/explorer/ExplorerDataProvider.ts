@@ -224,6 +224,25 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           element.connectionId
         );
       }
+      const conn = this._connectionManager.getConnection(element.connectionId);
+      return conn ? new ConnectionTreeItem(conn) : undefined;
+    } else if (element instanceof DocumentFieldItem) {
+      return new DocumentItem(
+        element.parentDocRef.id,
+        element.parentDocRef,
+        element.connectionId
+      );
+    } else if (element instanceof AuthUserItem || element instanceof ShowMoreAuthUsersItem) {
+      return new AuthUsersBranchItem(element.connectionId);
+    } else if (element instanceof ShowMoreItemsItem) {
+      return new CollectionItem(
+        element.reference.id,
+        element.reference,
+        element.connectionId
+      );
+    } else if (element instanceof AuthUsersBranchItem) {
+      const conn = this._connectionManager.getConnection(element.connectionId);
+      return conn ? new ConnectionTreeItem(conn) : undefined;
     }
     return undefined;
   }
@@ -250,6 +269,8 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         ? `doc:${element.connectionId}:${element.reference.path}`
         : element instanceof CollectionItem
         ? `col:${element.connectionId}:${element.reference.path}:${this._paging.get(`${element.connectionId}:${element.reference.path}`) ?? defaultLimit}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.field ?? "id"}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.direction ?? "asc"}`
+        : element instanceof AuthUsersBranchItem
+        ? `auth:${element.connectionId}`
         : undefined
       : "root";
 

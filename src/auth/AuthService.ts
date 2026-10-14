@@ -30,20 +30,20 @@ export class AuthService {
     maxResults = 50,
     pageToken?: string
   ): Promise<{ users: UserRecord[]; pageToken?: string }> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    const result = await auth.listUsers(maxResults, pageToken);
-    return {
-      users: result.users,
-      pageToken: result.pageToken,
-    };
+    return ConnectionManager.getInstance().withAuth(connectionId, async (auth) => {
+      const result = await auth.listUsers(maxResults, pageToken);
+      return {
+        users: result.users,
+        pageToken: result.pageToken,
+      };
+    });
   }
 
   /**
    * Get a single user by UID.
    */
   public async getUser(connectionId: string, uid: string): Promise<UserRecord> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    return auth.getUser(uid);
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) => auth.getUser(uid));
   }
 
   /**
@@ -54,8 +54,9 @@ export class AuthService {
     uid: string,
     customClaims: Record<string, any> | null
   ): Promise<void> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    await auth.setCustomUserClaims(uid, customClaims);
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.setCustomUserClaims(uid, customClaims)
+    );
   }
 
   /**
@@ -66,24 +67,25 @@ export class AuthService {
     uid: string,
     properties: import("firebase-admin/auth").UpdateRequest
   ): Promise<UserRecord> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    return auth.updateUser(uid, properties);
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.updateUser(uid, properties)
+    );
   }
 
   /**
    * Delete an existing user.
    */
   public async deleteUser(connectionId: string, uid: string): Promise<void> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    await auth.deleteUser(uid);
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) => auth.deleteUser(uid));
   }
 
   /**
    * Generate a password reset link for a user's email.
    */
   public async generatePasswordResetLink(connectionId: string, email: string): Promise<string> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    return auth.generatePasswordResetLink(email);
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.generatePasswordResetLink(email)
+    );
   }
 
   /**
@@ -94,16 +96,18 @@ export class AuthService {
     uid: string,
     developerClaims?: Record<string, any>
   ): Promise<string> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    return auth.createCustomToken(uid, developerClaims);
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.createCustomToken(uid, developerClaims)
+    );
   }
 
   /**
    * Revoke all active refresh tokens for a user (forces logout across devices).
    */
   public async revokeRefreshTokens(connectionId: string, uid: string): Promise<void> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    await auth.revokeRefreshTokens(uid);
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.revokeRefreshTokens(uid)
+    );
   }
 
   /**
@@ -125,26 +129,30 @@ export class AuthService {
     profileCloned: boolean;
     resetLink?: string;
   }> {
-    const sourceAuth = await ConnectionManager.getInstance().getAuth(sourceConnectionId);
-    const targetAuth = await ConnectionManager.getInstance().getAuth(targetConnectionId);
-    const sourceUser = await sourceAuth.getUser(uid);
+    const sourceUser = await this.getUser(sourceConnectionId, uid);
 
     // Create user in target Auth instance
     let targetUser: UserRecord;
     try {
-      targetUser = await targetAuth.createUser({
-        uid: sourceUser.uid,
-        email: sourceUser.email,
-        emailVerified: sourceUser.emailVerified,
-        displayName: sourceUser.displayName,
-        photoURL: sourceUser.photoURL,
-        phoneNumber: sourceUser.phoneNumber,
-        disabled: sourceUser.disabled,
-      });
+      targetUser = await this.createUser(
+        targetConnectionId,
+        {
+          uid: sourceUser.uid,
+          email: sourceUser.email,
+          emailVerified: sourceUser.emailVerified,
+          displayName: sourceUser.displayName,
+          photoURL: sourceUser.photoURL,
+          phoneNumber: sourceUser.phoneNumber,
+          disabled: sourceUser.disabled,
+        },
+        sourceUser.customClaims && Object.keys(sourceUser.customClaims).length > 0
+          ? sourceUser.customClaims
+          : undefined
+      );
     } catch (err: any) {
       if (err.code === "auth/uid-already-exists" || err.code === "auth/email-already-exists") {
         // User already exists in target; update properties
-        targetUser = await targetAuth.updateUser(sourceUser.uid, {
+        targetUser = await this.updateUser(targetConnectionId, sourceUser.uid, {
           email: sourceUser.email,
           emailVerified: sourceUser.emailVerified,
           displayName: sourceUser.displayName,
@@ -152,14 +160,12 @@ export class AuthService {
           phoneNumber: sourceUser.phoneNumber,
           disabled: sourceUser.disabled,
         });
+        if (sourceUser.customClaims && Object.keys(sourceUser.customClaims).length > 0) {
+          await this.setCustomUserClaims(targetConnectionId, sourceUser.uid, sourceUser.customClaims);
+        }
       } else {
         throw err;
       }
-    }
-
-    // Copy custom claims
-    if (sourceUser.customClaims && Object.keys(sourceUser.customClaims).length > 0) {
-      await targetAuth.setCustomUserClaims(sourceUser.uid, sourceUser.customClaims);
     }
 
     // Optionally clone Firestore profile document
@@ -183,7 +189,7 @@ export class AuthService {
     let resetLink: string | undefined = undefined;
     if (options.generateResetLink && sourceUser.email) {
       try {
-        resetLink = await targetAuth.generatePasswordResetLink(sourceUser.email);
+        resetLink = await this.generatePasswordResetLink(targetConnectionId, sourceUser.email);
       } catch {
         // Non-critical, ignore if reset link generation fails
       }
@@ -329,20 +335,22 @@ export class AuthService {
     properties: import("firebase-admin/auth").CreateRequest,
     customClaims?: Record<string, any>
   ): Promise<UserRecord> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    const user = await auth.createUser(properties);
-    if (customClaims && Object.keys(customClaims).length > 0) {
-      await auth.setCustomUserClaims(user.uid, customClaims);
-    }
-    return user;
+    return ConnectionManager.getInstance().withAuth(connectionId, async (auth) => {
+      const user = await auth.createUser(properties);
+      if (customClaims && Object.keys(customClaims).length > 0) {
+        await auth.setCustomUserClaims(user.uid, customClaims);
+      }
+      return user;
+    });
   }
 
   /**
    * Get project auth configuration (authorized domains, etc.).
    */
   public async getProjectConfig(connectionId: string): Promise<import("firebase-admin/auth").ProjectConfig> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    return auth.projectConfigManager().getProjectConfig();
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.projectConfigManager().getProjectConfig()
+    );
   }
 
   /**
@@ -352,7 +360,8 @@ export class AuthService {
     connectionId: string,
     config: import("firebase-admin/auth").UpdateProjectConfigRequest
   ): Promise<import("firebase-admin/auth").ProjectConfig> {
-    const auth = await ConnectionManager.getInstance().getAuth(connectionId);
-    return auth.projectConfigManager().updateProjectConfig(config);
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.projectConfigManager().updateProjectConfig(config)
+    );
   }
 }

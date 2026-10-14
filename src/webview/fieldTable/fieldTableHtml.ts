@@ -16,6 +16,7 @@ export function getFieldTableHtml(params: {
     <html lang="en">
     <head>
       <meta charset="UTF-8">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:; font-src data:;">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>${panelTitle}</title>
       <style>

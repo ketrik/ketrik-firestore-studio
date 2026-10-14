@@ -6,7 +6,7 @@ import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentClipboard } from "../services/DocumentClipboard";
 import { TemplateService } from "../services/TemplateService";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldPath, FieldValue } from "firebase-admin/firestore";
 
 /**
  * Direct 1-read document ID lookup.
@@ -306,16 +306,18 @@ export async function pasteDocumentCommand(
     try {
       const key = entryKey?.trim() || clipboard.sourceDocId;
       if (isArray) {
-        await item.parentDocRef.update({
-          [item.fieldName]: FieldValue.arrayUnion(clipboard.data),
-        });
+        await item.parentDocRef.update(
+          new FieldPath(item.fieldName),
+          FieldValue.arrayUnion(clipboard.data)
+        );
         vscode.window.showInformationMessage(
           `Appended document to Array "${item.fieldName}"!`
         );
       } else {
-        await item.parentDocRef.update({
-          [`${item.fieldName}.${key}`]: clipboard.data,
-        });
+        await item.parentDocRef.update(
+          new FieldPath(item.fieldName, key),
+          clipboard.data
+        );
         vscode.window.showInformationMessage(
           `Pasted document as key "${key}" into Map "${item.fieldName}"!`
         );

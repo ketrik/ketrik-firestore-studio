@@ -2,6 +2,41 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.10.0] - 2026-10-14
+
+### Added
+- **In-Table Spreadsheet Editing Suite (Primitives)**:
+  * Direct in-place cell editing for scalar fields (strings, numbers, booleans, timestamps, nulls) via double-click or `Enter`/`F2`.
+  * Keyboard spreadsheet navigation (`Tab`, `Shift+Tab`, `Arrow keys`).
+  * Type-preserving atomic field updates via `docRef.update(new FieldPath(field), value)` with instant UI flash feedback and live virtual filesystem cache invalidation (`DocumentFileSystemProvider.invalidateAndNotify`).
+  * Document opening decoupled: clicking the Document ID link or dedicated `📄` action opens the virtual JSON file.
+- **Slide-out Property Inspector Drawer (2-Column Key:Value for Maps & Arrays)**:
+  * Double-clicking or clicking any complex Map or Array cell slides out a focused right-hand drawer (500px wide, zero horizontal scrolling).
+  * **2-Column Property Grid**:
+    * Left column: Property Key (editable) or Array Index `[0]`.
+    * Right column: In-place type-safe input, boolean switches, and sub-object chips.
+    * Row actions: Add Property (`➕`), delete property (`🗑️`).
+  * **Dual Modes**: 1-click toggle between interactive **Property Grid** and **Raw JSON** textarea with real-time bidirectional syncing.
+  * **Escape Hatch (`↗ Open as Table`)**: 1-click jump from the drawer to open the Map/Array in the multi-column `openFieldAsTable` substrate view.
+- **Cloud Storage In-Field Media Preview**:
+  * Automatic detection of Storage download URLs (`firebasestorage.googleapis.com`, `storage.googleapis.com`) and `gs://` paths in table cells.
+  * Interactive image thumbnails with instant hover-zoom, audio and video indicator chips, and PDF document badges.
+- **DocumentReference Interactive Navigation**:
+  * Visual link chips for `[Ref: path]` fields in collection table cells.
+  * Clicking reference chips jumps directly to open the referenced Firestore document in the editor.
+- **Disjunctive Queries (`Filter.or()` & `Filter.and()`)**:
+  * Added Match Mode selector in Server-Side Query Builder (`Match: ALL (AND)` vs. `Match: ANY (OR)`).
+  * Automatically compiles to Firestore Admin SDK `Filter.or(...)` and `Filter.and(...)`.
+- **Bulk Field Deletion Checklist (`Delete Multiple Fields...`)**:
+  * Added `ketrik-firestore-studio.deleteMultipleFields` command accessible from document context menu, field context menu, and active JSON editor tab toolbar (`editor/title`).
+  * Interactive multi-select QuickPick checklist showing all top-level document fields with live type badges, value previews, and protocol/envelope tags.
+  * Atomic multi-key batch deletion executed in a single Firestore `docRef.update({ [field]: FieldValue.delete() })` call.
+  * Full Safe Mode awareness warning if any System Envelope (`_`) or Protocol (`__`) fields are selected.
+  * Live cache invalidation (`invalidateAndNotify`) and explorer node refresh to instantly reflect deletions across all open tabs.
+- **Inline Field Deletion & Keyboard Shortcuts**:
+  * Inline hover trash icon (`$(trash)`) directly on tree field items in the sidebar explorer for 1-click single-field deletion.
+  * Tree view keyboard shortcuts: `Delete` / `Backspace` for single field deletion, and `Shift+Delete` / `Shift+Backspace` for bulk field deletion.
+
 ## [1.9.2] - 2026-10-13
 
 ### Added

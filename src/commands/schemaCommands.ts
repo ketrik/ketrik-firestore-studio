@@ -271,7 +271,6 @@ export async function generateSchemaCommand(item?: CollectionItem | DocumentItem
   let collectionPath: string;
   let collectionName: string;
   let isSingleDoc = false;
-  let singleDocId = "";
 
   if (item instanceof CollectionItem) {
     connectionId = item.connectionId;
@@ -282,7 +281,6 @@ export async function generateSchemaCommand(item?: CollectionItem | DocumentItem
     collectionPath = item.reference.parent.path;
     collectionName = item.reference.parent.id;
     isSingleDoc = true;
-    singleDocId = item.id || item.reference.id;
   } else {
     vscode.window.showErrorMessage("Please select a Firestore collection or document to generate schemas.");
     return;
@@ -330,8 +328,8 @@ export async function generateSchemaCommand(item?: CollectionItem | DocumentItem
     async () => {
       try {
         const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-        if (isSingleDoc) {
-          const snapshot = await firestore.collection(collectionPath).doc(singleDocId).get();
+        if (isSingleDoc && item instanceof DocumentItem) {
+          const snapshot = await item.reference.get();
           if (snapshot.exists && snapshot.data()) {
             sampleDocs.push(snapshot.data()!);
           }

@@ -23,6 +23,7 @@ import {
   openFieldCommand,
   renameFieldCommand,
   deleteFieldCommand,
+  deleteMultipleFieldsCommand,
   addFieldCommand,
 } from "./commands/fieldCommands";
 import {
@@ -58,6 +59,7 @@ import {
 } from "./auth/authCommands";
 import { generateSchemaCommand } from "./commands/schemaCommands";
 import { exportCollectionCommand, importCollectionCommand } from "./commands/importExportCommands";
+import { convertDashboardFormatCommand } from "./commands/dashboardCommands";
 import {
   startEmulatorCommand,
   stopEmulatorCommand,
@@ -370,8 +372,13 @@ export async function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.deleteField",
-      (item: DocumentFieldItem) =>
+      (item?: DocumentFieldItem) =>
         deleteFieldCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.deleteMultipleFields",
+      (item?: any) =>
+        deleteMultipleFieldsCommand(item, explorerDataProvider, documentFileSystemProvider)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.addField",
@@ -397,6 +404,10 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.purgeCollectionTombstones",
       (item: CollectionItem) =>
         purgeCollectionTombstonesCommand(item, explorerDataProvider, documentFileSystemProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.convertDashboardFormat",
+      convertDashboardFormatCommand
     )
   );
 

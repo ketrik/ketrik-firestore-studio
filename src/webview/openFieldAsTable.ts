@@ -40,9 +40,13 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         let rowId = String(index);
 
         if (entry !== null && typeof entry === "object") {
-          rowObj = { ...entry };
-          if ("id" in entry && (typeof entry.id === "string" || typeof entry.id === "number")) {
-            rowId = String(entry.id);
+          if (Buffer.isBuffer(entry) || entry instanceof Uint8Array) {
+            rowObj = { value: `[Blob: ${entry.length} bytes]` };
+          } else {
+            rowObj = { ...entry };
+            if ("id" in entry && (typeof entry.id === "string" || typeof entry.id === "number")) {
+              rowId = String(entry.id);
+            }
           }
         } else {
           rowObj = { value: entry };
@@ -64,7 +68,11 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
       Object.entries(data).forEach(([key, val]) => {
         let rowObj: any = {};
         if (val !== null && typeof val === "object" && !Array.isArray(val)) {
-          rowObj = { ...val };
+          if (Buffer.isBuffer(val) || val instanceof Uint8Array) {
+            rowObj = { value: `[Blob: ${val.length} bytes]` };
+          } else {
+            rowObj = { ...val };
+          }
         } else {
           rowObj = { value: val };
         }

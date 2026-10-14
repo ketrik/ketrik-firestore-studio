@@ -125,6 +125,311 @@ export function getCollectionTableStyles(): string {
       text-decoration: underline;
       background: rgba(55, 148, 255, 0.1);
     }
+    .doc-open-btn {
+      opacity: 0.5;
+      padding: 2px 4px;
+      border-radius: 3px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      transition: opacity 0.15s ease, background 0.15s ease;
+      margin-left: auto;
+    }
+    .doc-open-btn:hover {
+      opacity: 1;
+      background: rgba(128, 128, 128, 0.2);
+    }
+    td.data-cell {
+      position: relative;
+      cursor: pointer;
+      user-select: text;
+    }
+    td.data-cell:hover {
+      outline: 1px dashed var(--vscode-focusBorder, rgba(0, 122, 204, 0.5));
+      outline-offset: -1px;
+    }
+    td.data-cell.selected {
+      outline: 2px solid var(--vscode-focusBorder, #007acc) !important;
+      outline-offset: -2px;
+    }
+    td.data-cell.editing {
+      padding: 2px 4px !important;
+      outline: 2px solid var(--vscode-focusBorder, #007acc) !important;
+      outline-offset: -2px;
+      background: var(--vscode-input-background) !important;
+    }
+    .cell-input {
+      width: 100%;
+      height: 100%;
+      border: none !important;
+      outline: none !important;
+      padding: 4px 6px !important;
+      font-size: inherit;
+      font-family: inherit;
+      background: transparent !important;
+      color: var(--vscode-input-foreground) !important;
+      box-shadow: none !important;
+    }
+    .cell-type-badge {
+      font-size: 0.72em;
+      opacity: 0.5;
+      padding: 1px 3px;
+      border-radius: 2px;
+      margin-right: 4px;
+      font-family: var(--mono-font);
+      background: rgba(128, 128, 128, 0.15);
+      user-select: none;
+    }
+    .cell-flash-success {
+      animation: flash-green 1.4s ease-out;
+    }
+    @keyframes flash-green {
+      0% { background-color: rgba(46, 204, 113, 0.5) !important; }
+      100% { background-color: transparent; }
+    }
+    .cell-flash-error {
+      animation: flash-red 1.4s ease-out;
+    }
+    @keyframes flash-red {
+      0% { background-color: rgba(231, 76, 60, 0.5) !important; }
+      100% { background-color: transparent; }
+    }
+
+    /* ── Storage Media Previews & DocumentReference Links ── */
+    .storage-media-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(255, 152, 0, 0.12);
+      border: 1px solid rgba(255, 152, 0, 0.35);
+      color: var(--vscode-editor-foreground);
+      font-size: 0.86em;
+      position: relative;
+    }
+    .storage-thumb {
+      width: 22px;
+      height: 22px;
+      object-fit: cover;
+      border-radius: 3px;
+      cursor: zoom-in;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    .storage-thumb:hover {
+      transform: scale(3.5);
+      transform-origin: left center;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+      z-index: 50;
+      transition: transform 0.2s ease;
+    }
+    .doc-ref-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(55, 148, 255, 0.12);
+      border: 1px solid rgba(55, 148, 255, 0.35);
+      color: var(--vscode-textLink-foreground, #3794ff);
+      cursor: pointer;
+      font-family: var(--mono-font);
+      font-size: 0.86em;
+      text-decoration: none;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .doc-ref-link:hover {
+      background: rgba(55, 148, 255, 0.25);
+      border-color: var(--vscode-textLink-foreground, #3794ff);
+      text-decoration: underline;
+    }
+
+    /* ── Slide-out Property Inspector Drawer ── */
+    .drawer-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 99;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .drawer-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .property-drawer {
+      position: fixed;
+      top: 0;
+      right: -520px;
+      width: 500px;
+      max-width: 90vw;
+      height: 100vh;
+      background: var(--vscode-editor-background);
+      border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.3)));
+      box-shadow: -4px 0 16px rgba(0, 0, 0, 0.3);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      transition: right 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .property-drawer.open {
+      right: 0;
+    }
+    .drawer-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--vscode-editorGroupHeader-tabsBackground, rgba(128, 128, 128, 0.05));
+    }
+    .drawer-title-area {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .drawer-title {
+      font-size: 1.1em;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .drawer-subtitle {
+      font-size: 0.82em;
+      color: var(--vscode-descriptionForeground);
+      font-family: var(--mono-font);
+      word-break: break-all;
+    }
+    .drawer-close-btn {
+      background: transparent !important;
+      border: none !important;
+      font-size: 1.2em;
+      cursor: pointer;
+      color: var(--vscode-editor-foreground);
+      opacity: 0.6;
+      padding: 4px 8px !important;
+    }
+    .drawer-close-btn:hover {
+      opacity: 1;
+      background: rgba(128, 128, 128, 0.2) !important;
+    }
+    .drawer-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+      padding: 0 16px;
+      background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.04));
+    }
+    .drawer-tab {
+      padding: 8px 14px;
+      font-size: 0.88em;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      opacity: 0.7;
+      user-select: none;
+    }
+    .drawer-tab.active {
+      opacity: 1;
+      font-weight: 600;
+      border-bottom-color: var(--vscode-focusBorder, #007acc);
+      color: var(--vscode-textLink-foreground, #3794ff);
+    }
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+    }
+    .kv-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+    }
+    .kv-table th {
+      font-size: 0.78em;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+    }
+    .kv-row td {
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(128, 128, 128, 0.1);
+      vertical-align: middle;
+      font-size: 0.9em;
+    }
+    .kv-key-cell {
+      width: 38%;
+      font-family: var(--mono-font);
+      font-weight: 500;
+    }
+    .kv-key-input {
+      width: 100%;
+      padding: 3px 6px;
+      font-size: 0.92em;
+      font-family: var(--mono-font);
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.2));
+      color: var(--vscode-input-foreground);
+      border-radius: 3px;
+    }
+    .kv-val-cell {
+      width: 52%;
+    }
+    .kv-val-input {
+      width: 100%;
+      padding: 4px 6px;
+      font-size: 0.92em;
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.2));
+      color: var(--vscode-input-foreground);
+      border-radius: 3px;
+    }
+    .kv-act-cell {
+      width: 10%;
+      text-align: right;
+    }
+    .kv-del-btn {
+      opacity: 0.4;
+      cursor: pointer;
+      background: transparent !important;
+      border: none !important;
+      padding: 2px 4px !important;
+      font-size: 0.95em;
+    }
+    .kv-del-btn:hover {
+      opacity: 1;
+      color: #e74c3c;
+    }
+    .drawer-raw-json {
+      width: 100%;
+      height: 100%;
+      min-height: 380px;
+      font-family: var(--mono-font);
+      font-size: 0.9em;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.3));
+      border-radius: 4px;
+      padding: 10px;
+      resize: vertical;
+      line-height: 1.4;
+      box-sizing: border-box;
+    }
+    .drawer-footer {
+      padding: 14px 20px;
+      border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+      background: var(--vscode-editorGroupHeader-tabsBackground, rgba(128, 128, 128, 0.05));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
   `;
 }
 
@@ -137,6 +442,7 @@ export function getCollectionTableHtml(
     <html lang="en">
     <head>
       <meta charset="UTF-8">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:; font-src data:;">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>${isCollectionGroup ? "Collection Group" : "Collection"}: ${item.collectionId}</title>
       <style>
@@ -227,6 +533,10 @@ export function getCollectionTableHtml(
             <select id="bookmarksDropdown" style="font-size:0.82em; padding:3px 8px; max-width:140px;">
               <option value="">Saved Queries...</option>
             </select>
+            <select id="queryMatchMode" style="font-size:0.82em; padding:3px 8px; font-weight:600;" title="Logical match condition between clauses">
+              <option value="and">Match: ALL (AND)</option>
+              <option value="or">Match: ANY (OR)</option>
+            </select>
             <button id="addClauseBtn" class="secondary icon-btn">+ Add Clause</button>
             <button id="runQueryBtn">Run Query</button>
             <button id="resetQueryBtn" class="secondary">Reset</button>
@@ -249,7 +559,7 @@ export function getCollectionTableHtml(
             — (Server Query Active)
           </span>
         </div>
-        <div>Click any row to open and edit in VS Code</div>
+        <div>💡 Click Doc ID to view JSON • Double-click cell to edit</div>
       </div>
 
       <div id="batchToolbar" class="batch-toolbar" style="display:none;">
@@ -288,6 +598,52 @@ export function getCollectionTableHtml(
 
       <div class="actions">
         <button id="loadMoreBtn" style="display:none;">Load More Documents</button>
+      </div>
+
+      <!-- Slide-out Property Inspector Drawer -->
+      <div id="drawerBackdrop" class="drawer-backdrop"></div>
+      <div id="propertyDrawer" class="property-drawer">
+        <div class="drawer-header">
+          <div class="drawer-title-area">
+            <div class="drawer-title">
+              <span id="drawerTypeIcon">📦</span>
+              <span id="drawerFieldTitle">Field Inspector</span>
+            </div>
+            <div id="drawerDocPath" class="drawer-subtitle"></div>
+          </div>
+          <button id="drawerCloseBtn" class="drawer-close-btn" title="Close Drawer (Escape)">✕</button>
+        </div>
+        <div class="drawer-tabs">
+          <div id="tabGrid" class="drawer-tab active">Property Grid</div>
+          <div id="tabJson" class="drawer-tab">Raw JSON</div>
+        </div>
+        <div id="drawerBodyGrid" class="drawer-body">
+          <table class="kv-table">
+            <thead>
+              <tr>
+                <th style="width:38%;">Key / Index</th>
+                <th style="width:52%;">Value</th>
+                <th style="width:10%;"></th>
+              </tr>
+            </thead>
+            <tbody id="kvTableBody"></tbody>
+          </table>
+          <button id="kvAddPropertyBtn" class="secondary" style="font-size:0.85em; padding:4px 10px;">
+            <span>➕</span> Add Property
+          </button>
+        </div>
+        <div id="drawerBodyJson" class="drawer-body" style="display:none;">
+          <textarea id="drawerRawJsonInput" class="drawer-raw-json" spellcheck="false"></textarea>
+        </div>
+        <div class="drawer-footer">
+          <button id="drawerOpenAsTableBtn" class="secondary" title="Open this Map or Array in dedicated multi-column table">
+            <span>↗</span> Open as Table
+          </button>
+          <div style="display:flex; gap:8px;">
+            <button id="drawerCancelBtn" class="secondary">Cancel</button>
+            <button id="drawerSaveBtn">Save Changes</button>
+          </div>
+        </div>
       </div>
 
       <script>
@@ -418,12 +774,51 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
               return '<span class="chip" title="' + escapeHtml(date.toISOString()) + '">🕒 ' + escapeHtml(date.toLocaleString()) + '</span>';
             } catch (e) {}
           }
-          return '<span class="chip">' + escapeHtml(JSON.stringify(value)) + '</span>';
+          return '<span class="chip" title="Click to view/edit in inspector">' + escapeHtml(JSON.stringify(value)) + '</span>';
         }
         if (typeof value === "boolean") {
           return '<span class="chip" style="font-weight:600;">' + (value ? 'true' : 'false') + '</span>';
         }
-        return escapeHtml(String(value));
+
+        const strVal = String(value);
+
+        // 1. DocumentReference detection: [Ref: users/abc]
+        if (strVal.startsWith('[Ref: ') && strVal.endsWith(']')) {
+          const refPath = strVal.slice(6, -1);
+          return '<span class="doc-ref-link" data-ref="' + escapeHtml(refPath) + '" title="Click to open referenced document: ' + escapeHtml(refPath) + '">' +
+            '🔗 <b>' + escapeHtml(refPath) + '</b></span>';
+        }
+
+        // 2. Cloud Storage media URL / gs:// detection
+        const isStorageHttp = strVal.startsWith('https://firebasestorage.googleapis.com/') || strVal.startsWith('https://storage.googleapis.com/');
+        const isGsPath = strVal.startsWith('gs://');
+
+        if (isStorageHttp || isGsPath) {
+          const lower = strVal.toLowerCase();
+          const isImg = lower.includes('.jpg') || lower.includes('.jpeg') || lower.includes('.png') || lower.includes('.webp') || lower.includes('.gif') || lower.includes('.svg');
+          const isAudio = lower.includes('.mp3') || lower.includes('.wav') || lower.includes('.m4a') || lower.includes('.ogg');
+          const isVideo = lower.includes('.mp4') || lower.includes('.webm') || lower.includes('.mov');
+          const isPdf = lower.includes('.pdf');
+
+          if (isImg && isStorageHttp) {
+            return '<span class="storage-media-chip" title="' + escapeHtml(strVal) + '">' +
+              '<img src="' + escapeHtml(strVal) + '" class="storage-thumb" alt="media" loading="lazy" />' +
+              '<span>' + escapeHtml(strVal.split('?')[0].split('/').pop() || 'image') + '</span>' +
+              '</span>';
+          }
+          if (isAudio) {
+            return '<span class="storage-media-chip" title="' + escapeHtml(strVal) + '">🎵 Audio (' + escapeHtml(strVal.split('?')[0].split('/').pop() || '') + ')</span>';
+          }
+          if (isVideo) {
+            return '<span class="storage-media-chip" title="' + escapeHtml(strVal) + '">🎬 Video (' + escapeHtml(strVal.split('?')[0].split('/').pop() || '') + ')</span>';
+          }
+          if (isPdf) {
+            return '<span class="storage-media-chip" title="' + escapeHtml(strVal) + '">📑 PDF Document</span>';
+          }
+          return '<span class="storage-media-chip" title="' + escapeHtml(strVal) + '">☁️ ' + escapeHtml(strVal.split('?')[0].split('/').pop() || strVal) + '</span>';
+        }
+
+        return escapeHtml(strVal);
       }
 
       function renderRows(docs, headers) {
@@ -439,7 +834,9 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
 
           const idCell = '<td class="sticky-col"><div class="doc-id-cell">' +
             '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1h8l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm7 1v3h3L11 2z"/></svg>' +
-            '<span>' + escapeHtml(docId) + '</span>' + pillHtml + '</div></td>';
+            '<span class="doc-id-link" title="Click to view raw JSON document in editor">' + escapeHtml(docId) + '</span>' + pillHtml +
+            '<span class="doc-open-btn" title="Open JSON document">📄</span>' +
+            '</div></td>';
 
           const parentCell = isGroup
             ? '<td>' + (doc.__parentPath
@@ -450,8 +847,18 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           const dataCells = headers.map(h => {
             const isProto = h.startsWith('__');
             const isEnv = h.startsWith('_') && !isProto;
-            const tdCls = isProto ? ' class="col-proto"' : isEnv ? ' class="col-env"' : '';
-            return '<td' + tdCls + '>' + formatCell(doc[h]) + '</td>';
+            const tdCls = isProto ? ' class="col-proto data-cell"' : isEnv ? ' class="col-env data-cell"' : ' class="data-cell"';
+            const rawVal = doc[h];
+            let valType = "string";
+            if (rawVal === null || rawVal === undefined) valType = "null";
+            else if (typeof rawVal === "boolean") valType = "boolean";
+            else if (typeof rawVal === "number") valType = "number";
+            else if (typeof rawVal === "object") {
+              if (rawVal._seconds !== undefined && rawVal._nanoseconds !== undefined) valType = "timestamp";
+              else if (Array.isArray(rawVal)) valType = "array";
+              else valType = "map";
+            }
+            return '<td' + tdCls + ' data-field="' + escapeHtml(h) + '" data-type="' + valType + '">' + formatCell(rawVal) + '</td>';
           }).join('');
 
           return '<tr data-path="' + escapeHtml(doc.__path || '') + '" data-id="' + escapeHtml(docId) + '">' + selectCell + idCell + parentCell + dataCells + '</tr>';
@@ -579,7 +986,8 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           { val: 'array-contains', label: 'array-contains' },
           { val: 'array-contains-any', label: 'array-contains-any' },
           { val: 'in', label: 'in (Match any in array)' },
-          { val: 'not-in', label: 'not-in' }
+          { val: 'not-in', label: 'not-in' },
+          { val: 'starts-with', label: 'starts-with (Prefix helper)' }
         ];
         ops.forEach(o => {
           const opt = document.createElement('option');
@@ -851,6 +1259,43 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           document.getElementById('clearSearchBtn').style.display = isServerQueryMode ? '' : 'none';
           updateEmptyState(lastDocs.length, isServerQueryMode ? "No documents match the specified where clauses." : undefined);
         }
+
+        if (msg.type === 'fieldUpdated') {
+          const { docPath, field, value } = msg;
+          const doc = allLoadedDocs.find(d => d.__path === docPath);
+          if (doc) {
+            doc[field] = value;
+          }
+          const lastD = lastDocs.find(d => d.__path === docPath);
+          if (lastD) {
+            lastD[field] = value;
+          }
+          const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
+          if (tr) {
+            const td = tr.querySelector('td.data-cell[data-field="' + CSS.escape(field) + '"]');
+            if (td) {
+              td.classList.remove('editing');
+              td.innerHTML = formatCell(value);
+              td.classList.add('cell-flash-success');
+              setTimeout(() => td.classList.remove('cell-flash-success'), 1400);
+            }
+          }
+        }
+
+        if (msg.type === 'fieldUpdateFailed') {
+          const { docPath, field } = msg;
+          const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
+          if (tr) {
+            const td = tr.querySelector('td.data-cell[data-field="' + CSS.escape(field) + '"]');
+            if (td) {
+              td.classList.remove('editing');
+              const doc = allLoadedDocs.find(d => d.__path === docPath);
+              td.innerHTML = formatCell(doc ? doc[field] : null);
+              td.classList.add('cell-flash-error');
+              setTimeout(() => td.classList.remove('cell-flash-error'), 1400);
+            }
+          }
+        }
       });
 
       // ── button handlers ───────────────────────────────────────────
@@ -926,10 +1371,6 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           value: r.querySelector('.clause-val').value.trim(),
         })).filter(c => c.field !== '');
 
-        if (clauses.length === 0) {
-          alert('Add at least one query clause before bookmarking.');
-          return;
-        }
         vscode.postMessage({ command: 'promptSaveBookmark', clauses });
       };
 
@@ -1025,12 +1466,15 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         if (clauses.length === 0) {
           return;
         }
-        vscode.postMessage({ command: 'runServerQuery', clauses });
+        const matchMode = document.getElementById('queryMatchMode') ? document.getElementById('queryMatchMode').value : 'and';
+        vscode.postMessage({ command: 'runServerQuery', clauses, matchMode });
       };
 
       document.getElementById('resetQueryBtn').onclick = function() {
         document.getElementById('clauseList').innerHTML = '';
         createClauseRow();
+        const matchModeEl = document.getElementById('queryMatchMode');
+        if (matchModeEl) matchModeEl.value = 'and';
         vscode.postMessage({ command: 'resetServerQuery' });
       };
 
@@ -1077,15 +1521,427 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         }
       };
 
-      document.getElementById('loadMoreBtn').onclick = function() {
-        this.disabled = true;
-        vscode.postMessage({ command: 'loadMore' });
+      // ── Slide-out Property Inspector Drawer Logic ──────────────────────
+      let drawerDocPath = null;
+      let drawerField = null;
+      let drawerType = null;
+      let drawerCurrentVal = null;
+      let drawerActiveTab = 'grid'; // 'grid' | 'json'
+
+      function openComplexDrawer(docPath, field, type) {
+        drawerDocPath = docPath;
+        drawerField = field;
+        drawerType = type;
+
+        const doc = allLoadedDocs.find(d => d.__path === docPath);
+        drawerCurrentVal = doc && doc[field] !== undefined ? JSON.parse(JSON.stringify(doc[field])) : (type === 'array' ? [] : {});
+
+        document.getElementById('drawerDocPath').textContent = docPath + ' → ' + field;
+        document.getElementById('drawerFieldTitle').textContent = field + ' (' + (type === 'array' ? 'Array' : 'Map') + ')';
+        document.getElementById('drawerTypeIcon').textContent = type === 'array' ? '📑' : '📦';
+
+        // Reset to Grid tab
+        switchDrawerTab('grid');
+        renderDrawerGrid();
+
+        document.getElementById('drawerBackdrop').classList.add('open');
+        document.getElementById('propertyDrawer').classList.add('open');
+      }
+
+      function closeComplexDrawer() {
+        document.getElementById('drawerBackdrop').classList.remove('open');
+        document.getElementById('propertyDrawer').classList.remove('open');
+        drawerDocPath = null;
+        drawerField = null;
+        drawerType = null;
+        drawerCurrentVal = null;
+      }
+
+      function switchDrawerTab(tab) {
+        drawerActiveTab = tab;
+        const tabGrid = document.getElementById('tabGrid');
+        const tabJson = document.getElementById('tabJson');
+        const bodyGrid = document.getElementById('drawerBodyGrid');
+        const bodyJson = document.getElementById('drawerBodyJson');
+
+        if (tab === 'grid') {
+          tabGrid.classList.add('active');
+          tabJson.classList.remove('active');
+          bodyGrid.style.display = 'block';
+          bodyJson.style.display = 'none';
+
+          // If coming from JSON, try parsing JSON back into drawerCurrentVal
+          const jsonText = document.getElementById('drawerRawJsonInput').value;
+          if (jsonText) {
+            try {
+              drawerCurrentVal = JSON.parse(jsonText);
+              renderDrawerGrid();
+            } catch (err) {}
+          }
+        } else {
+          tabGrid.classList.remove('active');
+          tabJson.classList.add('active');
+          bodyGrid.style.display = 'none';
+          bodyJson.style.display = 'block';
+
+          // Sync current grid state into JSON editor
+          syncGridToCurrentVal();
+          document.getElementById('drawerRawJsonInput').value = JSON.stringify(drawerCurrentVal, null, 2);
+        }
+      }
+
+      function renderDrawerGrid() {
+        const tbody = document.getElementById('kvTableBody');
+        tbody.innerHTML = '';
+        const isArr = Array.isArray(drawerCurrentVal);
+
+        if (isArr) {
+          drawerCurrentVal.forEach((item, index) => {
+            const tr = document.createElement('tr');
+            tr.className = 'kv-row';
+            tr.setAttribute('data-index', String(index));
+
+            // Key/Index cell (read-only index for arrays)
+            const tdKey = document.createElement('td');
+            tdKey.className = 'kv-key-cell';
+            tdKey.innerHTML = '<span style="opacity:0.6;">[' + index + ']</span>';
+
+            // Value cell
+            const tdVal = document.createElement('td');
+            tdVal.className = 'kv-val-cell';
+            tdVal.appendChild(createKvValueInput(item, (newVal) => {
+              drawerCurrentVal[index] = newVal;
+            }));
+
+            // Actions cell
+            const tdAct = document.createElement('td');
+            tdAct.className = 'kv-act-cell';
+            const delBtn = document.createElement('button');
+            delBtn.className = 'kv-del-btn';
+            delBtn.title = 'Remove item';
+            delBtn.textContent = '🗑️';
+            delBtn.onclick = function() {
+              drawerCurrentVal.splice(index, 1);
+              renderDrawerGrid();
+            };
+            tdAct.appendChild(delBtn);
+
+            tr.appendChild(tdKey);
+            tr.appendChild(tdVal);
+            tr.appendChild(tdAct);
+            tbody.appendChild(tr);
+          });
+        } else if (drawerCurrentVal && typeof drawerCurrentVal === 'object') {
+          Object.keys(drawerCurrentVal).forEach(key => {
+            const val = drawerCurrentVal[key];
+            const tr = document.createElement('tr');
+            tr.className = 'kv-row';
+            tr.setAttribute('data-key', key);
+
+            // Key cell (editable key input)
+            const tdKey = document.createElement('td');
+            tdKey.className = 'kv-key-cell';
+            const keyInput = document.createElement('input');
+            keyInput.className = 'kv-key-input';
+            keyInput.value = key;
+            keyInput.onchange = function() {
+              const newKey = keyInput.value.trim();
+              if (newKey && newKey !== key) {
+                const currentVal = drawerCurrentVal[key];
+                delete drawerCurrentVal[key];
+                drawerCurrentVal[newKey] = currentVal;
+                renderDrawerGrid();
+              }
+            };
+            tdKey.appendChild(keyInput);
+
+            // Value cell
+            const tdVal = document.createElement('td');
+            tdVal.className = 'kv-val-cell';
+            tdVal.appendChild(createKvValueInput(val, (newVal) => {
+              drawerCurrentVal[key] = newVal;
+            }));
+
+            // Actions cell
+            const tdAct = document.createElement('td');
+            tdAct.className = 'kv-act-cell';
+            const delBtn = document.createElement('button');
+            delBtn.className = 'kv-del-btn';
+            delBtn.title = 'Delete property';
+            delBtn.textContent = '🗑️';
+            delBtn.onclick = function() {
+              delete drawerCurrentVal[key];
+              renderDrawerGrid();
+            };
+            tdAct.appendChild(delBtn);
+
+            tr.appendChild(tdKey);
+            tr.appendChild(tdVal);
+            tr.appendChild(tdAct);
+            tbody.appendChild(tr);
+          });
+        }
+      }
+
+      function createKvValueInput(val, onChange) {
+        if (typeof val === 'boolean') {
+          const select = document.createElement('select');
+          select.className = 'kv-val-input';
+          const optTrue = document.createElement('option');
+          optTrue.value = 'true';
+          optTrue.textContent = 'true (boolean)';
+          optTrue.selected = val === true;
+          const optFalse = document.createElement('option');
+          optFalse.value = 'false';
+          optFalse.textContent = 'false (boolean)';
+          optFalse.selected = val === false;
+          select.appendChild(optTrue);
+          select.appendChild(optFalse);
+          select.onchange = () => onChange(select.value === 'true');
+          return select;
+        }
+
+        if (val !== null && typeof val === 'object') {
+          const wrapper = document.createElement('div');
+          wrapper.style.display = 'flex';
+          wrapper.style.alignItems = 'center';
+          wrapper.style.gap = '6px';
+          const chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.textContent = Array.isArray(val) ? '[Array: ' + val.length + ']' : '{Map: ' + Object.keys(val).length + '}';
+          wrapper.appendChild(chip);
+
+          const editBtn = document.createElement('button');
+          editBtn.className = 'secondary';
+          editBtn.style.fontSize = '0.8em';
+          editBtn.style.padding = '2px 6px';
+          editBtn.textContent = 'Edit JSON';
+          editBtn.onclick = function() {
+            switchDrawerTab('json');
+          };
+          wrapper.appendChild(editBtn);
+          return wrapper;
+        }
+
+        const input = document.createElement('input');
+        input.type = typeof val === 'number' ? 'number' : 'text';
+        if (typeof val === 'number') input.step = 'any';
+        input.className = 'kv-val-input';
+        input.value = val !== null && val !== undefined ? String(val) : '';
+        input.placeholder = val === null ? 'null' : '';
+
+        input.onchange = function() {
+          const raw = input.value.trim();
+          if (raw === 'null') onChange(null);
+          else if (raw === 'true') onChange(true);
+          else if (raw === 'false') onChange(false);
+          else if (typeof val === 'number' || (!isNaN(Number(raw)) && raw !== '')) onChange(Number(raw));
+          else onChange(input.value);
+        };
+        return input;
+      }
+
+      function syncGridToCurrentVal() {
+        // Any active inputs already commit on change, but ensure state is valid
+      }
+
+      // Drawer Button Listeners
+      document.getElementById('drawerCloseBtn').onclick = closeComplexDrawer;
+      document.getElementById('drawerCancelBtn').onclick = closeComplexDrawer;
+      document.getElementById('drawerBackdrop').onclick = closeComplexDrawer;
+
+      document.getElementById('tabGrid').onclick = () => switchDrawerTab('grid');
+      document.getElementById('tabJson').onclick = () => switchDrawerTab('json');
+
+      document.getElementById('kvAddPropertyBtn').onclick = function() {
+        if (!drawerCurrentVal) return;
+        if (Array.isArray(drawerCurrentVal)) {
+          drawerCurrentVal.push('');
+        } else {
+          let count = 1;
+          while (drawerCurrentVal['newKey' + count] !== undefined) {
+            count++;
+          }
+          drawerCurrentVal['newKey' + count] = '';
+        }
+        renderDrawerGrid();
       };
+
+      document.getElementById('drawerOpenAsTableBtn').onclick = function() {
+        if (!drawerDocPath || !drawerField) return;
+        vscode.postMessage({
+          command: 'openFieldAsTable',
+          docPath: drawerDocPath,
+          field: drawerField
+        });
+      };
+
+      document.getElementById('drawerSaveBtn').onclick = function() {
+        if (!drawerDocPath || !drawerField) return;
+
+        let finalVal = drawerCurrentVal;
+        if (drawerActiveTab === 'json') {
+          const raw = document.getElementById('drawerRawJsonInput').value;
+          try {
+            finalVal = JSON.parse(raw);
+          } catch (err) {
+            alert('Invalid JSON syntax: ' + err.message);
+            return;
+          }
+        }
+
+        vscode.postMessage({
+          command: 'updateField',
+          docPath: drawerDocPath,
+          field: drawerField,
+          value: finalVal
+        });
+
+        closeComplexDrawer();
+      };
+
+      // ── Cell selection & In-place editing ──────────────────────────────
+      let selectedCell = null;
+      let activeEditingCell = null;
+
+      function clearSelectedCell() {
+        if (selectedCell) {
+          selectedCell.classList.remove('selected');
+          selectedCell = null;
+        }
+      }
+
+      function startCellEdit(td) {
+        if (!td || activeEditingCell) return;
+        const field = td.getAttribute('data-field');
+        const type = td.getAttribute('data-type');
+        const tr = td.closest('tr');
+        if (!tr || !field) return;
+
+        // Open 2-Column Inspector Drawer for complex types
+        if (type === 'map' || type === 'array') {
+          openComplexDrawer(tr.getAttribute('data-path'), field, type);
+          return;
+        }
+
+        const docPath = tr.getAttribute('data-path');
+        const doc = allLoadedDocs.find(d => d.__path === docPath);
+        const originalVal = doc ? doc[field] : undefined;
+
+        activeEditingCell = td;
+        td.classList.add('editing');
+
+        if (type === 'boolean') {
+          const currentBool = originalVal === true;
+          const select = document.createElement('select');
+          select.className = 'cell-input';
+          const optTrue = document.createElement('option');
+          optTrue.value = 'true';
+          optTrue.textContent = 'true';
+          optTrue.selected = currentBool;
+          const optFalse = document.createElement('option');
+          optFalse.value = 'false';
+          optFalse.textContent = 'false';
+          optFalse.selected = !currentBool;
+          select.appendChild(optTrue);
+          select.appendChild(optFalse);
+
+          td.innerHTML = '';
+          td.appendChild(select);
+          select.focus();
+
+          function commitBool() {
+            const newVal = select.value === 'true';
+            finishEdit(newVal);
+          }
+          select.onchange = commitBool;
+          select.onblur = commitBool;
+          select.onkeydown = function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); commitBool(); }
+            if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+          };
+          return;
+        }
+
+        const input = document.createElement('input');
+        input.type = type === 'number' ? 'number' : 'text';
+        if (type === 'number') input.step = 'any';
+        input.className = 'cell-input';
+        input.value = originalVal !== null && originalVal !== undefined ? String(originalVal) : '';
+
+        td.innerHTML = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+
+        let isDone = false;
+        function finishEdit(forcedVal) {
+          if (isDone) return;
+          isDone = true;
+          activeEditingCell = null;
+          td.classList.remove('editing');
+
+          let newVal;
+          if (forcedVal !== undefined) {
+            newVal = forcedVal;
+          } else {
+            const raw = input.value.trim();
+            if (raw === '' && type !== 'string') {
+              newVal = null;
+            } else if (raw === 'null') {
+              newVal = null;
+            } else if (raw === 'true') {
+              newVal = true;
+            } else if (raw === 'false') {
+              newVal = false;
+            } else if (type === 'number' || (!isNaN(Number(raw)) && raw !== '' && (type !== 'string' || !isNaN(Number(raw))))) {
+              newVal = Number(raw);
+            } else {
+              newVal = input.value;
+            }
+          }
+
+          if (newVal === originalVal) {
+            td.innerHTML = formatCell(originalVal);
+            return;
+          }
+
+          // Optimistically show temporary pending state
+          td.innerHTML = formatCell(newVal);
+          vscode.postMessage({
+            command: 'updateField',
+            docPath,
+            field,
+            value: newVal
+          });
+        }
+
+        function cancelEdit() {
+          if (isDone) return;
+          isDone = true;
+          activeEditingCell = null;
+          td.classList.remove('editing');
+          td.innerHTML = formatCell(originalVal);
+        }
+
+        input.onblur = function() { finishEdit(); };
+        input.onkeydown = function(e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            finishEdit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelEdit();
+          }
+        };
+      }
 
       document.getElementById('table-body').addEventListener('click', function(event) {
         if (event.target.closest('.select-col') || event.target.closest('.row-checkbox')) {
           return;
         }
+
+        // Parent Document link in collection group query
         const parentLink = event.target.closest('.parent-doc-link');
         if (parentLink) {
           const parentPath = parentLink.getAttribute('data-parent');
@@ -1094,10 +1950,115 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
             return;
           }
         }
-        const target = event.target.closest('tr');
-        if (target) {
-          const path = target.getAttribute('data-path');
-          vscode.postMessage({ command: 'openDoc', path });
+
+        // DocumentReference link -> open referenced document directly
+        const docRefLink = event.target.closest('.doc-ref-link');
+        if (docRefLink) {
+          const refPath = docRefLink.getAttribute('data-ref');
+          if (refPath) {
+            vscode.postMessage({ command: 'openRef', refPath });
+            return;
+          }
+        }
+
+        // Document ID Link or 📄 Doc open button -> open raw JSON document in editor
+        const docOpenBtn = event.target.closest('.doc-open-btn');
+        const docIdLink = event.target.closest('.doc-id-link');
+        if (docOpenBtn || docIdLink) {
+          const tr = event.target.closest('tr');
+          if (tr) {
+            const path = tr.getAttribute('data-path');
+            vscode.postMessage({ command: 'openDoc', path });
+            return;
+          }
+        }
+
+        // Data cell selection
+        const dataCell = event.target.closest('td.data-cell');
+        if (dataCell) {
+          if (activeEditingCell && activeEditingCell !== dataCell) {
+            return; // currently editing another cell
+          }
+          clearSelectedCell();
+          selectedCell = dataCell;
+          dataCell.classList.add('selected');
+          return;
+        }
+      });
+
+      document.getElementById('table-body').addEventListener('dblclick', function(event) {
+        if (event.target.closest('.select-col') || event.target.closest('.row-checkbox')) {
+          return;
+        }
+        const dataCell = event.target.closest('td.data-cell');
+        if (dataCell) {
+          startCellEdit(dataCell);
+        }
+      });
+
+      // Keyboard navigation & quick edit trigger
+      window.addEventListener('keydown', function(event) {
+        if (activeEditingCell) return;
+        if (!selectedCell) return;
+
+        if (event.key === 'Enter' || event.key === 'F2') {
+          event.preventDefault();
+          startCellEdit(selectedCell);
+          return;
+        }
+
+        if (event.key === 'ArrowRight' || event.key === 'Tab') {
+          event.preventDefault();
+          const next = selectedCell.nextElementSibling;
+          if (next && next.classList.contains('data-cell')) {
+            clearSelectedCell();
+            selectedCell = next;
+            selectedCell.classList.add('selected');
+          }
+          return;
+        }
+
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          const prev = selectedCell.previousElementSibling;
+          if (prev && prev.classList.contains('data-cell')) {
+            clearSelectedCell();
+            selectedCell = prev;
+            selectedCell.classList.add('selected');
+          }
+          return;
+        }
+
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          const tr = selectedCell.closest('tr');
+          const nextTr = tr ? tr.nextElementSibling : null;
+          if (nextTr) {
+            const idx = Array.from(tr.children).indexOf(selectedCell);
+            const targetCell = nextTr.children[idx];
+            if (targetCell && targetCell.classList.contains('data-cell')) {
+              clearSelectedCell();
+              selectedCell = targetCell;
+              selectedCell.classList.add('selected');
+            }
+          }
+          return;
+        }
+
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          const tr = selectedCell.closest('tr');
+          const prevTr = tr ? tr.previousElementSibling : null;
+          if (prevTr) {
+            const idx = Array.from(tr.children).indexOf(selectedCell);
+            const targetCell = prevTr.children[idx];
+            if (targetCell && targetCell.classList.contains('data-cell')) {
+              clearSelectedCell();
+              selectedCell = targetCell;
+              selectedCell.classList.add('selected');
+            }
+          }
+          return;
         }
       });
 
