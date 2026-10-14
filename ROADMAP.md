@@ -11,10 +11,10 @@ timeline
         2026-10-09 : v1.4.0 Deep Delete & Cross-Copy : v1.5.0 Server Query Builder & Dual-Contract Table
         2026-10-10 : v1.7.0 Dual-Prefix Protocol & Modular Architecture
         2026-10-13 : v1.8.0 Security Rules & Auth Table : v1.9.0 User Cloning, Tokens & Force Logout : v1.9.1 Batch Tools, Schemas & Aggregations : v1.9.2 Local Emulator, Collection Groups & UX Polish
-        2026-10-14 : v1.10.0 In-Table Editing Suite, 2-Column Inspector Drawer, Storage Media Preview & Filter.or()
+        2026-10-14 : v1.10.0 In-Table Editing Suite, 2-Column Inspector Drawer, Storage Media Preview & Filter.or() : v1.11.0 Local JSON Database, Mock Store, Bi-Directional Sync & Timestamp Inlay Hints
     section Planned
-        Dec 2026 : v1.11.0 Cloud Functions Triggers, Live Watch & Scripting Shell
-        Q1 2027 : v1.12.0 Storage Explorer, Auth Import/Export & Vector Search
+        Dec 2026 : v1.12.0 Synthetic Mock Data Generator, Cloud Functions Triggers & Live Watch
+        Q1 2027 : v1.13.0 Storage Explorer, Auth Import/Export & Vector Search
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -38,8 +38,9 @@ timeline
 | **v1.9.1** | Shipped | 2026-10-13 | Batch operations (`WriteBatch` update/delete), TypeScript contract & Zod generator, CSV/JSON/NDJSON import & export wizard, collection `count()`/`sum()`/`avg()` aggregations, query bookmarks & history, create user dialog & auth security policies |
 | **v1.9.2** | Shipped | 2026-10-13 | Local Firebase Emulator suite, collection group queries, inline table icons, aggregation QuickPick, rule caching |
 | **v1.10.0** | Shipped | 2026-10-14 | In-table spreadsheet editing suite (in-cell primitives, 2-column Key-Value Property Drawer for Maps/Arrays, atomic `FieldPath` updates), Bulk Field Deletion Checklist (`deleteMultipleFields`), inline hover trash icon (`$(trash)`), Cloud Storage media preview, DocumentReference jump, disjunctive queries (`Filter.or()`), starts-with operator |
-| **v1.11.0** | Planned | Dec 2026 | Cloud Functions trigger AST badging & simulation, live trigger logs filter, JS/TS Admin SDK query shell (`.firestore.ts`), live watch mode (`onSnapshot`), query explain profiler |
-| **v1.12.0** | Planned | Q1 2027 | Dedicated Cloud Storage explorer (buckets/files), drag-and-drop upload to fields, cascade orphan file cleanup, Auth bulk import/export & email links, vector search (kNN) |
+| **v1.11.0** | Shipped | 2026-10-14 | Local JSON Database & Mock Store, cross-instance collection copy (`copyCollectionToInstance`), bi-directional sync (Push/Seed & Pull Snapshot), document storage size monitoring & status bar, timestamp formatting & inlay hints, table batch load controls (+50, +100, Load All 1K cap) & auto-replenish |
+| **v1.12.0** | Planned | Dec 2026 | Synthetic Mock Data Generator (schema-driven generator, realistic field types, batch seeding), Cloud Functions triggers, live watch & scripting shell |
+| **v1.13.0** | Planned | Q1 2027 | Dedicated Cloud Storage explorer (buckets/files), drag-and-drop upload to fields, cascade orphan file cleanup, Auth bulk import/export & email links, vector search (kNN) |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer, local offline cache & mocking |
 
 ---
@@ -192,10 +193,73 @@ timeline
 
 ---
 
-### [v1.11.0] — Cloud Functions Triggers, Live Watch & Scripting Shell (Target: December 2026)
+### [v1.11.0] — Local JSON Database, Seed Store & Bi-Directional Firestore Sync (Shipped: 2026-10-14)
 
-*Theme: Backend trigger visibility, ad-hoc Admin SDK scripting, real-time event streaming, and performance profiling.*
+*Theme: Zero-quota local development, mock dataset playground, offline-first tabular editing, and friction-free seed data promotion.*
 
+* **Direct Local JSON File / Folder Database Connections**:
+  * **New Connection Type**: Connect directly to a single local JSON file (`mock-db.json`) or a directory of collection JSON files (`./seed-data/*.json`).
+  * Dedicated connection badge and icon `$(file-code)` in the Explorer Tree.
+  * Auto-discovers top-level keys as **Collections**, children as **Documents**, and sub-keys as **Fields**.
+  * Fully offline — operates without requiring Google Cloud credentials, internet access, or the Java Firebase Local Emulator process.
+* **Full Parity in Virtual Document Editor & Webview Tables**:
+  * Open local JSON documents in the virtual JSON editor (`ketrik-firestore-studio://local/...`) with real-time in-place disk persistence on save.
+  * Open any local collection in the **Interactive Collection Table**: in-place spreadsheet cell editing, 2-column Property Grid drawer for Maps/Arrays, client-side sorting, and full-text search.
+  * Tree explorer field mutation parity: rename fields, delete fields, add fields, and convert nulls/timestamps directly in the local file.
+* **Bi-Directional Firestore Data Sync Suite**:
+  * **Push / Seed to Firestore (`ketrik-firestore-studio.pushToFirestore`)**:
+    * Right-click local JSON collection or document $\rightarrow$ **"Push / Seed to Firestore..."**.
+    * Target connection picker: select any cloud Firestore or local emulator connection.
+    * Collision handling options: *Merge / Patch*, *Overwrite*, or *Skip Existing*.
+    * Batch writes (`WriteBatch`, 400 docs/batch) with live progress indicator and cancellation controls.
+  * **Pull / Snapshot from Firestore (`ketrik-firestore-studio.snapshotToLocalJson`)**:
+    * Right-click live Firestore collection $\rightarrow$ **"Snapshot to Local JSON Store"**.
+    * Choose whether to update an existing local JSON store connection or generate a new standalone dataset file.
+* **Direct 1-Click Cross-Instance Collection Copy (`ketrik-firestore-studio.copyCollectionToInstance`)**:
+  * Right-click any collection (live Cloud Firestore, Emulator, or Local JSON) $\rightarrow$ select **"Copy Collection to Another Instance..."**.
+  * Seamless cross-instance cloning (e.g. *Production $\rightarrow$ Staging*, *Staging $\rightarrow$ Emulator*, or clone under a new name).
+  * Chunked batch writes (400 docs/batch) with live progress bar, cancellation controls, and collision handling (*Merge / Patch* vs *Overwrite*).
+* **Document Storage Size Monitoring & 1MB Quota Safety**:
+  * Real-time calculation of exact Firestore document storage sizes conforming strictly to official Google Cloud Firestore specifications.
+  * **Tree View Size Badges**: Each document displays its exact size badge (`e.g. 1.4 KB`, `240 B`) with visual warning indicators (`⚡ 820 KB`, `⚠️ 1,010 KB`) and rich hover tooltips detailing byte count, path, and percentage of the 1MB Firestore limit.
+  * **Status Bar Item (`Firestore Document Size`)**: When a Firestore document (virtual or local JSON) is active in the editor, displays real-time live size in the VS Code Status Bar with dynamic warning/error color styling and breakdown tooltip.
+* **Table View Batch Load Controls & Quota Safety Cap**:
+  * Added quick-load action buttons to collection tables: **`+50`**, **`+100`**, and **`Load All (Max 1,000)`** alongside the default **`Load More`**.
+  * Dynamic backend paging expansion strictly capped at a hard maximum safety limit of 1,000 documents to prevent accidental runaway reads or billing spikes.
+  * Real-time button disablement, dynamic loading labels (`Loading 100...`), smooth scrolling, and amber highlight animations on bulk append.
+* **Intelligent Table Auto-Replenish on Deletion**:
+  * Deleting documents in the Table View now automatically queries and loads the next set of documents up to the count of deleted items when additional collection documents exist, eliminating blank empty states.
+* **Frictionless Document Creation**:
+  * Creating documents (from Explorer Tree or Table View) now pre-populates `{}` by default, allowing users to simply press **Enter** without manual typing.
+* **Interactive Timestamp & Type Revival for Local JSON**:
+  * Automatic detection and parsing of `{ _seconds, _nanoseconds }` maps in JSON files, showing calendar icons and human-readable dates.
+  * Inlay Hints and Hover explanations directly in local JSON files.
+
+---
+
+### [v1.12.0] — Synthetic Mock Data Generator, Cloud Functions & Live Watch (Target: December 2026)
+
+*Theme: Schema-driven synthetic test dataset generation, backend trigger visibility, ad-hoc Admin SDK scripting, and real-time event streaming.*
+
+* **Synthetic Mock Data Generator (`ketrik-firestore-studio.generateSyntheticData`)**:
+  * **Intelligent Schema Deduction & Sampling**:
+    * Right-click any collection (Cloud Firestore, Local Emulator, or Local JSON) $\rightarrow$ **"Generate Synthetic Data..."**.
+    * Analyzes existing collection documents to infer field names, nesting structures, and value distributions.
+  * **Realistic Domain-Aware Mock Generators**:
+    * Automatic type detection and realistic synthesis:
+      * **Personal Data**: Full names, usernames, realistic avatar URLs, phone numbers.
+      * **Contact & Auth**: RFC-compliant fake emails, UIDs, and password hashes.
+      * **Commerce & Finance**: Currencies, prices (min/max bounded), order IDs, credit card masks.
+      * **Location**: Geographic coordinates (`GeoPoint`), street addresses, country codes.
+      * **Timestamps**: Past/future relative dates, created/updated intervals.
+      * **Relational / Foreign Keys**: Automatic sampling of existing document IDs in other collections to synthesize valid `DocumentReference` links.
+  * **Interactive Generation Wizard & Preview**:
+    * Configurable generation count: e.g. 10, 50, 100, 500, or custom up to 2,000 documents.
+    * Document ID strategy: Auto-ID (random 20-character Firestore ID), sequential index (`user_001`), or custom field slug (`slug-from-name`).
+    * In-editor JSON preview of 3 sample generated documents before committing writes.
+  * **Safe Chunked Ingestion & Offline Seeding**:
+    * Chunked `WriteBatch` execution (400 docs/batch) with live progress bar and cancellation.
+    * Target flexibility: Seed directly into Cloud Firestore, Local Firebase Emulator, or export as a local mock JSON database file.
 * **Cloud Functions Trigger AST Scanner & In-Tree Badges (⚡)**:
   * Automatically scan workspace `functions/` directory for declared Firestore triggers (`onDocumentCreated`, `onDocumentUpdated`, `onDocumentDeleted`, `onDocumentWritten` in v2, and `onCreate`, `onUpdate`, etc. in v1).
   * Display an animated **Trigger Badge ⚡** on collection and document nodes with 1-click jump to function TypeScript source code.
@@ -216,7 +280,7 @@ timeline
 
 ---
 
-### [v1.12.0] — Storage Bucket Explorer, Auth Suite Expansion & Vector Search (Target: Q1 2027)
+### [v1.13.0] — Storage Bucket Explorer, Auth Suite Expansion & Vector Search (Target: Q1 2027)
 
 *Theme: Full Cloud Storage browsing, advanced Auth user migration, and vector embeddings.*
 

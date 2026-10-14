@@ -14,6 +14,8 @@ export interface FirestoreConnectionConfig {
   isEmulator?: boolean;
   emulatorHost?: string;
   authEmulatorHost?: string;
+  isLocalJson?: boolean;
+  localJsonPath?: string;
 }
 
 export class ConnectionManager implements vscode.Disposable {

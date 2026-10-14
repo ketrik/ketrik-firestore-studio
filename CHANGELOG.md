@@ -2,6 +2,51 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.11.0] - 2026-10-14
+
+### Added
+- **Local JSON Database & Mock Store Support**:
+  * Direct connection to a single local JSON file (`mock-db.json`) or a directory folder of collection JSON files (`./seed-data/*.json`).
+  * Dedicated connection badge and icon `$(file-code)` in the Explorer Tree.
+  * Auto-discovers top-level keys as **Collections**, child objects as **Documents**, and sub-keys as **Fields**.
+  * Transparent support for both object maps (`{ "doc1": { ... } }`) and array lists (`[ { "id": "doc1", ... } ]`).
+  * 100% offline — zero quota consumption, no internet connection, and no Java emulator background processes required.
+- **Full Virtual Editor & Table Grid Parity for Local Databases**:
+  * Open local documents in the virtual JSON editor (`ketrik-firestore-studio://local/...`) with real-time in-place disk persistence on save.
+  * Open local collections in the **Interactive Collection Table** with spreadsheet cell editing, Property Inspector drawer for Maps/Arrays, client-side sorting, and full-text search.
+  * Tree explorer mutations: rename fields, delete fields, add fields, and convert nulls/timestamps directly in the local file.
+  * Document operations parity: `Jump to Document ID`, `Create Document`, `Duplicate Document`, `Copy/Paste Document`, `Delete Document`, and `Copy JSON`.
+- **Direct 1-Click Cross-Instance Collection Copy (`ketrik-firestore-studio.copyCollectionToInstance`)**:
+  * Right-click any collection (live Cloud Firestore, Emulator, or Local JSON) $\rightarrow$ select **"Copy Collection to Another Instance..."**.
+  * Choose destination connection from quickpick (e.g. *Production $\rightarrow$ Staging*, *Staging $\rightarrow$ Emulator*, or clone under a new name).
+  * Target collection name customization (defaults to same name, or `<name>_copy` if duplicating within the same database).
+  * Batch writes (400 docs/batch) with live progress bar, cancellation support, and collision strategies (*Merge / Patch* vs *Overwrite*).
+- **Bi-Directional Firestore Sync Suite (Push & Snapshot)**:
+  * **Push / Seed to Firestore (`ketrik-firestore-studio.pushLocalCollectionToFirestore` & `pushLocalDocumentToFirestore`)**:
+    * Right-click local JSON collection or document $\rightarrow$ **"Push / Seed to Firestore..."**.
+    * Target connection picker: push to any cloud Firestore or local emulator connection.
+    * Strategy picker: choose **Merge / Patch** (preserve other fields) or **Overwrite (Set)**.
+    * Chunked batch writes (400 docs/batch) with live progress indicator and cancellation controls.
+    * Automatic type revival: converts `{ _seconds, _nanoseconds }` maps into native Firestore `Timestamp` objects.
+  * **Snapshot from Firestore (`ketrik-firestore-studio.snapshotFirestoreToLocalJson` & `snapshotDocumentToLocalJson`)**:
+    * Right-click any live Firestore collection or document $\rightarrow$ **"Snapshot to Local JSON Store..."**.
+    * Choose whether to append to an existing local JSON store connection or save as a brand new `.json` database file.
+- **Timestamp Formatting & Inlay Hints Suite**:
+  * Automatic detection and parsing of `{ _seconds, _nanoseconds }` maps across the Explorer Tree, displaying calendar icons (`calendar`), formatted dates, and relative times (`(2 hours ago)`).
+  * **Interactive Editor Inlay Hints**: Displays `🕒 <local datetime> (<relative>)` directly next to `{ _seconds, _nanoseconds }` blocks in both virtual documents and local seed files.
+- **Document Storage Size Monitoring & 1MB Quota Safety**:
+  * Real-time calculation of exact Firestore document storage sizes conforming to Google Cloud Firestore specs (overhead, UTF-8 strings, numbers, booleans, timestamps, references, and maps).
+  * **Tree View Size Badges**: Each document in the Explorer Tree displays its size badge (`e.g. 1.4 KB`, `240 B`) with visual warning indicators (`⚡ 820 KB`, `⚠️ 1,010 KB`) and rich hover tooltips detailing byte count, path, and percentage of the 1MB Firestore limit.
+  * **Status Bar Item (`Firestore Document Size`)**: When a Firestore document (virtual or local JSON) is active in the editor, displays real-time live size in the VS Code Status Bar (e.g. `$(database) Firestore Doc: 1.4 KB`) with dynamic warning/error color styling and breakdown tooltip.
+- **Table View Batch Load Controls & Quota Safety Cap**:
+  * Added quick-load action buttons to collection tables: **`+50`**, **`+100`**, and **`Load All (Max 1,000)`** alongside the default **`Load More`**.
+  * Dynamic backend paging expansion strictly capped at a hard maximum safety limit of 1,000 documents to prevent accidental runaway reads or billing spikes.
+  * Real-time button disablement, dynamic loading labels (`Loading 100...`), smooth scrolling, and amber highlight animations on bulk append.
+- **Intelligent Table Auto-Replenish on Deletion**:
+  * Deleting documents in the Table View now automatically queries and loads the next set of documents up to the count of deleted items when additional collection documents exist, eliminating blank empty states.
+- **Frictionless Document Creation**:
+  * Creating documents (from Explorer Tree or Table View) now pre-populates `{}` by default, allowing users to simply press **Enter** without manual typing.
+
 ## [1.10.0] - 2026-10-14
 
 ### Added

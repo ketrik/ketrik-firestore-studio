@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { FirestoreConnectionConfig } from "../connections/ConnectionManager";
 import { RulesService } from "../rules/RulesService";
 import { RulesParser } from "../rules/RulesParser";
+import { isTimestampLike, timestampToDate, formatDateTime, formatRelativeTime } from "../utils/timestampUtils";
 
 export abstract class Item extends vscode.TreeItem {
   abstract reference?: DocumentReference | CollectionReference;
@@ -19,7 +20,9 @@ export class ConnectionTreeItem extends Item {
     this.id = `connection:${config.id}`;
     this.contextValue = "connection";
 
-    const detail = config.isEmulator
+    const detail = config.isLocalJson
+      ? `Local JSON (${config.localJsonPath || ""})`
+      : config.isEmulator
       ? `Emulator (${config.emulatorHost || "localhost:8080"})${config.projectId ? ` [${config.projectId}]` : ""}`
       : config.databaseId && config.databaseId !== "(default)"
       ? `${config.projectId || "Project"} [${config.databaseId}]`
@@ -27,15 +30,25 @@ export class ConnectionTreeItem extends Item {
 
     this.description = detail;
     this.tooltip = `Connection: ${config.name}\nID: ${config.id}\nTarget: ${detail}${
-      config.isEmulator
+      config.isLocalJson
+        ? `\nType: Local JSON Database\nPath: ${config.localJsonPath}`
+        : config.isEmulator
         ? `\nType: Local Emulator Client (Requires running emulator process on ${config.emulatorHost || "localhost:8080"})${
             config.authEmulatorHost ? `\nAuth Emulator: ${config.authEmulatorHost}` : ""
           }`
         : ""
     }`;
-    this.iconPath = new vscode.ThemeIcon(config.isEmulator ? "server-process" : "database");
+    this.iconPath = new vscode.ThemeIcon(
+      config.isLocalJson
+        ? "file-code"
+        : config.isEmulator
+        ? "server-process"
+        : "database"
+    );
   }
 }
+
+import { getDocumentSizeInfo } from "../utils/documentSizeUtils";
 
 /**
  * A Tree View item representing a Firestore document.
@@ -44,7 +57,8 @@ export class DocumentItem extends Item {
   constructor(
     public documentId: string,
     public reference: DocumentReference,
-    public connectionId: string
+    public connectionId: string,
+    docData?: any
   ) {
     super(documentId, vscode.TreeItemCollapsibleState.Collapsed);
     this.command = {
@@ -55,7 +69,25 @@ export class DocumentItem extends Item {
 
     this.id = `${connectionId}:${reference.path}`;
     this.contextValue = "document";
-    this.tooltip = `[${connectionId}] ${reference.path}`;
+
+    if (docData !== undefined) {
+      const sizeInfo = getDocumentSizeInfo(docData, reference.path);
+      const sizeTag = sizeInfo.isCritical
+        ? `⚠️ ${sizeInfo.formatted}`
+        : sizeInfo.isWarning
+        ? `⚡ ${sizeInfo.formatted}`
+        : sizeInfo.formatted;
+
+      this.description = sizeTag;
+      this.tooltip =
+        `Document: ${documentId}\n` +
+        `Path: [${connectionId}] ${reference.path}\n` +
+        `Size: ${sizeInfo.formatted} (${sizeInfo.bytes.toLocaleString()} bytes)\n` +
+        `Limit: ${sizeInfo.percentageOfLimit}% of 1 MB max`;
+    } else {
+      this.tooltip = `[${connectionId}] ${reference.path}`;
+    }
+
     // Distinct vibrant blue icon for documents
     this.iconPath = new vscode.ThemeIcon(
       "file-code",
@@ -92,7 +124,18 @@ export class DocumentFieldItem extends Item {
     const isProtocol = fieldName.startsWith("__");
     const isEnvelope = fieldName.startsWith("_") && !isProtocol;
 
-    if (valType === "object") {
+    const isTimestamp = valType === "object" && isTimestampLike(value);
+    const timestampDate = isTimestamp ? timestampToDate(value) : undefined;
+
+    if (isTimestamp && timestampDate) {
+      icon = isProtocol ? "shield" : isEnvelope ? "tag" : "calendar";
+      iconColor = isProtocol
+        ? new vscode.ThemeColor("charts.red")
+        : isEnvelope
+        ? new vscode.ThemeColor("charts.purple")
+        : new vscode.ThemeColor("charts.blue");
+      this.description = `${formatDateTime(timestampDate)} (${formatRelativeTime(timestampDate)})`;
+    } else if (valType === "object") {
       if (isProtocol) {
         icon = "shield";
         iconColor = new vscode.ThemeColor("charts.red");
@@ -148,19 +191,26 @@ export class DocumentFieldItem extends Item {
     }
 
     this.id = `${connectionId}:${parentDocRef.path}#${fieldName}`;
-    this.contextValue =
-      valType === "object"
-        ? "documentFieldMap"
-        : valType === "array"
-        ? "documentFieldArray"
-        : "documentField";
+    this.contextValue = isTimestamp
+      ? "documentFieldTimestamp"
+      : valType === "object"
+      ? "documentFieldMap"
+      : valType === "array"
+      ? "documentFieldArray"
+      : "documentField";
 
     const tierLabel = isProtocol
       ? " [Protocol / Operational]"
       : isEnvelope
       ? " [System Envelope / Index]"
       : "";
-    this.tooltip = `Field: ${fieldName} (${valType})${tierLabel}\nDoc: ${parentDocRef.path}`;
+    const typeLabel = isTimestamp ? "timestamp" : valType;
+    if (isTimestamp && timestampDate) {
+      const epochSec = Math.floor(timestampDate.getTime() / 1000);
+      this.tooltip = `Field: ${fieldName} (timestamp)${tierLabel}\nDate: ${timestampDate.toISOString()}\nLocal: ${formatDateTime(timestampDate)}\nEpoch Seconds: ${epochSec}\nDoc: ${parentDocRef.path}`;
+    } else {
+      this.tooltip = `Field: ${fieldName} (${typeLabel})${tierLabel}\nDoc: ${parentDocRef.path}`;
+    }
     this.iconPath = new vscode.ThemeIcon(icon, iconColor);
 
     this.command = {

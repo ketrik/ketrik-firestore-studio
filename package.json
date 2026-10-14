@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.10.0",
+  "version": "1.11.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -368,6 +368,36 @@
         "category": "Firestore Studio",
         "title": "Generate TypeScript / Zod Schema...",
         "icon": "$(symbol-interface)"
+      },
+      {
+        "command": "ketrik-firestore-studio.copyCollectionToInstance",
+        "category": "Firestore Studio",
+        "title": "Copy Collection to Another Instance...",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "ketrik-firestore-studio.pushLocalCollectionToFirestore",
+        "category": "Firestore Studio",
+        "title": "Push / Seed to Firestore (Cloud or Emulator)...",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "ketrik-firestore-studio.snapshotFirestoreToLocalJson",
+        "category": "Firestore Studio",
+        "title": "Snapshot Collection to Local JSON Store...",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "ketrik-firestore-studio.pushLocalDocumentToFirestore",
+        "category": "Firestore Studio",
+        "title": "Push / Seed Document to Firestore (Cloud or Emulator)...",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "ketrik-firestore-studio.snapshotDocumentToLocalJson",
+        "category": "Firestore Studio",
+        "title": "Snapshot Document to Local JSON Store...",
+        "icon": "$(file-code)"
       },
       {
         "command": "ketrik-firestore-studio.exportCollection",
@@ -790,6 +820,21 @@
           "group": "2_filter@6"
         },
         {
+          "command": "ketrik-firestore-studio.copyCollectionToInstance",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@6.5"
+        },
+        {
+          "command": "ketrik-firestore-studio.pushLocalCollectionToFirestore",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@7"
+        },
+        {
+          "command": "ketrik-firestore-studio.snapshotFirestoreToLocalJson",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@8"
+        },
+        {
           "command": "ketrik-firestore-studio.copyPath",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'document' || viewItem == 'documentField')",
           "group": "3_utility@1"
@@ -825,6 +870,16 @@
           "group": "1_actions@6"
         },
         {
+          "command": "ketrik-firestore-studio.pushLocalDocumentToFirestore",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_actions@7"
+        },
+        {
+          "command": "ketrik-firestore-studio.snapshotDocumentToLocalJson",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_actions@8"
+        },
+        {
           "command": "ketrik-firestore-studio.addCollection",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "2_sub@1"
@@ -851,7 +906,7 @@
         },
         {
           "command": "ketrik-firestore-studio.deleteField",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "inline@2"
         },
         {
@@ -861,17 +916,17 @@
         },
         {
           "command": "ketrik-firestore-studio.openFieldInEditor",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "1_actions@2"
         },
         {
           "command": "ketrik-firestore-studio.renameField",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "1_actions@3"
         },
         {
           "command": "ketrik-firestore-studio.addField",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "1_actions@4"
         },
         {
@@ -891,17 +946,17 @@
         },
         {
           "command": "ketrik-firestore-studio.refreshItem",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "1_actions@8"
         },
         {
           "command": "ketrik-firestore-studio.deleteMultipleFields",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "2_danger@1"
         },
         {
           "command": "ketrik-firestore-studio.deleteField",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "2_danger@2"
         }
       ],

@@ -7,10 +7,85 @@ export function getCollectionTableStyles(): string {
     .actions {
       display: flex;
       justify-content: center;
+      align-items: center;
       margin-top: 18px;
     }
-    .actions button {
-      min-width: 200px;
+    .load-more-group {
+      display: inline-flex;
+      align-items: center;
+      background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.1));
+      border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25)));
+      border-radius: 6px;
+      padding: 3px;
+      gap: 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+    .load-more-group button {
+      padding: 6px 12px;
+      font-size: 0.9em;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .load-more-group button.primary-load-btn {
+      min-width: 140px;
+      font-weight: 600;
+    }
+    .load-more-group button.secondary-load-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--vscode-foreground);
+      padding: 6px 10px;
+    }
+    .load-more-group button.secondary-load-btn:hover:not(:disabled) {
+      background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18));
+      border-color: var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+    }
+    .table-container {
+      position: relative;
+    }
+    .table-loading-bar {
+      position: sticky;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: transparent;
+      overflow: hidden;
+      z-index: 40;
+      display: none;
+    }
+    .table-loading-bar.active {
+      display: block;
+      background: rgba(55, 148, 255, 0.15);
+    }
+    .table-loading-bar.active::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 40%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, var(--vscode-progressBar-background, #007acc), transparent);
+      animation: tableLoadingAnim 1.2s infinite ease-in-out;
+    }
+    @keyframes tableLoadingAnim {
+      0% {
+        transform: translateX(-100%);
+      }
+      100% {
+        transform: translateX(350%);
+      }
+    }
+    @keyframes newRowPulse {
+      0% {
+        background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 179, 8, 0.25));
+      }
+      100% {
+        background-color: transparent;
+      }
+    }
+    .new-row-highlight {
+      animation: newRowPulse 1.5s ease-out forwards;
     }
     .query-builder-panel {
       background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.08));
@@ -594,10 +669,16 @@ export function getCollectionTableHtml(
             </button>
           </div>
         </div>
+        <div id="tableLoadingBar" class="table-loading-bar"></div>
       </div>
 
       <div class="actions">
-        <button id="loadMoreBtn" style="display:none;">Load More Documents</button>
+        <div id="loadMoreGroup" class="load-more-group" style="display:none;">
+          <button id="loadMoreBtn" class="primary-load-btn" title="Load next page of documents">Load More</button>
+          <button id="load50Btn" class="secondary-load-btn" title="Load next 50 documents">+50</button>
+          <button id="load100Btn" class="secondary-load-btn" title="Load next 100 documents">+100</button>
+          <button id="loadAllBtn" class="secondary-load-btn" style="font-weight:600; color:var(--vscode-textLink-foreground, #3794ff);" title="Load up to 1,000 documents (safety limit to prevent high Firestore billing)">Load All (Max 1,000)</button>
+        </div>
       </div>
 
       <!-- Slide-out Property Inspector Drawer -->
@@ -1068,9 +1149,36 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         const isFiltering = !!searchTerm || lifecycleFilter !== 'all';
         document.getElementById('clearSearchBtn').style.display = isFiltering ? '' : (isServerQueryMode ? '' : 'none');
         document.getElementById('search-note').style.display = isFiltering ? '' : 'none';
-        document.getElementById('loadMoreBtn').style.display = (!isFiltering && hasMoreState) ? '' : 'none';
+        updateLoadMoreVisibility(!isFiltering && hasMoreState);
         updateEmptyState(lastDocs.length);
         updateBatchToolbar();
+      }
+
+      function updateLoadMoreVisibility(show) {
+        const group = document.getElementById('loadMoreGroup');
+        if (group) {
+          group.style.display = show ? 'inline-flex' : 'none';
+        }
+      }
+
+      function setLoadMoreButtonsDisabled(disabled, loadingText) {
+        const loadBtn = document.getElementById('loadMoreBtn');
+        const load50 = document.getElementById('load50Btn');
+        const load100 = document.getElementById('load100Btn');
+        const loadAll = document.getElementById('loadAllBtn');
+        const loadingBar = document.getElementById('tableLoadingBar');
+        if (loadingBar) {
+          if (disabled) loadingBar.classList.add('active');
+          else loadingBar.classList.remove('active');
+        }
+        if (loadBtn) {
+          loadBtn.disabled = disabled;
+          if (loadingText) loadBtn.textContent = loadingText;
+          else if (!disabled) loadBtn.textContent = 'Load More';
+        }
+        if (load50) load50.disabled = disabled;
+        if (load100) load100.disabled = disabled;
+        if (loadAll) loadAll.disabled = disabled;
       }
 
       function applyClientSearch(term) {
@@ -1110,7 +1218,8 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
           document.getElementById('table-body').innerHTML = renderRows(lastDocs, currentHeaders);
           document.getElementById('doc-count').textContent = lastDocs.length;
-          document.getElementById('loadMoreBtn').style.display = hasMoreState ? '' : 'none';
+          updateLoadMoreVisibility(hasMoreState);
+          setLoadMoreButtonsDisabled(false);
           updateEmptyState(lastDocs.length);
           updateBatchToolbar();
         }
@@ -1161,12 +1270,20 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         if (msg.type === 'batchSuccess') {
           selectedDocIds.clear();
           updateBatchToolbar();
+          if (msg.hasMore !== undefined) {
+            hasMoreState = !!msg.hasMore;
+          }
           if (msg.docs) {
             allLoadedDocs = msg.docs;
             lastDocs = allLoadedDocs;
             reRenderCurrentTable();
             document.getElementById('doc-count').textContent = lastDocs.length;
             updateEmptyState(lastDocs.length);
+            updateLoadMoreVisibility(!isSearchMode && hasMoreState);
+            setLoadMoreButtonsDisabled(false);
+            if (lastDocs.length === 0 && hasMoreState && !isSearchMode) {
+              vscode.postMessage({ command: 'loadMore' });
+            }
           }
         }
 
@@ -1177,14 +1294,40 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         if (msg.type === 'appendRows') {
           currentHeaders = msg.headers || currentHeaders;
           hasMoreState = !!msg.hasMore;
+          const previousCount = allLoadedDocs.length;
+          const newDocCount = (msg.newDocs || []).length;
+
           if (msg.headersChanged) {
             allLoadedDocs = msg.allDocs || [];
           } else {
             allLoadedDocs = allLoadedDocs.concat(msg.newDocs || []);
           }
           filterCurrentDocs();
-          document.getElementById('loadMoreBtn').style.display = (!isSearchMode && hasMoreState) ? '' : 'none';
-          document.getElementById('loadMoreBtn').disabled = false;
+
+          updateLoadMoreVisibility(!isSearchMode && hasMoreState);
+          setLoadMoreButtonsDisabled(false);
+          updateEmptyState(lastDocs.length);
+
+          // Scroll so the newly loaded rows comfortably come into view (showing ~5 new rows in the viewport)
+          if (newDocCount > 0) {
+            requestAnimationFrame(() => {
+              const tableBody = document.getElementById('table-body');
+              const container = document.querySelector('.table-container');
+              if (tableBody && container) {
+                const rows = tableBody.querySelectorAll('tr');
+                if (rows.length > previousCount) {
+                  // Target around 4-5 rows down the newly added batch to center them in the viewport
+                  const targetIndex = Math.min(previousCount + 4, rows.length - 1);
+                  const targetRow = rows[targetIndex] || rows[previousCount];
+                  if (targetRow) {
+                    targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                } else if (rows.length > 0) {
+                  container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+                }
+              }
+            });
+          }
         }
 
         if (msg.type === 'searchResults') {
@@ -1193,7 +1336,7 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           lastDocs = msg.docs || [];
           reRenderCurrentTable();
           document.getElementById('doc-count').textContent = lastDocs.length;
-          document.getElementById('loadMoreBtn').style.display = 'none';
+          updateLoadMoreVisibility(false);
           document.getElementById('clearSearchBtn').style.display = '';
           document.getElementById('search-note').style.display = '';
           document.getElementById('lookup-note').style.display = 'none';
@@ -1206,7 +1349,7 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           lastDocs = [msg.doc];
           reRenderCurrentTable();
           document.getElementById('doc-count').textContent = '1';
-          document.getElementById('loadMoreBtn').style.display = 'none';
+          updateLoadMoreVisibility(false);
           document.getElementById('clearSearchBtn').style.display = '';
           document.getElementById('search-note').style.display = 'none';
           document.getElementById('lookup-note').style.display = '';
@@ -1218,7 +1361,7 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           lastDocs = [];
           document.getElementById('table-body').innerHTML = '';
           document.getElementById('doc-count').textContent = '0';
-          document.getElementById('loadMoreBtn').style.display = 'none';
+          updateLoadMoreVisibility(false);
           document.getElementById('clearSearchBtn').style.display = '';
           document.getElementById('search-note').style.display = 'none';
           document.getElementById('lookup-note').style.display = '';
@@ -1233,7 +1376,8 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           hasMoreState = !!msg.hasMore;
           reRenderCurrentTable();
           document.getElementById('doc-count').textContent = lastDocs.length;
-          document.getElementById('loadMoreBtn').style.display = hasMoreState ? '' : 'none';
+          updateLoadMoreVisibility(hasMoreState);
+          setLoadMoreButtonsDisabled(false);
           document.getElementById('clearSearchBtn').style.display = isServerQueryMode ? '' : 'none';
           document.getElementById('search-note').style.display = 'none';
           document.getElementById('lookup-note').style.display = 'none';
@@ -1251,8 +1395,8 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           hasMoreState = !!msg.hasMore;
           reRenderCurrentTable();
           document.getElementById('doc-count').textContent = lastDocs.length;
-          document.getElementById('loadMoreBtn').style.display = hasMoreState ? '' : 'none';
-          document.getElementById('loadMoreBtn').disabled = false;
+          updateLoadMoreVisibility(hasMoreState);
+          setLoadMoreButtonsDisabled(false);
           document.getElementById('search-note').style.display = 'none';
           document.getElementById('lookup-note').style.display = 'none';
           document.getElementById('query-note').style.display = isServerQueryMode ? '' : 'none';
@@ -2074,6 +2218,39 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           document.getElementById('jumpBtn').click();
         }
       });
+
+      function triggerLoadMore(count, loadingLabel) {
+        setLoadMoreButtonsDisabled(true, loadingLabel || 'Loading...');
+        vscode.postMessage({ command: 'loadMore', count });
+      }
+
+      const loadMoreBtn = document.getElementById('loadMoreBtn');
+      if (loadMoreBtn) {
+        loadMoreBtn.onclick = function() {
+          triggerLoadMore(undefined, 'Loading...');
+        };
+      }
+
+      const load50Btn = document.getElementById('load50Btn');
+      if (load50Btn) {
+        load50Btn.onclick = function() {
+          triggerLoadMore(50, 'Loading 50...');
+        };
+      }
+
+      const load100Btn = document.getElementById('load100Btn');
+      if (load100Btn) {
+        load100Btn.onclick = function() {
+          triggerLoadMore(100, 'Loading 100...');
+        };
+      }
+
+      const loadAllBtn = document.getElementById('loadAllBtn');
+      if (loadAllBtn) {
+        loadAllBtn.onclick = function() {
+          triggerLoadMore(1000, 'Loading up to 1,000...');
+        };
+      }
 
       const emptyCreateDocBtn = document.getElementById('emptyCreateDocBtn');
       if (emptyCreateDocBtn) {

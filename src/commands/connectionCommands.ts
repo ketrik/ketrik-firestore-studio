@@ -32,6 +32,12 @@ export async function addConnectionCommand(): Promise<void> {
         detail: "Authenticate directly with a cloud Firebase / GCP project",
         type: "service_account",
       },
+      {
+        label: "$(file-code) Local JSON Database / Mock Store",
+        description: "Connect directly to a local JSON file or folder of JSON datasets",
+        detail: "Zero-quota offline store for mock data, prototyping, and seed migration",
+        type: "local_json",
+      },
     ],
     { placeHolder: "Select connection method" }
   );
@@ -123,6 +129,60 @@ export async function addConnectionCommand(): Promise<void> {
 
     await connectionManager.addConnection(newConnection);
     vscode.window.showInformationMessage(`Firestore connection '${newConnection.name}' added successfully!`);
+  } else if (typePick.type === "local_json") {
+    const fileOrFolder = await vscode.window.showQuickPick(
+      [
+        {
+          label: "$(file) Single JSON File",
+          description: "e.g. mock-db.json, seed-data.json",
+          detail: "Top-level keys represent collections, nested objects represent documents",
+          mode: "file",
+        },
+        {
+          label: "$(folder) Folder of JSON Files",
+          description: "e.g. ./mock-data/ (users.json, products.json)",
+          detail: "Each .json file in the folder becomes a distinct collection",
+          mode: "folder",
+        },
+      ],
+      { placeHolder: "Select local JSON storage structure" }
+    );
+
+    if (!fileOrFolder) return;
+
+    const dialogUris = await vscode.window.showOpenDialog({
+      canSelectFiles: fileOrFolder.mode === "file",
+      canSelectFolders: fileOrFolder.mode === "folder",
+      canSelectMany: false,
+      openLabel: fileOrFolder.mode === "file" ? "Select JSON File" : "Select Data Folder",
+      filters: fileOrFolder.mode === "file" ? { "JSON Files": ["json"] } : undefined,
+      title: fileOrFolder.mode === "file" ? "Select Local JSON Database File" : "Select Data Folder",
+    });
+
+    if (!dialogUris || dialogUris.length === 0) return;
+    const targetPath = dialogUris[0].fsPath;
+    const baseName = path.basename(targetPath, fileOrFolder.mode === "file" ? ".json" : undefined);
+
+    const name = await vscode.window.showInputBox({
+      prompt: "Connection Name / Label",
+      value: `Local (${baseName})`,
+      placeHolder: "e.g. Local Mock Store, Seed Data",
+      validateInput: (val) => (val && val.trim().length > 0 ? null : "Name cannot be empty"),
+    });
+
+    if (!name) return;
+
+    const newConnection: FirestoreConnectionConfig = {
+      id: `conn_${Date.now()}`,
+      name: name.trim(),
+      isLocalJson: true,
+      localJsonPath: targetPath,
+    };
+
+    await connectionManager.addConnection(newConnection);
+    vscode.window.showInformationMessage(
+      `Local JSON Database '${newConnection.name}' added successfully! File: ${targetPath}`
+    );
   } else {
     // Emulator
     const name = await vscode.window.showInputBox({

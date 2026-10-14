@@ -7,6 +7,7 @@ import openPath from "../commands/openPath";
 import { QueryClause, sortHeaders, parseFilterValue } from "./common/tableUtils";
 import { getCollectionTableHtml } from "./collectionTable/collectionTableHtml";
 import { openFieldAsTable } from "./openFieldAsTable";
+import { LocalJsonService } from "../services/LocalJsonService";
 
 export { QueryClause };
 
@@ -128,9 +129,51 @@ export async function openCollectionAsTable(
     return q;
   }
 
-  /** Append the next page of documents from Firestore (never more than `maxRows` in total). */
-  async function loadMoreDocs(): Promise<{ newDocs: any[]; hasMore: boolean }> {
-    const pageSize = Math.min(limit, maxRows - loadedDocs.length);
+  /** Append the next page of documents from Firestore (supports custom count, capped at maxRows and 1,000 for safety). */
+  async function loadMoreDocs(requestedCount?: number): Promise<{ newDocs: any[]; hasMore: boolean }> {
+    const effectiveLimit = Math.min(requestedCount && requestedCount > 0 ? requestedCount : limit, 1000);
+    // If the user explicitly asks for a larger batch (e.g. 100 or 1000), allow expanding up to 1,000 max
+    const effectiveMaxRows = requestedCount && requestedCount > limit ? Math.min(1000, Math.max(maxRows, requestedCount)) : maxRows;
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    if (conn?.isLocalJson) {
+      const rawDocs = LocalJsonService.getInstance().listDocuments(conn, collectionId);
+      const offset = loadedDocs.length;
+      const targetCount = Math.min(rawDocs.length, effectiveMaxRows);
+      const pageSize = Math.min(effectiveLimit, targetCount - offset);
+
+      if (pageSize <= 0) {
+        return { newDocs: [], hasMore: false };
+      }
+
+      const docs = rawDocs.slice(offset, offset + pageSize).map((d) => ({
+        ...sanitizeFirestoreValue(d.data),
+        __path: `${collectionId}/${d.id}`,
+        __id: d.id,
+        __parentPath: null,
+      }));
+
+      if (docs.length > 0) {
+        const headerSet = new Set<string>(headers);
+        docs.forEach((doc: any) => {
+          Object.keys(doc).forEach((k) => {
+            if (k !== "__path" && k !== "__id" && k !== "__parentPath") {
+              headerSet.add(k);
+            }
+          });
+        });
+        headers = sortHeaders(Array.from(headerSet));
+      }
+      loadedDocs = loadedDocs.concat(docs);
+      const hasMore = loadedDocs.length < targetCount && loadedDocs.length < rawDocs.length;
+      return { newDocs: docs, hasMore };
+    }
+
+    // Reset lastDoc cursor if all loaded docs were deleted so it starts from the beginning
+    if (loadedDocs.length === 0) {
+      lastDoc = null;
+    }
+
+    const pageSize = Math.min(effectiveLimit, effectiveMaxRows - loadedDocs.length);
     if (pageSize <= 0) {
       return { newDocs: [], hasMore: false };
     }
@@ -167,10 +210,10 @@ export async function openCollectionAsTable(
         lastDoc = snapshot.docs[snapshot.docs.length - 1];
       }
 
-      const reachedCap = loadedDocs.length >= maxRows;
+      const reachedCap = loadedDocs.length >= effectiveMaxRows;
       if (reachedCap && docs.length === pageSize) {
         vscode.window.showInformationMessage(
-          `Table shows the first ${maxRows} documents (setting "ketrik-firestore-studio.maxTableRows"). Use Lookup or Query Builder to narrow results.`
+          `Table shows ${loadedDocs.length} documents (maximum safety limit: ${effectiveMaxRows}). Use Lookup or Query Builder to narrow results.`
         );
       }
       const hasMore = docs.length === pageSize && !reachedCap;
@@ -275,7 +318,8 @@ export async function openCollectionAsTable(
       isLoading = true;
       try {
         const prevHeaders = [...headers];
-        const { newDocs, hasMore } = await loadMoreDocs();
+        const requestedCount = typeof message.count === "number" ? message.count : undefined;
+        const { newDocs, hasMore } = await loadMoreDocs(requestedCount);
         hasMoreState = hasMore;
         const headersChanged = headers.length !== prevHeaders.length;
 
@@ -377,18 +421,21 @@ export async function openCollectionAsTable(
         if (docId === undefined) return;
 
         const json = await vscode.window.showInputBox({
-          prompt: "Enter document data as JSON",
-          placeHolder: '{"name": "example"}',
+          prompt: "Enter document data as JSON (press Enter to create empty document)",
+          placeHolder: "{}",
           value: "{}",
         });
         if (json === undefined) return;
 
         let data: any = {};
-        try {
-          data = JSON.parse(json || "{}");
-        } catch {
-          vscode.window.showErrorMessage("Invalid JSON.");
-          return;
+        const trimmed = (json || "").trim();
+        if (trimmed && trimmed !== "{}") {
+          try {
+            data = JSON.parse(trimmed);
+          } catch {
+            vscode.window.showErrorMessage("Invalid JSON.");
+            return;
+          }
         }
 
         const docRef = docId.trim() ? collRef.doc(docId.trim()) : collRef.doc();
@@ -423,17 +470,21 @@ export async function openCollectionAsTable(
     if (message.command === "updateField" && message.docPath && message.field !== undefined) {
       const { docPath, field, value } = message;
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-        const docRef = firestore.doc(docPath);
-
-        // Sanitize value for Firestore write
+        // Sanitize value for write
         let writeVal: any = value;
         if (value && typeof value === "object" && typeof value._seconds === "number" && typeof value._nanoseconds === "number") {
           const { Timestamp } = await import("firebase-admin/firestore");
           writeVal = new Timestamp(value._seconds, value._nanoseconds);
         }
 
-        await docRef.update(new FieldPath(field), writeVal);
+        const conn = ConnectionManager.getInstance().getConnection(connectionId);
+        if (conn?.isLocalJson) {
+          LocalJsonService.getInstance().updateField(conn, docPath, field, writeVal);
+        } else {
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          const docRef = firestore.doc(docPath);
+          await docRef.update(new FieldPath(field), writeVal);
+        }
 
         // Invalidate DocumentFileSystemProvider cache so open JSON editors sync immediately
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docPath);
@@ -815,12 +866,39 @@ export async function openCollectionAsTable(
         const delDocIdSet = new Set(docIds);
         loadedDocs = loadedDocs.filter((doc: any) => !delDocIdSet.has(doc.__id));
 
-        panel.webview.postMessage({
-          type: "batchSuccess",
-          operation: "delete",
-          docIds,
-          docs: loadedDocs,
-        });
+        // When documents are deleted, if more documents exist in Firestore,
+        // automatically replenish the table by loading as many documents as were deleted!
+        if (hasMoreState && docIds.length > 0) {
+          const replenishCount = docIds.length;
+          const { newDocs, hasMore } = await loadMoreDocs(replenishCount);
+          hasMoreState = hasMore;
+          panel.webview.postMessage({
+            type: "batchSuccess",
+            operation: "delete",
+            docIds,
+            docs: loadedDocs,
+            hasMore: hasMoreState,
+          });
+          if (newDocs.length > 0) {
+            panel.webview.postMessage({
+              type: "appendRows",
+              headers,
+              headersChanged: true,
+              newDocs,
+              allDocs: loadedDocs,
+              totalCount: loadedDocs.length,
+              hasMore: hasMoreState,
+            });
+          }
+        } else {
+          panel.webview.postMessage({
+            type: "batchSuccess",
+            operation: "delete",
+            docIds,
+            docs: loadedDocs,
+            hasMore: hasMoreState,
+          });
+        }
       } catch (err: any) {
         vscode.window.showErrorMessage(`Batch delete failed: ${err.message}`);
       }

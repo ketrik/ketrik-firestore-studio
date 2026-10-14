@@ -21,6 +21,7 @@ import {
 } from "./items";
 import { AuthService } from "../auth/AuthService";
 import { parseHostPort, probePort } from "../emulator/portUtils";
+import { LocalJsonService } from "../services/LocalJsonService";
 
 /** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
 const MAX_MAP_SIZE = 200;
@@ -291,6 +292,23 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     };
 
     if (element instanceof ConnectionTreeItem) {
+      if (element.config.isLocalJson) {
+        try {
+          const collections = LocalJsonService.getInstance().listCollections(element.config);
+          const collItems = collections.map((collId) => {
+            const fakeRef = {
+              id: collId,
+              path: collId,
+            } as any;
+            return new CollectionItem(collId, fakeRef, element.config.id);
+          });
+          return storeAndReturn(collItems);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to load local JSON collections: ${err.message}`);
+          return [];
+        }
+      }
+
       if (element.config.isEmulator) {
         const { host, port } = parseHostPort(element.config.emulatorHost);
         const isOnline = await probePort(host, port, 1000);
@@ -391,6 +409,16 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       }
     } else if (element instanceof DocumentItem) {
       try {
+        const conn = this._connectionManager.getConnection(element.connectionId);
+        if (conn?.isLocalJson) {
+          const docData = LocalJsonService.getInstance().getDocument(conn, element.reference.path) || {};
+          const fieldKeys = Object.keys(docData).sort((a, b) => a.localeCompare(b));
+          const items: Item[] = fieldKeys.map(
+            (key) => new DocumentFieldItem(key, docData[key], element.reference, element.connectionId)
+          );
+          return storeAndReturn(items);
+        }
+
         const items: Item[] = [];
 
         // 1. Fetch subcollections
@@ -442,6 +470,19 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       }
     } else if (element instanceof CollectionItem) {
       try {
+        const conn = this._connectionManager.getConnection(element.connectionId);
+        if (conn?.isLocalJson) {
+          const docs = LocalJsonService.getInstance().listDocuments(conn, element.collectionId);
+          const items: DocumentItem[] = docs.map((d) => {
+            const fakeDocRef = {
+              id: d.id,
+              path: `${element.collectionId}/${d.id}`,
+            } as any;
+            return new DocumentItem(d.id, fakeDocRef, element.connectionId, d.data);
+          });
+          return storeAndReturn(items);
+        }
+
         const key = `${element.connectionId}:${element.reference.path}`;
         const limit = this._paging.get(key) ?? defaultLimit;
 
@@ -457,7 +498,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const items: DocumentItem[] = [];
         snapshots.forEach((snapshot: QueryDocumentSnapshot) => {
           items.push(
-            new DocumentItem(snapshot.id, snapshot.ref, element.connectionId)
+            new DocumentItem(snapshot.id, snapshot.ref, element.connectionId, snapshot.data())
           );
         });
 

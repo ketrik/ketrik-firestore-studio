@@ -1,9 +1,11 @@
 import { createHash } from "crypto";
 import * as vscode from "vscode";
-import { FieldPath } from "firebase-admin/firestore";
+import { FieldPath, Timestamp } from "firebase-admin/firestore";
+import { isTimestampLike } from "../utils/timestampUtils";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { scheme } from "../constants";
 import { RulesService } from "../rules/RulesService";
+import { LocalJsonService } from "../services/LocalJsonService";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -217,6 +219,23 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       };
     }
 
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    if (conn?.isLocalJson) {
+      const localDoc = LocalJsonService.getInstance().getDocument(conn, docPath);
+      if (!localDoc) {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
+      if (fieldPath !== undefined && !(fieldPath in localDoc)) {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
+      return {
+        type: vscode.FileType.File,
+        ctime: now,
+        mtime: now,
+        size: 0,
+      };
+    }
+
     const doc = await this.getCachedSnapshot(connectionId, docPath);
 
     if (!doc.exists) {
@@ -255,6 +274,21 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     if (isRules) {
       const text = RulesService.getInstance().getRulesContent(connectionId);
       return encoder.encode(text);
+    }
+
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    if (conn?.isLocalJson) {
+      const localDoc = LocalJsonService.getInstance().getDocument(conn, docPath);
+      if (!localDoc) {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
+      const data = fieldPath !== undefined ? localDoc[fieldPath] : localDoc;
+      if (fieldPath !== undefined && !(fieldPath in localDoc)) {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
+      const bytes = this.serializeDoc(data);
+      this.rememberBaseline(uri, undefined, bytes);
+      return bytes;
     }
 
     const doc = await this.getCachedSnapshot(connectionId, docPath);
@@ -358,18 +392,53 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       return;
     }
 
-    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-
-    // Invalidate cached snapshot on write
-    this._snapshotCache.delete(`${connectionId}:${docPath}`);
-    this._snapshotInFlight.delete(`${connectionId}:${docPath}`);
-
     let json: any;
     try {
       json = JSON.parse(decoder.decode(content));
     } catch (e: any) {
       throw new Error(`Could not parse JSON: ${e.message}`);
     }
+
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    if (conn?.isLocalJson) {
+      if (fieldPath !== undefined) {
+        LocalJsonService.getInstance().updateField(conn, docPath, fieldPath, json);
+      } else {
+        LocalJsonService.getInstance().setDocument(conn, docPath, json);
+      }
+      this.rememberBaseline(uri, undefined, this.serializeDoc(json));
+      this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+      return;
+    }
+
+    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+
+    // Invalidate cached snapshot on write
+    this._snapshotCache.delete(`${connectionId}:${docPath}`);
+    this._snapshotInFlight.delete(`${connectionId}:${docPath}`);
+
+    // Convert any {_seconds, _nanoseconds} timestamp objects back to real Firestore Timestamps
+    const reviveTimestamps = (val: any): any => {
+      if (!val || typeof val !== "object") {
+        return val;
+      }
+      if (val instanceof Timestamp) {
+        return val;
+      }
+      if (isTimestampLike(val)) {
+        return new Timestamp((val as any)._seconds, (val as any)._nanoseconds);
+      }
+      if (Array.isArray(val)) {
+        return val.map(reviveTimestamps);
+      }
+      const res: Record<string, any> = {};
+      for (const [k, v] of Object.entries(val)) {
+        res[k] = reviveTimestamps(v);
+      }
+      return res;
+    };
+
+    json = reviveTimestamps(json);
 
     const checkChanges = vscode.workspace
       .getConfiguration("ketrik-firestore-studio")

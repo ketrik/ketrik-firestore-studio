@@ -4,7 +4,9 @@ import openPath from "./openPath";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { ConnectionManager } from "../connections/ConnectionManager";
-import { FieldPath, FieldValue } from "firebase-admin/firestore";
+import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { isTimestampLike, timestampToDate, formatDateTime } from "../utils/timestampUtils";
+import { LocalJsonService } from "../services/LocalJsonService";
 
 /**
  * Handle opening or quick-editing a field.
@@ -17,12 +19,92 @@ export async function openFieldCommand(
     return;
   }
 
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  const setDocField = async (newVal: any) => {
+    if (conn?.isLocalJson) {
+      LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, item.fieldName, newVal);
+    } else {
+      await item.parentDocRef.update(new FieldPath(item.fieldName), newVal);
+    }
+  };
+
   const value = item.value;
   const valType = Array.isArray(value)
     ? "array"
     : value === null
     ? "null"
     : typeof value;
+
+  // If it's a Firestore Timestamp, prompt to update timestamp
+  if (valType === "object" && isTimestampLike(value)) {
+    const curDate = timestampToDate(value) ?? new Date();
+    const curIso = curDate.toISOString();
+    const curLocal = formatDateTime(curDate);
+
+    const action = await vscode.window.showQuickPick(
+      [
+        {
+          label: "$(clock) Set to Now",
+          description: "Use current machine datetime",
+          action: "now",
+        },
+        {
+          label: "$(server-process) Set to ServerTimestamp",
+          description: "FieldValue.serverTimestamp() (evaluated on server)",
+          action: "serverTimestamp",
+        },
+        {
+          label: "$(edit) Edit ISO Date / Time String",
+          description: `Current: ${curIso}`,
+          action: "custom",
+        },
+        {
+          label: "$(json) Open in JSON Editor",
+          description: "Edit raw _seconds and _nanoseconds in editor",
+          action: "editor",
+        },
+      ],
+      { placeHolder: `Edit Timestamp for '${item.fieldName}' (Current: ${curLocal})` }
+    );
+
+    if (!action) {
+      return;
+    }
+
+    if (action.action === "editor") {
+      await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
+      return;
+    }
+
+    try {
+      if (action.action === "now") {
+        await setDocField(Timestamp.now());
+      } else if (action.action === "serverTimestamp") {
+        await setDocField(FieldValue.serverTimestamp());
+      } else if (action.action === "custom") {
+        const input = await vscode.window.showInputBox({
+          prompt: `Enter ISO-8601 or Date string for '${item.fieldName}'`,
+          value: curIso,
+          validateInput: (v) => {
+            const parsed = Date.parse(v);
+            return isNaN(parsed) ? "Invalid date format. Use ISO-8601 (e.g. 2026-10-14T15:00:00Z)" : undefined;
+          },
+        });
+        if (!input) {
+          return;
+        }
+        const targetDate = new Date(input);
+        await setDocField(Timestamp.fromDate(targetDate));
+      }
+
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+      vscode.window.showInformationMessage(`Updated timestamp '${item.fieldName}'`);
+      explorerDataProvider.refreshNode(item);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to update timestamp: ${err.message}`);
+    }
+    return;
+  }
 
   // If it's a complex type (object or array), open directly in the virtual JSON editor
   if (valType === "object" || valType === "array") {
@@ -51,7 +133,7 @@ export async function openFieldCommand(
     }
 
     try {
-      await item.parentDocRef.update(new FieldPath(item.fieldName), newValue);
+      await setDocField(newValue);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${newValue}`);
       explorerDataProvider.refreshNode(item);
@@ -79,7 +161,7 @@ export async function openFieldCommand(
     }
 
     try {
-      await item.parentDocRef.update(new FieldPath(item.fieldName), newNum);
+      await setDocField(newNum);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${newNum}`);
       explorerDataProvider.refreshNode(item);
@@ -95,6 +177,7 @@ export async function openFieldCommand(
       [
         { label: "$(symbol-namespace) Object / Map ({})", description: "Convert to empty object & open in editor", type: "object" },
         { label: "$(symbol-array) Array ([])", description: "Convert to empty array & open in editor", type: "array" },
+        { label: "$(calendar) Timestamp", description: "Set current time or custom date", type: "timestamp" },
         { label: "$(symbol-string) String", description: "Set text value", type: "string" },
         { label: "$(symbol-number) Number", description: "Set numeric value", type: "number" },
         { label: "$(symbol-boolean) Boolean", description: "Set true / false", type: "boolean" },
@@ -113,7 +196,7 @@ export async function openFieldCommand(
     }
 
     if (typeChoice.type === "object") {
-      await item.parentDocRef.update(new FieldPath(item.fieldName), {});
+      await setDocField({});
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       explorerDataProvider.refreshNode(item);
       await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
@@ -121,10 +204,45 @@ export async function openFieldCommand(
     }
 
     if (typeChoice.type === "array") {
-      await item.parentDocRef.update(new FieldPath(item.fieldName), []);
+      await setDocField([]);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       explorerDataProvider.refreshNode(item);
       await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
+      return;
+    }
+
+    if (typeChoice.type === "timestamp") {
+      const tsChoice = await vscode.window.showQuickPick(
+        [
+          { label: "$(clock) Current Time (Now)", action: "now" },
+          { label: "$(server-process) ServerTimestamp (FieldValue.serverTimestamp)", action: "server" },
+          { label: "$(edit) Custom ISO-8601 String", action: "custom" },
+        ],
+        { placeHolder: `Set Timestamp value for '${item.fieldName}'` }
+      );
+      if (!tsChoice) {
+        return;
+      }
+      let tsVal: any;
+      if (tsChoice.action === "now") {
+        tsVal = Timestamp.now();
+      } else if (tsChoice.action === "server") {
+        tsVal = FieldValue.serverTimestamp();
+      } else {
+        const iso = await vscode.window.showInputBox({
+          prompt: `Enter ISO-8601 string for '${item.fieldName}'`,
+          value: new Date().toISOString(),
+          validateInput: (v) => (isNaN(Date.parse(v)) ? "Invalid date format" : undefined),
+        });
+        if (!iso) {
+          return;
+        }
+        tsVal = Timestamp.fromDate(new Date(iso));
+      }
+      await setDocField(tsVal);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+      vscode.window.showInformationMessage(`Updated '${item.fieldName}' to Timestamp`);
+      explorerDataProvider.refreshNode(item);
       return;
     }
 
@@ -137,7 +255,7 @@ export async function openFieldCommand(
         return;
       }
       const bVal = boolPick.label === "true";
-      await item.parentDocRef.update(new FieldPath(item.fieldName), bVal);
+      await setDocField(bVal);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${bVal}`);
       explorerDataProvider.refreshNode(item);
@@ -153,7 +271,7 @@ export async function openFieldCommand(
         return;
       }
       const nVal = Number(numInput);
-      await item.parentDocRef.update(new FieldPath(item.fieldName), nVal);
+      await setDocField(nVal);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${nVal}`);
       explorerDataProvider.refreshNode(item);
@@ -167,7 +285,7 @@ export async function openFieldCommand(
       if (strInput === undefined) {
         return;
       }
-      await item.parentDocRef.update(new FieldPath(item.fieldName), strInput);
+      await setDocField(strInput);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
       explorerDataProvider.refreshNode(item);
@@ -191,7 +309,7 @@ export async function openFieldCommand(
   }
 
   try {
-    await item.parentDocRef.update(new FieldPath(item.fieldName), input);
+    await setDocField(input);
     DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
     vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
     explorerDataProvider.refreshNode(item);
@@ -253,6 +371,35 @@ export async function renameFieldCommand(
   }
 
   try {
+    const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+    if (conn?.isLocalJson) {
+      const data = LocalJsonService.getInstance().getDocument(conn, item.parentDocRef.path) || {};
+      if (!(item.fieldName in data)) {
+        vscode.window.showErrorMessage(`Field "${item.fieldName}" no longer exists.`);
+        return;
+      }
+      if (targetName in data) {
+        const overwrite = await vscode.window.showWarningMessage(
+          `Field "${targetName}" already exists on document "${item.parentDocRef.id}". Overwrite it?`,
+          { modal: true },
+          "Overwrite",
+          "Cancel"
+        );
+        if (overwrite !== "Overwrite") {
+          return;
+        }
+      }
+      const existingValue = data[item.fieldName];
+      delete data[item.fieldName];
+      data[targetName] = existingValue;
+      LocalJsonService.getInstance().setDocument(conn, item.parentDocRef.path, data);
+
+      documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+      vscode.window.showInformationMessage(`Renamed '${item.fieldName}' to '${targetName}'`);
+      explorerDataProvider.refreshNode(item);
+      return;
+    }
+
     const snapshot = await item.parentDocRef.get();
     if (!snapshot.exists) {
       vscode.window.showErrorMessage(`Document "${item.parentDocRef.id}" no longer exists.`);
@@ -347,6 +494,15 @@ export async function deleteFieldCommand(
 
   if (confirm === "Delete Field") {
     try {
+      const conn = ConnectionManager.getInstance().getConnection(targetItem.connectionId);
+      if (conn?.isLocalJson) {
+        LocalJsonService.getInstance().updateField(conn, targetItem.parentDocRef.path, targetItem.fieldName, undefined, true);
+        documentFileSystemProvider.invalidateAndNotify(targetItem.connectionId, targetItem.parentDocRef.path);
+        vscode.window.showInformationMessage(`Field "${targetItem.fieldName}" deleted!`);
+        explorerDataProvider.refreshNode(targetItem);
+        return;
+      }
+
       await targetItem.parentDocRef.update(new FieldPath(targetItem.fieldName), FieldValue.delete());
       documentFileSystemProvider.invalidateAndNotify(targetItem.connectionId, targetItem.parentDocRef.path);
       vscode.window.showInformationMessage(`Field "${targetItem.fieldName}" deleted!`);
@@ -547,6 +703,7 @@ export async function addFieldCommand(
     [
       { label: "$(symbol-namespace) Object / Map ({})", description: "Empty object (opens in editor)", type: "object" },
       { label: "$(symbol-array) Array ([])", description: "Empty array (opens in editor)", type: "array" },
+      { label: "$(calendar) Timestamp", description: "Set current time (Now) or custom date", type: "timestamp" },
       { label: "$(symbol-string) String", description: "Text value", type: "string" },
       { label: "$(symbol-number) Number", description: "Numeric value", type: "number" },
       { label: "$(symbol-boolean) Boolean", description: "true / false", type: "boolean" },
@@ -563,6 +720,31 @@ export async function addFieldCommand(
   let shouldOpenInEditor = false;
 
   switch (typePick.type) {
+    case "timestamp": {
+      const tsChoice = await vscode.window.showQuickPick(
+        [
+          { label: "$(clock) Current Time (Now)", action: "now" },
+          { label: "$(server-process) ServerTimestamp (FieldValue.serverTimestamp)", action: "server" },
+          { label: "$(edit) Custom ISO-8601 String", action: "custom" },
+        ],
+        { placeHolder: `Set Timestamp value for '${fieldName.trim()}'` }
+      );
+      if (!tsChoice) { return; }
+      if (tsChoice.action === "now") {
+        fieldValue = Timestamp.now();
+      } else if (tsChoice.action === "server") {
+        fieldValue = FieldValue.serverTimestamp();
+      } else {
+        const iso = await vscode.window.showInputBox({
+          prompt: `Enter ISO-8601 string for '${fieldName.trim()}'`,
+          value: new Date().toISOString(),
+          validateInput: (v) => (isNaN(Date.parse(v)) ? "Invalid date format" : undefined),
+        });
+        if (!iso) { return; }
+        fieldValue = Timestamp.fromDate(new Date(iso));
+      }
+      break;
+    }
     case "object":
       fieldValue = {};
       shouldOpenInEditor = true;
@@ -615,9 +797,15 @@ export async function addFieldCommand(
   }
 
   try {
-    await docRef.update(new FieldPath(fieldName.trim()), fieldValue);
-    if (connectionId) {
-      DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
+    const conn = connectionId ? ConnectionManager.getInstance().getConnection(connectionId) : undefined;
+    if (conn?.isLocalJson) {
+      LocalJsonService.getInstance().updateField(conn, docRef.path, fieldName.trim(), fieldValue);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId!, docRef.path);
+    } else {
+      await docRef.update(new FieldPath(fieldName.trim()), fieldValue);
+      if (connectionId) {
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
+      }
     }
     vscode.window.showInformationMessage(`Field '${fieldName.trim()}' added!`);
     explorerDataProvider.refreshNode(item);

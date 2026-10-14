@@ -63,6 +63,25 @@ export default async function openPath(
       }
 
       if (parts.length % 2 === 0) {
+        const conn = connectionManager.getConnection(connectionId);
+        if (conn?.isLocalJson) {
+          const authority = connectionId || "default";
+          const targetUriPath = targetField
+            ? `/${cleanPath}/${encodeURIComponent(targetField)}.json`
+            : `/${cleanPath}.json`;
+
+          const uri = vscode.Uri.from({
+            scheme: "ketrik-firestore-studio",
+            authority,
+            path: targetUriPath,
+          });
+
+          const textDoc = await vscode.workspace.openTextDocument(uri);
+          await vscode.languages.setTextDocumentLanguage(textDoc, "json");
+          await vscode.window.showTextDocument(textDoc, { preview: false, preserveFocus: true });
+          return;
+        }
+
         const firestore = await connectionManager.getFirestore(connectionId);
         const doc = firestore.doc(cleanPath);
         await openDocument(doc, connectionId, targetField);

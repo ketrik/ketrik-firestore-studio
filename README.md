@@ -6,6 +6,19 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 
 ## Features
 
+- **Local JSON Database, Seed Store & Bi-Directional Firestore Sync**:
+  - Connect directly to single local `.json` files or folders of seed data as offline Firestore databases without credentials or Java emulator processes.
+  - Full parity with live Firestore: browse tree collections/documents/fields, edit documents in-place, and open collections in the interactive table grid.
+  - Push / Seed local collections or individual documents to Cloud Firestore / Emulators with batching and collision resolution (Merge vs Overwrite).
+  - Snapshot live collections or documents directly into local JSON databases.
+- **Timestamp Formatting & Inlay Hints Suite**:
+  - Automatically parses `{ _seconds, _nanoseconds }` maps across the Explorer tree and editor.
+  - Inline editor inlay hints (`🕒 <date> (<relative>)`) and rich hover tooltips with local time, UTC, and epoch breakdowns.
+  - Interactive timestamp editor menu (Set to Now, ServerTimestamp, Edit ISO string).
+- **Document Storage Size Monitoring & 1MB Quota Safety**:
+  - Exact Firestore document storage size calculations according to Google Cloud specs (UTF-8 bytes, types, metadata overhead).
+  - In-Tree document size badges (`240 B`, `1.4 KB`, `⚡ 820 KB`, `⚠️ 1.01 MB`) with comprehensive tooltips and limit warning percentages.
+  - Dynamic VS Code Status Bar item (`Firestore Document Size`) tracking the active document's size and warning thresholds live as you edit.
 - **Security Rules Inspector, Diff & AST Badging**: Inspect live `firestore.rules`, compare live against local workspace rules, and deploy rules. Visual single-character security badges (`🚨`, `⚠️ 🌐`, `👤`, `🛡️`, `🔑`, `🔒`) in the Explorer tree with rich hover tooltips (`📖 Read:` / `✍️ Write:` role indicators) immediately expose public or restricted collections.
 - **Firebase Authentication & User Management Suite**:
   - Dedicated **Authentication (Users & Claims)** tree branch with cursor-based pagination.
@@ -93,6 +106,11 @@ A powerful Visual Studio Code extension for exploring, querying, and editing mul
 | `ketrik-firestore-studio.importCollection` | Import Data (CSV, JSON, NDJSON)... | Batch import datasets with ID strategies and type coercion |
 | `ketrik-firestore-studio.createAuthUser` | Create New Auth User... | Scaffold new Firebase Auth account directly from VS Code |
 | `ketrik-firestore-studio.inspectProjectAuthConfig` | Project Auth Security & Policies | Inspect project authentication password policies, email privacy & MFA |
+| `ketrik-firestore-studio.copyCollectionToInstance` | Copy Collection to Another Instance... | 1-click batch copy collection across Firebase instances or local databases |
+| `ketrik-firestore-studio.pushLocalCollectionToFirestore` | Push Collection to Firestore | Batch push / seed local JSON collection into Cloud Firestore or Emulator |
+| `ketrik-firestore-studio.snapshotFirestoreToLocalJson` | Snapshot Collection to Local JSON | Snapshot live collection documents into a local JSON database file |
+| `ketrik-firestore-studio.pushLocalDocumentToFirestore` | Push Document to Firestore | Push a single local document into Cloud Firestore or Emulator |
+| `ketrik-firestore-studio.snapshotDocumentToLocalJson` | Snapshot Document to Local JSON | Snapshot a single live document into a local JSON store |
 
 
 ---

@@ -6,6 +6,7 @@ import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentClipboard } from "../services/DocumentClipboard";
 import { TemplateService } from "../services/TemplateService";
+import { LocalJsonService } from "../services/LocalJsonService";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 
 /**
@@ -15,7 +16,7 @@ export async function jumpToDocumentCommand(
   item: CollectionItem,
   explorerDataProvider: ExplorerDataProvider
 ) {
-  if (!item?.reference) {
+  if (!item?.collectionId) {
     vscode.window.showErrorMessage("No collection selected.");
     return;
   }
@@ -30,12 +31,36 @@ export async function jumpToDocumentCommand(
     return;
   }
 
+  const trimmedId = docId.trim();
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+
+  if (conn?.isLocalJson) {
+    const docPath = `${item.collectionId}/${trimmedId}`;
+    const doc = LocalJsonService.getInstance().getDocument(conn, docPath);
+    if (!doc) {
+      const createChoice = await vscode.window.showWarningMessage(
+        `Document '${trimmedId}' does not exist in local collection '${item.collectionId}'. Would you like to create it?`,
+        "Create",
+        "Cancel"
+      );
+      if (createChoice === "Create") {
+        LocalJsonService.getInstance().setDocument(conn, docPath, {});
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, docPath);
+        await openPath(docPath, item.connectionId);
+        explorerDataProvider.refreshNode(item);
+      }
+      return;
+    }
+    await openPath(docPath, item.connectionId);
+    return;
+  }
+
   try {
-    const docRef = item.reference.doc(docId.trim());
+    const docRef = item.reference.doc(trimmedId);
     const snapshot = await docRef.get();
     if (!snapshot.exists) {
       const createChoice = await vscode.window.showWarningMessage(
-        `Document '${docId.trim()}' does not exist in collection '${item.collectionId}'. Would you like to create it?`,
+        `Document '${trimmedId}' does not exist in collection '${item.collectionId}'. Would you like to create it?`,
         "Create",
         "Cancel"
       );
@@ -61,7 +86,7 @@ export async function createDocumentCommand(
   item: CollectionItem,
   explorerDataProvider: ExplorerDataProvider
 ) {
-  if (!item?.reference) {
+  if (!item?.collectionId) {
     vscode.window.showErrorMessage("No collection selected.");
     return;
   }
@@ -87,21 +112,42 @@ export async function createDocumentCommand(
 
   if (!data) {
     const json = await vscode.window.showInputBox({
-      prompt: "Enter document data as JSON",
-      placeHolder: '{"field1": "value1", "field2": 123}',
+      prompt: "Enter document data as JSON (press Enter to create empty document)",
+      placeHolder: "{}",
+      value: "{}",
     });
 
-    if (!json) {
-      vscode.window.showWarningMessage("No data entered.");
+    if (json === undefined) {
       return;
     }
 
-    try {
-      data = JSON.parse(json);
-    } catch {
-      vscode.window.showErrorMessage("Invalid JSON.");
-      return;
+    const trimmed = json.trim();
+    if (!trimmed || trimmed === "{}") {
+      data = {};
+    } else {
+      try {
+        data = JSON.parse(trimmed);
+      } catch {
+        vscode.window.showErrorMessage("Invalid JSON.");
+        return;
+      }
     }
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.isLocalJson) {
+    const finalDocId = docId && docId.trim() ? docId.trim() : `doc_${Date.now()}`;
+    const docPath = `${item.collectionId}/${finalDocId}`;
+    try {
+      LocalJsonService.getInstance().setDocument(conn, docPath, data);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, docPath);
+      await openPath(docPath, item.connectionId);
+      vscode.window.showInformationMessage("Local document created!");
+      explorerDataProvider.refreshNode(item);
+    } catch (err: any) {
+      vscode.window.showErrorMessage("Failed to create local document: " + err.message);
+    }
+    return;
   }
 
   try {
@@ -123,7 +169,30 @@ export async function deleteDocumentCommand(
   item: DocumentItem,
   explorerDataProvider: ExplorerDataProvider
 ) {
-  if (!item?.reference) {
+  if (!item?.documentId) {
+    return;
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.isLocalJson) {
+    const confirm = await vscode.window.showWarningMessage(
+      `Are you sure you want to delete local document "${item.documentId}"?`,
+      { modal: true },
+      "Delete",
+      "Cancel"
+    );
+    if (confirm !== "Delete") return;
+
+    try {
+      LocalJsonService.getInstance().deleteDocument(conn, item.reference.path);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.reference.path);
+      vscode.window.showInformationMessage(`Deleted local document "${item.documentId}".`);
+      const collId = item.reference.path.split("/")[0];
+      const parentItem = new CollectionItem(collId, { id: collId, path: collId } as any, item.connectionId);
+      explorerDataProvider.refreshNode(parentItem);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to delete local document: ${err.message}`);
+    }
     return;
   }
 
@@ -193,17 +262,12 @@ export async function duplicateDocumentCommand(
   item: DocumentItem,
   explorerDataProvider: ExplorerDataProvider
 ) {
-  if (!item?.reference) {
+  if (!item?.documentId) {
     vscode.window.showErrorMessage("No document selected.");
     return;
   }
 
-  const snapshot = await item.reference.get();
-  if (!snapshot.exists) {
-    vscode.window.showErrorMessage(`Document "${item.documentId}" does not exist.`);
-    return;
-  }
-
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
   const newDocId = await vscode.window.showInputBox({
     prompt: `Duplicate document "${item.documentId}"`,
     value: `${item.documentId}_copy`,
@@ -212,6 +276,30 @@ export async function duplicateDocumentCommand(
 
   if (newDocId === undefined) {
     return; // User cancelled
+  }
+
+  if (conn?.isLocalJson) {
+    const collId = item.reference.path.split("/")[0];
+    const finalDocId = newDocId.trim() || `doc_${Date.now()}`;
+    const targetDocPath = `${collId}/${finalDocId}`;
+    try {
+      const data = LocalJsonService.getInstance().getDocument(conn, item.reference.path) || {};
+      LocalJsonService.getInstance().setDocument(conn, targetDocPath, JSON.parse(JSON.stringify(data)));
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, targetDocPath);
+      vscode.window.showInformationMessage(`Local document duplicated as "${finalDocId}"!`);
+      await openPath(targetDocPath, item.connectionId);
+      const parentItem = new CollectionItem(collId, { id: collId, path: collId } as any, item.connectionId);
+      explorerDataProvider.refreshNode(parentItem);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to duplicate local document: ${err.message}`);
+    }
+    return;
+  }
+
+  const snapshot = await item.reference.get();
+  if (!snapshot.exists) {
+    vscode.window.showErrorMessage(`Document "${item.documentId}" does not exist.`);
+    return;
   }
 
   try {
@@ -234,8 +322,29 @@ export async function duplicateDocumentCommand(
  * Copy document to internal studio clipboard buffer.
  */
 export async function copyDocumentCommand(item: DocumentItem) {
-  if (!item?.reference) {
+  if (!item?.documentId) {
     vscode.window.showErrorMessage("No document selected.");
+    return;
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.isLocalJson) {
+    const data = LocalJsonService.getInstance().getDocument(conn, item.reference.path);
+    if (!data) {
+      vscode.window.showErrorMessage(`Local document "${item.documentId}" does not exist.`);
+      return;
+    }
+
+    DocumentClipboard.getInstance().set({
+      sourceDocId: item.documentId,
+      sourcePath: item.reference.path,
+      sourceConnectionId: item.connectionId,
+      data: JSON.parse(JSON.stringify(data)),
+    });
+
+    vscode.window.showInformationMessage(
+      `Local document "${item.documentId}" copied to Firestore Studio clipboard.`
+    );
     return;
   }
 
@@ -303,6 +412,26 @@ export async function pasteDocumentCommand(
       return; // cancelled
     }
 
+    const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+    if (conn?.isLocalJson) {
+      const key = entryKey?.trim() || clipboard.sourceDocId;
+      const currentDoc = LocalJsonService.getInstance().getDocument(conn, item.parentDocRef.path) || {};
+      if (isArray) {
+        const arr = Array.isArray(currentDoc[item.fieldName]) ? currentDoc[item.fieldName] : [];
+        arr.push(clipboard.data);
+        LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, item.fieldName, arr);
+        vscode.window.showInformationMessage(`Appended document to local Array "${item.fieldName}"!`);
+      } else {
+        const map = currentDoc[item.fieldName] && typeof currentDoc[item.fieldName] === "object" ? currentDoc[item.fieldName] : {};
+        map[key] = clipboard.data;
+        LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, item.fieldName, map);
+        vscode.window.showInformationMessage(`Pasted document as key "${key}" into local Map "${item.fieldName}"!`);
+      }
+      documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+      explorerDataProvider.refreshNode(item);
+      return;
+    }
+
     try {
       const key = entryKey?.trim() || clipboard.sourceDocId;
       if (isArray) {
@@ -332,7 +461,7 @@ export async function pasteDocumentCommand(
   }
 
   // Case B: Pasting into a discrete Collection
-  if (!item.reference) {
+  if (!item.collectionId) {
     vscode.window.showErrorMessage("No target collection selected.");
     return;
   }
@@ -345,6 +474,24 @@ export async function pasteDocumentCommand(
 
   if (targetDocId === undefined) {
     return; // User cancelled
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.isLocalJson) {
+    const finalDocId = targetDocId.trim() || `doc_${Date.now()}`;
+    const docPath = `${item.collectionId}/${finalDocId}`;
+    try {
+      LocalJsonService.getInstance().setDocument(conn, docPath, clipboard.data);
+      documentFileSystemProvider.invalidateAndNotify(item.connectionId, docPath);
+      vscode.window.showInformationMessage(
+        `Pasted local document "${finalDocId}" into "${item.collectionId}"!`
+      );
+      await openPath(docPath, item.connectionId);
+      explorerDataProvider.refreshNode(item);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to paste local document: ${err.message}`);
+    }
+    return;
   }
 
   try {
@@ -368,8 +515,17 @@ export async function pasteDocumentCommand(
  * Copy formatted JSON of a document straight to the OS clipboard.
  */
 export async function copyDocumentJsonCommand(item: DocumentItem) {
-  if (!item?.reference) {
+  if (!item?.documentId) {
     vscode.window.showErrorMessage("No document selected.");
+    return;
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.isLocalJson) {
+    const data = LocalJsonService.getInstance().getDocument(conn, item.reference.path) || {};
+    const jsonText = JSON.stringify(data, null, 2);
+    await vscode.env.clipboard.writeText(jsonText);
+    vscode.window.showInformationMessage(`Copied local document JSON to clipboard.`);
     return;
   }
 

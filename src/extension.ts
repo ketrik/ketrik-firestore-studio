@@ -61,6 +61,13 @@ import { generateSchemaCommand } from "./commands/schemaCommands";
 import { exportCollectionCommand, importCollectionCommand } from "./commands/importExportCommands";
 import { convertDashboardFormatCommand } from "./commands/dashboardCommands";
 import {
+  pushLocalCollectionToFirestoreCommand,
+  snapshotFirestoreToLocalJsonCommand,
+  pushLocalDocumentToFirestoreCommand,
+  snapshotDocumentToLocalJsonCommand,
+} from "./commands/localSyncCommands";
+import { copyCollectionToInstanceCommand } from "./commands/copyCollectionCommand";
+import {
   startEmulatorCommand,
   stopEmulatorCommand,
   restartEmulatorCommand,
@@ -78,6 +85,8 @@ import { openFieldAsTable } from "./webview/openFieldAsTable";
 import { openAuthUsersAsTable } from "./webview/openAuthUsersAsTable";
 import { ConnectionManager } from "./connections/ConnectionManager";
 import { TemplateService } from "./services/TemplateService";
+import { TimestampInlayHintsProvider, TimestampHoverProvider } from "./editor/TimestampEditorDecorations";
+import { DocumentSizeStatusBarController } from "./editor/DocumentSizeStatusBarController";
 
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize ConnectionManager singleton
@@ -100,6 +109,10 @@ export async function activate(context: vscode.ExtensionContext) {
   const documentFileSystemProvider = DocumentFileSystemProvider.getInstance();
   context.subscriptions.push(documentFileSystemProvider);
 
+  // Initialize status bar item for active Firestore document storage size
+  const documentSizeStatusBar = new DocumentSizeStatusBarController();
+  context.subscriptions.push(documentSizeStatusBar);
+
   // Automatically refresh Explorer Tree whenever a document or sub-field is saved in the editor (granular, debounced)
   context.subscriptions.push(
     documentFileSystemProvider.onDidChangeFile((events) => {
@@ -110,6 +123,18 @@ export async function activate(context: vscode.ExtensionContext) {
   const explorerView = vscode.window.createTreeView("ketrik-firestore-studio-view", {
     treeDataProvider: explorerDataProvider,
   });
+
+  // Register editor Inlay Hints & Hover providers for Firestore Timestamps
+  const jsonSelector: vscode.DocumentSelector = [
+    { scheme, language: "json" },
+    { scheme, language: "jsonc" },
+    { scheme: "file", language: "json" },
+    { scheme: "file", language: "jsonc" },
+  ];
+  context.subscriptions.push(
+    vscode.languages.registerInlayHintsProvider(jsonSelector, new TimestampInlayHintsProvider()),
+    vscode.languages.registerHoverProvider(jsonSelector, new TimestampHoverProvider())
+  );
 
   // Invalidate template cache when workspace configuration changes
   context.subscriptions.push(
@@ -408,6 +433,31 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.convertDashboardFormat",
       convertDashboardFormatCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.copyCollectionToInstance",
+      (item: CollectionItem) =>
+        copyCollectionToInstanceCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.pushLocalCollectionToFirestore",
+      (item: CollectionItem) =>
+        pushLocalCollectionToFirestoreCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.snapshotFirestoreToLocalJson",
+      (item: CollectionItem) =>
+        snapshotFirestoreToLocalJsonCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.pushLocalDocumentToFirestore",
+      (item: DocumentItem) =>
+        pushLocalDocumentToFirestoreCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.snapshotDocumentToLocalJson",
+      (item: DocumentItem) =>
+        snapshotDocumentToLocalJsonCommand(item, explorerDataProvider)
     )
   );
 
