@@ -270,6 +270,56 @@ export function getCollectionTableStyles(): string {
       100% { background-color: transparent; }
     }
 
+    /* ── Live Watch Mode Real-time Mutation Animations ── */
+    .row-flash-added {
+      animation: rowFlashGreen 2.2s cubic-bezier(0.25, 1, 0.5, 1) forwards !important;
+    }
+    @keyframes rowFlashGreen {
+      0% { background-color: rgba(46, 204, 113, 0.45) !important; outline: 1px solid rgba(46, 204, 113, 0.8); }
+      40% { background-color: rgba(46, 204, 113, 0.25) !important; }
+      100% { background-color: transparent; outline: none; }
+    }
+    .row-flash-modified {
+      animation: rowFlashAmber 2.2s cubic-bezier(0.25, 1, 0.5, 1) forwards !important;
+    }
+    @keyframes rowFlashAmber {
+      0% { background-color: rgba(243, 156, 18, 0.45) !important; outline: 1px solid rgba(243, 156, 18, 0.8); }
+      40% { background-color: rgba(243, 156, 18, 0.22) !important; }
+      100% { background-color: transparent; outline: none; }
+    }
+    .row-flash-removed {
+      animation: rowFlashRed 1.8s ease-out forwards !important;
+    }
+    @keyframes rowFlashRed {
+      0% { background-color: rgba(231, 76, 60, 0.45) !important; opacity: 1; }
+      70% { background-color: rgba(231, 76, 60, 0.2) !important; opacity: 0.35; transform: scaleY(0.85); }
+      100% { opacity: 0; transform: scaleY(0); display: none; }
+    }
+    .live-watch-btn.active {
+      background: rgba(46, 204, 113, 0.18) !important;
+      color: #2ecc71 !important;
+      border: 1px solid rgba(46, 204, 113, 0.45) !important;
+      font-weight: 600;
+    }
+    .live-watch-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #888;
+      margin-right: 5px;
+      transition: background 0.3s ease;
+    }
+    .live-watch-btn.active .live-watch-indicator {
+      background: #2ecc71;
+      box-shadow: 0 0 8px #2ecc71;
+      animation: pulseDot 1.6s infinite ease-in-out;
+    }
+    @keyframes pulseDot {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.35); opacity: 0.65; }
+    }
+
     /* ── Storage Media Previews & DocumentReference Links ── */
     .storage-media-chip {
       display: inline-flex;
@@ -550,6 +600,9 @@ export function getCollectionTableHtml(
           </button>
           <button id="toggleTimeTravelBtn" class="secondary toggle-btn" title="Simulate time-travel to preview live, scheduled, or expired documents" style="display:none;">
             <span>⏱️</span> Simulate Time
+          </button>
+          <button id="toggleLiveWatchBtn" class="secondary toggle-btn live-watch-btn" title="Toggle Real-Time Live Watch mode (listens to Firestore onSnapshot with mutation flash)">
+            <span class="live-watch-indicator"></span> 📡 Live Watch
           </button>
           <div class="search-wrapper">
             <input id="searchInput" type="text" placeholder="Filter loaded rows..." />
@@ -1437,6 +1490,73 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
               td.innerHTML = formatCell(doc ? doc[field] : null);
               td.classList.add('cell-flash-error');
               setTimeout(() => td.classList.remove('cell-flash-error'), 1400);
+        if (msg.type === 'liveWatchState') {
+          const liveWatchBtn = document.getElementById('toggleLiveWatchBtn');
+          if (liveWatchBtn) {
+            liveWatchBtn.classList.toggle('active', !!msg.active);
+            if (msg.active) {
+              liveWatchBtn.title = 'Live Watch is ACTIVE (Listening to real-time onSnapshot events). Click to pause.';
+            } else {
+              liveWatchBtn.title = 'Toggle Real-Time Live Watch mode (listens to Firestore onSnapshot with mutation flash)';
+            }
+          }
+        }
+
+        if (msg.type === 'liveWatchEvent') {
+          const { changeType, doc, docId, docPath, updatedHeaders } = msg;
+
+          if (updatedHeaders && Array.isArray(updatedHeaders)) {
+            currentHeaders = updatedHeaders;
+            document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
+          }
+
+          if (changeType === 'added') {
+            // Check if document is already present
+            const existingIdx = allLoadedDocs.findIndex(d => d.__path === docPath);
+            if (existingIdx >= 0) {
+              allLoadedDocs[existingIdx] = doc;
+            } else {
+              allLoadedDocs.unshift(doc);
+            }
+            filterCurrentDocs();
+
+            // Find tr and animate flash
+            const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
+            if (tr) {
+              tr.classList.remove('row-flash-added', 'row-flash-modified', 'row-flash-removed');
+              void tr.offsetWidth; // force reflow
+              tr.classList.add('row-flash-added');
+              setTimeout(() => tr.classList.remove('row-flash-added'), 2200);
+            }
+          } else if (changeType === 'modified') {
+            const idx = allLoadedDocs.findIndex(d => d.__path === docPath);
+            if (idx >= 0) {
+              allLoadedDocs[idx] = doc;
+            } else {
+              allLoadedDocs.unshift(doc);
+            }
+            filterCurrentDocs();
+
+            const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
+            if (tr) {
+              tr.classList.remove('row-flash-added', 'row-flash-modified', 'row-flash-removed');
+              void tr.offsetWidth; // force reflow
+              tr.classList.add('row-flash-modified');
+              setTimeout(() => tr.classList.remove('row-flash-modified'), 2200);
+            }
+          } else if (changeType === 'removed') {
+            const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
+            if (tr) {
+              tr.classList.remove('row-flash-added', 'row-flash-modified', 'row-flash-removed');
+              void tr.offsetWidth; // force reflow
+              tr.classList.add('row-flash-removed');
+              setTimeout(() => {
+                allLoadedDocs = allLoadedDocs.filter(d => d.__path !== docPath);
+                filterCurrentDocs();
+              }, 1200);
+            } else {
+              allLoadedDocs = allLoadedDocs.filter(d => d.__path !== docPath);
+              filterCurrentDocs();
             }
           }
         }
@@ -1453,6 +1573,10 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
       document.getElementById('toggleEnvBtn').onclick = function() {
         const isHidden = tableEl.classList.toggle('hide-env');
         this.classList.toggle('active', isHidden);
+      };
+
+      document.getElementById('toggleLiveWatchBtn').onclick = function() {
+        vscode.postMessage({ command: 'toggleLiveWatch' });
       };
 
       document.getElementById('toggleTimeTravelBtn').onclick = function() {

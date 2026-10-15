@@ -114,10 +114,11 @@ export class DocumentSizeStatusBarController implements vscode.Disposable {
       if (sizeInfo.isCritical) {
         md.appendMarkdown(`> ⚠️ **CRITICAL**: Document is very close to or exceeds the 1MB Firestore limit. Writes may fail.\n`);
       } else if (sizeInfo.isWarning) {
-        md.appendMarkdown(`> ⚡ **WARNING**: Document exceeds 800 KB. Consider normalizing sub-fields or splitting into subcollections.\n`);
+        md.appendMarkdown(`> ⚠️ **WARNING**: Document exceeds 750 KB. Consider normalizing sub-fields or splitting into subcollections.\n`);
       } else {
         md.appendMarkdown(`*Calculated per Google Cloud Firestore storage size specs (fields, types, path overhead).*`);
       }
+
 
       this._statusBarItem.tooltip = md;
       this._statusBarItem.show();

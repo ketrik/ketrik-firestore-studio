@@ -72,29 +72,44 @@ export class DocumentItem extends Item {
 
     if (docData !== undefined) {
       const sizeInfo = getDocumentSizeInfo(docData, reference.path);
-      const sizeTag = sizeInfo.isCritical
-        ? `⚠️ ${sizeInfo.formatted}`
-        : sizeInfo.isWarning
-        ? `⚡ ${sizeInfo.formatted}`
-        : sizeInfo.formatted;
+      const isExceeded = sizeInfo.isWarning || sizeInfo.isCritical;
 
-      this.description = sizeTag;
+      // When over 750 KB (or critical), show red icon and clear high-visibility label
+      if (isExceeded) {
+        this.description = sizeInfo.isCritical
+          ? `⚠️ ${sizeInfo.formatted} (CRITICAL)`
+          : `⚠️ ${sizeInfo.formatted}`;
+        this.iconPath = new vscode.ThemeIcon(
+          "file-code",
+          new vscode.ThemeColor("charts.red")
+        );
+      } else {
+        this.description = sizeInfo.formatted;
+        this.iconPath = new vscode.ThemeIcon(
+          "file-code",
+          new vscode.ThemeColor("charts.blue")
+        );
+      }
+
       this.tooltip =
         `Document: ${documentId}\n` +
         `Path: [${connectionId}] ${reference.path}\n` +
         `Size: ${sizeInfo.formatted} (${sizeInfo.bytes.toLocaleString()} bytes)\n` +
-        `Limit: ${sizeInfo.percentageOfLimit}% of 1 MB max`;
+        `Limit: ${sizeInfo.percentageOfLimit}% of 1 MB max${
+          isExceeded
+            ? `\n⚠️ High Document Size: Exceeds 750 KB quota threshold.`
+            : ""
+        }`;
     } else {
       this.tooltip = `[${connectionId}] ${reference.path}`;
+      this.iconPath = new vscode.ThemeIcon(
+        "file-code",
+        new vscode.ThemeColor("charts.blue")
+      );
     }
-
-    // Distinct vibrant blue icon for documents
-    this.iconPath = new vscode.ThemeIcon(
-      "file-code",
-      new vscode.ThemeColor("charts.blue")
-    );
   }
 }
+
 
 /**
  * A Tree View item representing a top-level field / root variable inside a document.
@@ -381,6 +396,93 @@ export class ShowMoreAuthUsersItem extends Item {
       command: "ketrik-firestore-studio.showMoreAuthUsers",
       title: "Load More Users",
       arguments: [connectionId],
+    };
+  }
+}
+
+/**
+ * A Tree View item representing the "Composite Indexes" branch of a connection.
+ */
+export class CompositeIndexesBranchItem extends Item {
+  reference = undefined;
+
+  constructor(public connectionId: string) {
+    super("Composite Indexes", vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `indexes:${connectionId}`;
+    this.contextValue = "compositeIndexesBranch";
+    this.iconPath = new vscode.ThemeIcon("list-tree", new vscode.ThemeColor("charts.blue"));
+    this.tooltip = "Firestore Composite Indexes (Live Cloud / Emulator)";
+  }
+}
+
+/**
+ * A Tree View item representing an individual Composite Index.
+ */
+export class CompositeIndexItem extends Item {
+  reference = undefined;
+
+  constructor(
+    public connectionId: string,
+    public index: import("../indexes/indexesService").FirestoreCompositeIndex
+  ) {
+    // Formulate a concise summary of the index fields, e.g. "status ASC, createdAt DESC" or "__name__ ASC, embedding (VECTOR)"
+    const fieldsDesc = index.fields
+      .map((f) => {
+        if (f.arrayConfig === "CONTAINS") {
+          return `${f.fieldPath} ⋲ [CONTAINS]`;
+        }
+        if (f.order) {
+          return `${f.fieldPath} ${f.order === "DESCENDING" ? "DESC" : "ASC"}`;
+        }
+        return f.fieldPath;
+      })
+      .join(", ");
+
+    const label = `${index.collectionGroup} (${fieldsDesc})`;
+
+    super(label, vscode.TreeItemCollapsibleState.None);
+
+    this.id = `index:${connectionId}:${index.name}`;
+    this.contextValue = "compositeIndex";
+
+    const scopeBadge = index.queryScope === "COLLECTION_GROUP" ? "🌐 Group" : "📁 Collection";
+    let stateBadge = "READY";
+    let iconName = "check";
+    let iconColor: vscode.ThemeColor | undefined = new vscode.ThemeColor("charts.green");
+
+    if (index.state === "CREATING") {
+      stateBadge = "⏳ Building";
+      iconName = "sync~spin";
+      iconColor = new vscode.ThemeColor("charts.yellow");
+    } else if (index.state === "NEEDS_REPAIR") {
+      stateBadge = "⚠️ Needs Repair";
+      iconName = "warning";
+      iconColor = new vscode.ThemeColor("charts.red");
+    }
+
+    this.description = `${scopeBadge} • ${stateBadge}`;
+
+    this.tooltip = [
+      `Collection Group: ${index.collectionGroup}`,
+      `Query Scope: ${index.queryScope}`,
+      `State: ${index.state}`,
+      `Fields:\n${index.fields
+        .map(
+          (f) =>
+            `  - ${f.fieldPath} (${
+              f.arrayConfig === "CONTAINS" ? "ARRAY_CONTAINS" : f.order || "ASCENDING"
+            })`
+        )
+        .join("\n")}`,
+      `Resource Name:\n${index.name}`,
+    ].join("\n");
+
+    this.iconPath = new vscode.ThemeIcon(iconName, iconColor);
+
+    this.command = {
+      command: "ketrik-firestore-studio.inspectIndexDefinition",
+      title: "Inspect Index Definition",
+      arguments: [this],
     };
   }
 }

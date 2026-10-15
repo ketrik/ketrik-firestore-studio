@@ -25,8 +25,9 @@ export interface DocumentSizeInfo {
 }
 
 export const FIRESTORE_MAX_DOC_SIZE_BYTES = 1048576; // 1 MiB (1,048,576 bytes)
-export const WARNING_THRESHOLD_BYTES = 800 * 1024; // ~800 KB (78%)
-export const CRITICAL_THRESHOLD_BYTES = 1000 * 1024; // ~1,000 KB (97%)
+export const WARNING_THRESHOLD_BYTES = 750 * 1024; // 750 KB (73.2% of 1MB limit)
+export const CRITICAL_THRESHOLD_BYTES = 950 * 1024; // 950 KB (92.8% of 1MB limit)
+
 
 /**
  * Calculates the exact or estimated Firestore document size in bytes for a given data payload and optional document path.

@@ -2,7 +2,28 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.12.0] - 2026-10-15
+
+### Added
+- **Firestore Composite Indexes Management Suite**:
+  * **Explorer Tree Branch**: Live view of all deployed Cloud Firestore and Emulator composite indexes with status badges (`READY`, `Building`, `Needs Repair`), query scopes (`COLLECTION` vs `COLLECTION_GROUP`), and vector embedding support.
+  * **Index Operations**: 1-click JSON definition inspection and safe deletion via Cloud Firestore REST API.
+  * **Two-Way `firestore.indexes.json` Sync**: Pull live cloud indexes to workspace (Merge/Overwrite), side-by-side graphical diff, and deploy local index definitions directly to Firestore.
+  * **Visual Index Builder & Error Catcher**: Multi-step wizard to create composite indexes, plus 1-click builder launcher on missing index (`FAILED_PRECONDITION`) query errors.
+- **Synthetic Mock Data Generator**:
+  * Generate 1 to 5,000 realistic documents with domain-aware schema inference from existing collections.
+  * Rich generators for names, emails, phones, avatars, prices, statuses, IDs, geo coordinates, and timestamps.
+  * High-throughput chunked `WriteBatch` ingestion (400 docs/batch) with live progress bar and cancellation.
+- **Real-Time Live Watch Mode (`📡 Live Watch`)**:
+  * Real-time `onSnapshot` subscription directly in Collection Tables and Collection Group queries.
+  * Animated mutation flash feedback: green pulse for new documents, amber glow for modified fields, red fade-out for deletions.
+  * Invalidate and sync open virtual JSON editor tabs automatically on incoming remote events.
+  * Quota safety watchdog auto-pauses listeners after 5 minutes of inactivity.
+- **Enhanced Document Size Visual Indicators**:
+  * High-visibility red document icon `$(file-code)` and red warning label `⚠️ <size>` in explorer tree when documents exceed 750 KB quota threshold.
+
 ## [1.11.0] - 2026-10-14
+
 
 ### Added
 - **Local JSON Database & Mock Store Support**:

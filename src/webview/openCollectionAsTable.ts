@@ -223,12 +223,20 @@ export async function openCollectionAsTable(
       if (match) {
         const indexUrl = match[0];
         vscode.window.showErrorMessage(
-          `Collection Group query requires a composite index. Create it in Firebase Console:`,
+          `Query requires a composite index. Create it via Firebase Console or Visual Studio Code:`,
           "Create Index in Firebase Console",
+          "Build / Add to firestore.indexes.json",
           "Copy Index URL"
-        ).then((action) => {
+        ).then(async (action) => {
           if (action === "Create Index in Firebase Console") {
             vscode.env.openExternal(vscode.Uri.parse(indexUrl));
+          } else if (action === "Build / Add to firestore.indexes.json") {
+            // Trigger Visual Composite Index Builder pre-seeded with this collection & query
+            await vscode.commands.executeCommand("ketrik-firestore-studio.buildCompositeIndex", {
+              connectionId,
+              collectionGroup: collectionId,
+              collectionId,
+            });
           } else if (action === "Copy Index URL") {
             vscode.env.clipboard.writeText(indexUrl);
             vscode.window.showInformationMessage("Index URL copied to clipboard!");
@@ -237,6 +245,7 @@ export async function openCollectionAsTable(
       } else {
         vscode.window.showErrorMessage(`Failed to load documents for '${collectionId}': ${err.message}`);
       }
+
       return { newDocs: [], hasMore: false };
     }
   }
@@ -933,12 +942,177 @@ export async function openCollectionAsTable(
         bookmarks,
       });
     }
+
+    if (message.command === "toggleLiveWatch") {
+      toggleLiveWatch();
+    }
   });
+
+  // ── Live Watch Mode (Real-Time onSnapshot & Inactivity Watchdog) ─────────
+  let liveWatchUnsubscribe: (() => void) | null = null;
+  let liveWatchTimeout: NodeJS.Timeout | null = null;
+  const LIVE_WATCH_AUTO_PAUSE_MS = 5 * 60 * 1000; // 5 minutes inactivity auto-pause
+
+  function stopLiveWatch(silent = false) {
+    if (liveWatchUnsubscribe) {
+      liveWatchUnsubscribe();
+      liveWatchUnsubscribe = null;
+    }
+    if (liveWatchTimeout) {
+      clearTimeout(liveWatchTimeout);
+      liveWatchTimeout = null;
+    }
+    panel.webview.postMessage({ type: "liveWatchState", active: false });
+    if (!silent) {
+      vscode.window.showInformationMessage(
+        `Live Watch paused for ${isGroup ? "Collection Group" : "Collection"} '${collectionId}'.`
+      );
+    }
+  }
+
+  function resetLiveWatchWatchdog() {
+    if (liveWatchTimeout) {
+      clearTimeout(liveWatchTimeout);
+    }
+    liveWatchTimeout = setTimeout(() => {
+      if (liveWatchUnsubscribe) {
+        stopLiveWatch(true);
+        vscode.window.showWarningMessage(
+          `Live Watch auto-paused after 5 minutes of inactivity to protect Firestore quota for '${collectionId}'. Click 'Live Watch' to resume.`
+        );
+      }
+    }, LIVE_WATCH_AUTO_PAUSE_MS);
+  }
+
+  async function startLiveWatch() {
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    if (conn?.isLocalJson) {
+      vscode.window.showWarningMessage(
+        "Live Watch mode is designed for Cloud Firestore and Firebase Emulators. Local JSON databases update synchronously."
+      );
+      return;
+    }
+
+    try {
+      const baseQuery = await buildBaseQuery();
+      const watchQuery = baseQuery.limit(Math.min(maxRows, 200));
+
+      let isInitialSnapshot = true;
+      liveWatchUnsubscribe = watchQuery.onSnapshot(
+        (snapshot) => {
+          resetLiveWatchWatchdog();
+
+          if (isInitialSnapshot) {
+            isInitialSnapshot = false;
+            return;
+          }
+
+          const docChanges = snapshot.docChanges();
+          for (const change of docChanges) {
+            const doc = change.doc;
+            const docData = {
+              ...sanitizeFirestoreValue(doc.data()),
+              __path: doc.ref.path,
+              __id: doc.id,
+              __parentPath: doc.ref.parent && doc.ref.parent.parent ? doc.ref.parent.parent.path : null,
+            };
+
+            // Invalidate virtual file system cache for open editor tabs
+            DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, doc.ref.path);
+
+            if (change.type === "added") {
+              const headerSet = new Set(headers);
+              Object.keys(docData).forEach((k) => {
+                if (k !== "__path" && k !== "__id" && k !== "__parentPath") {
+                  headerSet.add(k);
+                }
+              });
+              const prevLen = headers.length;
+              headers = sortHeaders(Array.from(headerSet));
+              const headersChanged = headers.length !== prevLen;
+
+              // Prepend or replace in loadedDocs
+              const exIdx = loadedDocs.findIndex((d) => d.__path === doc.ref.path);
+              if (exIdx >= 0) {
+                loadedDocs[exIdx] = docData;
+              } else {
+                loadedDocs.unshift(docData);
+              }
+
+              panel.webview.postMessage({
+                type: "liveWatchEvent",
+                changeType: "added",
+                doc: docData,
+                docId: doc.id,
+                docPath: doc.ref.path,
+                updatedHeaders: headersChanged ? headers : undefined,
+              });
+            } else if (change.type === "modified") {
+              const headerSet = new Set(headers);
+              Object.keys(docData).forEach((k) => {
+                if (k !== "__path" && k !== "__id" && k !== "__parentPath") {
+                  headerSet.add(k);
+                }
+              });
+              const prevLen = headers.length;
+              headers = sortHeaders(Array.from(headerSet));
+              const headersChanged = headers.length !== prevLen;
+
+              const idx = loadedDocs.findIndex((d) => d.__path === doc.ref.path);
+              if (idx >= 0) {
+                loadedDocs[idx] = docData;
+              } else {
+                loadedDocs.unshift(docData);
+              }
+
+              panel.webview.postMessage({
+                type: "liveWatchEvent",
+                changeType: "modified",
+                doc: docData,
+                docId: doc.id,
+                docPath: doc.ref.path,
+                updatedHeaders: headersChanged ? headers : undefined,
+              });
+            } else if (change.type === "removed") {
+              loadedDocs = loadedDocs.filter((d) => d.__path !== doc.ref.path);
+              panel.webview.postMessage({
+                type: "liveWatchEvent",
+                changeType: "removed",
+                docId: doc.id,
+                docPath: doc.ref.path,
+              });
+            }
+          }
+        },
+        (error) => {
+          stopLiveWatch(true);
+          vscode.window.showErrorMessage(`Live Watch subscription error: ${error.message}`);
+        }
+      );
+
+      resetLiveWatchWatchdog();
+      panel.webview.postMessage({ type: "liveWatchState", active: true });
+      vscode.window.showInformationMessage(
+        `📡 Live Watch active for ${isGroup ? "Collection Group" : "Collection"} '${collectionId}'. Real-time mutations will flash in the table.`
+      );
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to start Live Watch: ${err.message}`);
+    }
+  }
+
+  function toggleLiveWatch() {
+    if (liveWatchUnsubscribe) {
+      stopLiveWatch();
+    } else {
+      startLiveWatch();
+    }
+  }
 
   // Assign HTML content to render webview and trigger client-side ready handshake
   panel.webview.html = getCollectionTableHtml({ collectionId, connectionId }, isGroup);
 
   panel.onDidDispose(() => {
+    stopLiveWatch(true);
     messageSubscription.dispose();
     loadedDocs = [];
     headers = [];

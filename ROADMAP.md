@@ -12,9 +12,9 @@ timeline
         2026-10-10 : v1.7.0 Dual-Prefix Protocol & Modular Architecture
         2026-10-13 : v1.8.0 Security Rules & Auth Table : v1.9.0 User Cloning, Tokens & Force Logout : v1.9.1 Batch Tools, Schemas & Aggregations : v1.9.2 Local Emulator, Collection Groups & UX Polish
         2026-10-14 : v1.10.0 In-Table Editing Suite, 2-Column Inspector Drawer, Storage Media Preview & Filter.or() : v1.11.0 Local JSON Database, Mock Store, Bi-Directional Sync & Timestamp Inlay Hints
+        2026-10-15 : v1.12.0 Firestore Indexes Suite, Synthetic Mock Data Generator, Live Watch Mode & 750KB High-Quota Alerts
     section Planned
-        Dec 2026 : v1.12.0 Synthetic Mock Data Generator, Cloud Functions Triggers & Live Watch
-        Q1 2027 : v1.13.0 Storage Explorer, Auth Import/Export & Vector Search
+        Q1 2027 : v1.13.0 Cloud Functions Triggers, Cost Simulator & Free Quota Usage Dashboard, Storage Explorer & Vector Search
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -39,8 +39,8 @@ timeline
 | **v1.9.2** | Shipped | 2026-10-13 | Local Firebase Emulator suite, collection group queries, inline table icons, aggregation QuickPick, rule caching |
 | **v1.10.0** | Shipped | 2026-10-14 | In-table spreadsheet editing suite (in-cell primitives, 2-column Key-Value Property Drawer for Maps/Arrays, atomic `FieldPath` updates), Bulk Field Deletion Checklist (`deleteMultipleFields`), inline hover trash icon (`$(trash)`), Cloud Storage media preview, DocumentReference jump, disjunctive queries (`Filter.or()`), starts-with operator |
 | **v1.11.0** | Shipped | 2026-10-14 | Local JSON Database & Mock Store, cross-instance collection copy (`copyCollectionToInstance`), bi-directional sync (Push/Seed & Pull Snapshot), document storage size monitoring & status bar, timestamp formatting & inlay hints, table batch load controls (+50, +100, Load All 1K cap) & auto-replenish |
-| **v1.12.0** | Planned | Dec 2026 | Synthetic Mock Data Generator (schema-driven generator, realistic field types, batch seeding), Cloud Functions triggers, live watch & scripting shell |
-| **v1.13.0** | Planned | Q1 2027 | Dedicated Cloud Storage explorer (buckets/files), drag-and-drop upload to fields, cascade orphan file cleanup, Auth bulk import/export & email links, vector search (kNN) |
+| **v1.12.0** | Shipped | 2026-10-15 | Firestore Composite Indexes Suite (tree inspector, firestore.indexes.json 2-way sync & auto-fixer), Synthetic Mock Data Generator (schema inference, 400 docs/batch), Real-Time Live Watch Mode (onSnapshot with animated flash feedback), 750KB High-Quota Warning Indicators |
+| **v1.13.0** | Planned | Q1 2027 | Cloud Functions Triggers & Simulator, Firestore Cost Simulator & Free Quota Usage Dashboard, Storage Explorer & Vector Search |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer, local offline cache & mocking |
 
 ---
@@ -237,10 +237,25 @@ timeline
 
 ---
 
-### [v1.12.0] — Synthetic Mock Data Generator, Cloud Functions & Live Watch (Target: December 2026)
+### [v1.12.0] — Firestore Indexes Suite, Synthetic Data & Live Watch (Shipped: 2026-10-15)
 
-*Theme: Schema-driven synthetic test dataset generation, backend trigger visibility, ad-hoc Admin SDK scripting, and real-time event streaming.*
+*Theme: Zero-friction Firestore composite index governance, schema-driven synthetic mock data generation, backend trigger visibility, and real-time event streaming.*
 
+* **Firestore Indexes Management & Diagnostics Suite**:
+  * **Dedicated "Composite Indexes" Explorer Node**:
+    * New top-level branch under each connection alongside Root Collections and Authentication.
+    * Live tree nodes for each collection / collection group index displaying fields, sort orders (`ASC` / `DESC`), query scope (`COLLECTION` vs `COLLECTION_GROUP`), and live deployment status (`SERVING`, `BUILDING / CREATING`, `NEEDS_REPAIR`).
+    * Direct actions: Delete Index, inspect definition, and trigger re-index.
+  * **Two-Way Synchronization with `firestore.indexes.json`**:
+    * **Pull / Snapshot Live Cloud Indexes**: 1-click import of all currently deployed cloud indexes directly into the workspace `firestore.indexes.json` configuration file.
+    * **Side-by-Side Graphical Diff**: Compare deployed cloud indexes against local workspace definitions before deploying changes.
+    * **1-Click Cloud Deployment**: Deploy local index definitions directly to the active Firestore instance using the Google Cloud Firestore Admin REST API.
+  * **Missing Composite Index Auto-Fixer & 1-Click Builder**:
+    * Intercepts `FAILED_PRECONDITION` index required errors in Collection Tables, Collection Group queries, and Server Query Builder.
+    * Automatically parses the required index field specification from the error and offers **"Append to firestore.indexes.json"** and **"Create in Background via API"**, eliminating manual browser console navigation.
+  * **Interactive Visual Index Builder GUI**:
+    * Modal form to construct multi-field composite indexes with drag-and-drop field ordering, ASC/DESC toggles, and Array-Contains support.
+    * Manage single-field overrides (exemption rules, TTL policies, and vector index configurations).
 * **Synthetic Mock Data Generator (`ketrik-firestore-studio.generateSyntheticData`)**:
   * **Intelligent Schema Deduction & Sampling**:
     * Right-click any collection (Cloud Firestore, Local Emulator, or Local JSON) $\rightarrow$ **"Generate Synthetic Data..."**.
@@ -280,10 +295,34 @@ timeline
 
 ---
 
-### [v1.13.0] — Storage Bucket Explorer, Auth Suite Expansion & Vector Search (Target: Q1 2027)
+### [v1.13.0] — Firestore Cost Simulator, Free Quota Dashboard & Storage Explorer (Target: Q1 2027)
 
-*Theme: Full Cloud Storage browsing, advanced Auth user migration, and vector embeddings.*
+*Theme: Real-time billing transparency, free allowance tracking, query cost pre-flight estimation, and comprehensive Cloud Storage management.*
 
+* **Firestore Cost Simulator & Free Quota Usage Dashboard (`ketrik-firestore-studio.openCostSimulator`)**:
+  * **Daily Free Allowance Tracking & Progress Meters**:
+    * Full integration of standard Google Cloud / Firebase Free Tier daily quotas:
+      * **Document Reads**: `50,000 free reads / day`
+      * **Document Writes**: `20,000 free writes / day`
+      * **Document Deletes**: `20,000 free deletes / day`
+      * **Stored Data**: `1 GiB free storage`
+      * **Network Egress**: `10 GiB / month free egress`
+    * Real-time progress bars showing daily % consumed before Blaze billing kicks in.
+  * **Live Cloud Usage Retrieval (GCP Cloud Monitoring API)**:
+    * Non-blocking background querying of Google Cloud Monitoring metrics (`firestore.googleapis.com/document/read_count`, `write_count`, `delete_count`, `network/sent_bytes_count`).
+    * **Connection Status Badges**: Connection header displays daily usage summary: e.g. `📊 Today: 18.4K/50K reads (Free) | 2.1K writes`.
+    * **Interactive Historical Charts**: 7-day, 14-day, and 30-day time-series graphs breaking down operations by collection.
+  * **Query Pre-Flight Cost Profiler (Table & Query Builder)**:
+    * **"Estimate Cost" Action**: In Collection Table and Server Query Builder, executes a single-read `count()` to project the total billable reads.
+    * Highlights whether the query falls within the remaining daily free quota or calculates the estimated cost on Blaze pay-as-you-go rates ($0.06 / 100K reads).
+    * Warning guardrail when an unbounded query without `limit()` will read >10,000 documents.
+  * **Architectural Scenario & What-If Modeling Tool**:
+    * Visual calculator for capacity planning: inputs for DAU, operations per session, document size, and retention policies.
+    * Side-by-side cost projection: *Uncached Architecture* vs *Client-Cached Architecture* showing estimated monthly savings.
+    * Export simulation reports to Markdown or JSON for architectural documentation.
+  * **Configurable Budget Guardrails & Threshold Alerts**:
+    * Workspace settings (`ketrik-firestore-studio.costAlerts.dailyReadThreshold`, `dailyWriteThreshold`).
+    * Non-intrusive status bar indicator alerting developers when daily usage approaches or exceeds free quota.
 * **Dedicated Cloud Storage Explorer in Sidebar Tree**:
   * Dedicated **Cloud Storage** branch under each connection (`StorageBucketsBranchItem`): browse buckets, folders, files, MIME types, file sizes, and download URLs.
   * Drag-and-drop file upload into document fields (auto-uploads to bucket and writes resulting URL or `gs://` path).

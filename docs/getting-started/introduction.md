@@ -53,6 +53,8 @@ Ketrik Firestore Studio solves this by bringing your databases directly into VS 
 | **Recursive Deep Delete** | Deleting a document detects nested subcollections and offers recursive subcollection purging via batched deletes. |
 | **Primitive Modal Editing** | QuickPick booleans (`true`/`false`) and validated modal inputs for numbers and strings without tab clutter. |
 | **Atomic Field Renaming** | Rename root document fields safely with automatic conflict checks and live editor reloads. |
+| **Composite Indexes Suite** | Inspect live Cloud Firestore & Emulator composite indexes, inspect raw JSON definitions, and safely delete indexes directly from VS Code. |
+
 
 ---
 

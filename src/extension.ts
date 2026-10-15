@@ -58,7 +58,10 @@ import {
   inspectProjectAuthConfigCommand,
 } from "./auth/authCommands";
 import { generateSchemaCommand } from "./commands/schemaCommands";
+import { generateSyntheticDataCommand } from "./commands/syntheticDataCommands";
+import { registerIndexCommands } from "./commands/indexCommands";
 import { exportCollectionCommand, importCollectionCommand } from "./commands/importExportCommands";
+
 import { convertDashboardFormatCommand } from "./commands/dashboardCommands";
 import {
   pushLocalCollectionToFirestoreCommand,
@@ -458,10 +461,19 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.snapshotDocumentToLocalJson",
       (item: DocumentItem) =>
         snapshotDocumentToLocalJsonCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.generateSyntheticData",
+      (item: CollectionItem) =>
+        generateSyntheticDataCommand(item, explorerDataProvider)
     )
   );
 
+  registerIndexCommands(context, explorerDataProvider);
+
+
   context.subscriptions.push(explorerView);
+
 
   context.subscriptions.push(
     vscode.workspace.registerFileSystemProvider(

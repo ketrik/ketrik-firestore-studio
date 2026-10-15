@@ -28,6 +28,7 @@ All commands can be executed via the VS Code Command Palette (`Cmd+Shift+P` / `C
 | `ketrik-firestore-studio.openCollectionAsTable` | **Firestore: Open Collection as Table** | Collection Context Menu / Inline Icon | Launches the interactive collection table webview with sorting, search, single-read doc ID lookup, and server-side where query builder. |
 | `ketrik-firestore-studio.queryCollectionGroup` | **Firestore: Query Collection Group...** | Connection / Collection Menu / Palette | Flattens all subcollections with the given ID database-wide into a unified collection group table view with origin parent document links. |
 | `ketrik-firestore-studio.createDocument` | **Firestore: Create Document** | Collection Context Menu / Inline Icon | Creates a new document within the selected collection. Prompts for auto-generated ID or manual ID and opens in a virtual `.json` editor. |
+| `ketrik-firestore-studio.generateSyntheticData` | **Firestore: Generate Synthetic Mock Data...** | Collection Context Menu / Palette | Ingests 1 to 5,000 realistic mock documents using domain-aware schema inference and chunked batch writes. |
 | `ketrik-firestore-studio.deleteCollection` | **Firestore: Delete Collection** | Collection Context Menu | Batch deletes all documents within the collection (prompts for confirmation). |
 
 ---
@@ -68,3 +69,19 @@ All commands can be executed via the VS Code Command Palette (`Cmd+Shift+P` / `C
 | `ketrik-firestore-studio.addField` | **Firestore: Add Field** | Document / Map Context Menu | Adds a new field with type selection (String, Number, Boolean, Timestamp, GeoPoint, Map, Array, Null). |
 | `ketrik-firestore-studio.deleteField` | **Firestore: Delete Field** | Field Context Menu | Atomically removes a field from the document via `FieldValue.delete()`. |
 | `ketrik-firestore-studio.copyFieldValue` | **Firestore: Copy Field Value** | Field Context Menu | Copies the serialized value of the field to the clipboard. |
+
+---
+
+## Composite Indexes Management
+
+| Command ID | Title | Context / Location | Description |
+| :--- | :--- | :--- | :--- |
+| `ketrik-firestore-studio.refreshIndexes` | **Firestore: Refresh Composite Indexes** | Composite Indexes Branch Context / Inline Icon | Granularly re-queries the Cloud Firestore Admin API to refresh index states and definitions. |
+| `ketrik-firestore-studio.inspectIndexDefinition` | **Firestore: Inspect Composite Index Definition** | Composite Index Click / Context Menu | Opens the complete index JSON structure in a virtual preview editor tab. |
+| `ketrik-firestore-studio.deleteIndex` | **Firestore: Delete Composite Index** | Composite Index Context Menu / Inline Trash Icon | Safely deletes an index via Cloud Firestore REST API with modal confirmation. |
+| `ketrik-firestore-studio.snapshotLiveIndexes` | **Firestore: Snapshot Live Indexes to Workspace...** | Composite Indexes Branch Menu | Pull deployed cloud indexes into workspace `firestore.indexes.json` (Merge / Overwrite). |
+| `ketrik-firestore-studio.diffIndexes` | **Firestore: Diff Indexes (Live Cloud ⇄ Local Workspace)** | Composite Indexes Branch Menu | Graphical side-by-side diff between deployed cloud indexes and local file. |
+| `ketrik-firestore-studio.deployIndexes` | **Firestore: Deploy firestore.indexes.json to Cloud...** | Composite Indexes Branch Menu | Deploy local index definitions directly to Firestore via Admin REST API. |
+| `ketrik-firestore-studio.buildCompositeIndex` | **Firestore: Create Composite Index...** | Composite Indexes Branch Menu / Inline `+` / Palette | Guided multi-step wizard to construct composite indexes and deploy or stage locally. |
+
+

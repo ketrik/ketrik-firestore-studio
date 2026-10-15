@@ -12,6 +12,8 @@ import {
   AuthUserItem,
   AuthUsersBranchItem,
   CollectionItem,
+  CompositeIndexItem,
+  CompositeIndexesBranchItem,
   ConnectionTreeItem,
   DocumentFieldItem,
   DocumentItem,
@@ -20,8 +22,10 @@ import {
   ShowMoreItemsItem,
 } from "./items";
 import { AuthService } from "../auth/AuthService";
+import { IndexesService } from "../indexes/indexesService";
 import { parseHostPort, probePort } from "../emulator/portUtils";
 import { LocalJsonService } from "../services/LocalJsonService";
+
 
 /** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
 const MAX_MAP_SIZE = 200;
@@ -198,6 +202,12 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       this._treeCache.delete(`auth:${element.connectionId}`);
       this._authUsersPaging.delete(element.connectionId);
       this._onDidChangeTreeData.fire(undefined);
+    } else if (element instanceof CompositeIndexesBranchItem) {
+      this._treeCache.delete(`indexes:${element.connectionId}`);
+      this._onDidChangeTreeData.fire(element);
+    } else if (element instanceof CompositeIndexItem) {
+      this._treeCache.delete(`indexes:${element.connectionId}`);
+      this._onDidChangeTreeData.fire(undefined);
     } else if (element instanceof ConnectionTreeItem) {
       this._treeCache.delete(`conn:${element.config.id}`);
       this._onDidChangeTreeData.fire(element);
@@ -241,9 +251,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         element.reference,
         element.connectionId
       );
-    } else if (element instanceof AuthUsersBranchItem) {
+    } else if (element instanceof AuthUsersBranchItem || element instanceof CompositeIndexesBranchItem) {
       const conn = this._connectionManager.getConnection(element.connectionId);
       return conn ? new ConnectionTreeItem(conn) : undefined;
+    } else if (element instanceof CompositeIndexItem) {
+      return new CompositeIndexesBranchItem(element.connectionId);
     }
     return undefined;
   }
@@ -272,8 +284,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         ? `col:${element.connectionId}:${element.reference.path}:${this._paging.get(`${element.connectionId}:${element.reference.path}`) ?? defaultLimit}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.field ?? "id"}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.direction ?? "asc"}`
         : element instanceof AuthUsersBranchItem
         ? `auth:${element.connectionId}`
+        : element instanceof CompositeIndexesBranchItem
+        ? `indexes:${element.connectionId}`
         : undefined
       : "root";
+
 
     if (cacheKey && ttl > 0) {
       const cached = this._treeCache.get(cacheKey);
@@ -339,9 +354,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           });
         });
 
-        // Add Authentication (Users & Claims) node alongside Root Collections
+        // Add Authentication (Users & Claims) and Composite Indexes nodes alongside Root Collections
         const authBranch = new AuthUsersBranchItem(element.config.id);
-        const items: Item[] = [authBranch, ...collItems];
+        const indexesBranch = new CompositeIndexesBranchItem(element.config.id);
+        const items: Item[] = [authBranch, indexesBranch, ...collItems];
         return storeAndReturn(items);
       } catch (err: any) {
         const isUnavailable =
@@ -366,6 +382,21 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
             `Failed to load collections for connection '${element.config.name}': ${err.message}`
           );
         }
+        return [];
+      }
+    } else if (element instanceof CompositeIndexesBranchItem) {
+      try {
+        const indexesService = IndexesService.getInstance();
+        const indexes = await indexesService.listCompositeIndexes(element.connectionId);
+        if (indexes.length === 0) {
+          return storeAndReturn([]);
+        }
+        const indexItems = indexes.map((idx) => new CompositeIndexItem(element.connectionId, idx));
+        return storeAndReturn(indexItems);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(
+          `Failed to load Firestore composite indexes: ${err.message}`
+        );
         return [];
       }
     } else if (element instanceof AuthUsersBranchItem) {
@@ -408,6 +439,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         return [];
       }
     } else if (element instanceof DocumentItem) {
+
       try {
         const conn = this._connectionManager.getConnection(element.connectionId);
         if (conn?.isLocalJson) {
