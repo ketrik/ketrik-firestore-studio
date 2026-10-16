@@ -110,8 +110,21 @@ function calculateValueSize(val: any): number {
 
 /**
  * Calculates the byte length of a string in UTF-8 encoding.
+ * Employs a zero-allocation ASCII fast-path to avoid Node.js Buffer C++ bridge overhead.
  */
 export function getUtf8ByteLength(str: string): number {
+  const len = str.length;
+  // Fast-path: Field keys and short strings in Firestore are overwhelmingly ASCII
+  let isAscii = true;
+  for (let i = 0; i < len; i++) {
+    if (str.charCodeAt(i) > 0x7f) {
+      isAscii = false;
+      break;
+    }
+  }
+  if (isAscii) {
+    return len;
+  }
   return Buffer.byteLength(str, "utf8");
 }
 

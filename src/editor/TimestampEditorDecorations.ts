@@ -15,9 +15,34 @@ interface TimestampMatch {
   secondsKeyRange: vscode.Range;
 }
 
+const MAX_TIMESTAMP_CACHE = 50;
+const _docTimestampCache = new Map<string, { version: number; matches: TimestampMatch[] }>();
+
+// Free memory when documents are closed
+vscode.workspace.onDidCloseTextDocument((doc) => {
+  _docTimestampCache.delete(doc.uri.toString());
+});
+
 function findTimestampsInDocument(document: vscode.TextDocument): TimestampMatch[] {
-  const matches: TimestampMatch[] = [];
+  const uriKey = document.uri.toString();
+  const cached = _docTimestampCache.get(uriKey);
+  if (cached && cached.version === document.version) {
+    return cached.matches;
+  }
+
   const text = document.getText();
+
+  // Fast-path: If document doesn't contain both required timestamp keys, skip regex processing entirely
+  if (!text.includes("_seconds") || !text.includes("_nanoseconds")) {
+    if (_docTimestampCache.size >= MAX_TIMESTAMP_CACHE) {
+      const oldest = _docTimestampCache.keys().next().value;
+      if (oldest) _docTimestampCache.delete(oldest);
+    }
+    _docTimestampCache.set(uriKey, { version: document.version, matches: [] });
+    return [];
+  }
+
+  const matches: TimestampMatch[] = [];
 
   // Regex to match JSON objects with _seconds and _nanoseconds (either order)
   const regex = /\{\s*"(?:_seconds|_nanoseconds)"\s*:\s*(\d+)\s*,\s*"(?:_seconds|_nanoseconds)"\s*:\s*(\d+)\s*\}/g;
@@ -94,6 +119,12 @@ function findTimestampsInDocument(document: vscode.TextDocument): TimestampMatch
       uniqueMatches.push(match);
     }
   }
+
+  if (_docTimestampCache.size >= MAX_TIMESTAMP_CACHE) {
+    const oldest = _docTimestampCache.keys().next().value;
+    if (oldest) _docTimestampCache.delete(oldest);
+  }
+  _docTimestampCache.set(uriKey, { version: document.version, matches: uniqueMatches });
 
   return uniqueMatches;
 }

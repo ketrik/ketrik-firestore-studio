@@ -1,4 +1,4 @@
-import { SPARK_FREE_QUOTA, BLAZE_PRICING, DailyUsageSnapshot } from "../../cost/costService";
+import { SPARK_FREE_QUOTA, BLAZE_PRICING, DailyUsageSnapshot, HistoricalUsageData } from "../../cost/costService";
 
 export interface CostSimulatorInitialData {
   connectionId: string;
@@ -7,6 +7,7 @@ export interface CostSimulatorInitialData {
   isEmulator: boolean;
   isLocalJson: boolean;
   usageSnapshot: DailyUsageSnapshot;
+  historicalUsage?: HistoricalUsageData;
 }
 
 export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
@@ -346,6 +347,84 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
     .rates-grid strong {
       color: var(--text-color);
     }
+
+    /* Historical Trends Styles */
+    .trend-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .time-selector {
+      display: inline-flex;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .time-btn {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 6px 14px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    .time-btn:hover {
+      background: rgba(128, 128, 128, 0.1);
+      color: var(--text-color);
+    }
+
+    .time-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .chart-container {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      position: relative;
+    }
+
+    .chart-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .chart-legend {
+      display: flex;
+      gap: 16px;
+      font-size: 0.8rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+    }
+
+    .svg-chart {
+      width: 100%;
+      height: 220px;
+      overflow: visible;
+    }
   </style>
 </head>
 <body>
@@ -377,6 +456,7 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="quotasTab">📊 Daily Quota Meters</button>
+    <button class="tab-btn" data-tab="trendsTab">📈 Historical Trends</button>
     <button class="tab-btn" data-tab="calculatorTab">🧮 Capacity & Cost Modeler</button>
     <button class="tab-btn" data-tab="pricingTab">📋 Pricing Matrix & Rates</button>
   </div>
@@ -439,6 +519,51 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
       <p id="quotaInsightText" style="font-size: 0.88rem; color: var(--text-color);">
         All operations are currently running comfortably within Google Cloud Firestore's Spark Free Allowance. No billable overage charges incurred today.
       </p>
+    </div>
+  </div>
+
+  <!-- TAB: HISTORICAL TRENDS -->
+  <div id="trendsTab" class="tab-content">
+    <div class="trend-toolbar">
+      <div style="font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+        <span>Daily Firestore Operations Trend</span>
+        <span class="badge-source" id="historySourceBadge">${
+          data.historicalUsage?.source === "cloud-monitoring"
+            ? "Cloud Monitoring Metrics"
+            : "Simulated Historical Baseline"
+        }</span>
+      </div>
+      <div class="time-selector">
+        <button class="time-btn active" data-days="7">7 Days</button>
+        <button class="time-btn" data-days="14">14 Days</button>
+        <button class="time-btn" data-days="30">30 Days</button>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">
+        <span>Document Operations (Reads, Writes & Deletes)</span>
+        <div class="chart-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#3794ff;"></div> Reads</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#4ec9b0;"></div> Writes</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#f14c4c;"></div> Deletes</div>
+        </div>
+      </div>
+      <div id="chartSvgWrapper" style="position:relative; width: 100%;">
+        <svg id="trendSvg" class="svg-chart" viewBox="0 0 800 220" preserveAspectRatio="none">
+          <!-- Dynamic SVG content rendered via JS -->
+        </svg>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="font-size: 1rem; margin-bottom: 8px;">📊 Time-Series Aggregations & Observations</h3>
+      <div class="rates-grid" id="historyStatsGrid">
+        <div><strong>Total Reads in Period:</strong> <span id="histTotalReads">0</span></div>
+        <div><strong>Total Writes in Period:</strong> <span id="histTotalWrites">0</span></div>
+        <div><strong>Total Deletes in Period:</strong> <span id="histTotalDeletes">0</span></div>
+        <div><strong>Daily Peak Reads:</strong> <span id="histPeakReads">0</span></div>
+      </div>
     </div>
   </div>
 
@@ -720,9 +845,147 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
       runCapacityCalculation();
     });
 
+    // Scenario gathering helper for exports
+    function getScenarioPayload() {
+      return {
+        inputs: {
+          dau: parseInt(document.getElementById('inpDau').value) || 1000,
+          readsPerSession: parseInt(document.getElementById('inpReadsPerSession').value) || 0,
+          writesPerSession: parseInt(document.getElementById('inpWritesPerSession').value) || 0,
+          deletesPerSession: parseInt(document.getElementById('inpDeletesPerSession').value) || 0,
+          docSize: parseInt(document.getElementById('inpDocSize').value) || 1024,
+          retentionDays: parseInt(document.getElementById('inpRetention').value) || 30,
+          enableCaching: document.getElementById('inpCaching').checked,
+          cacheHitRate: parseInt(document.getElementById('inpCacheHitRate').value) || 0,
+        },
+        results: {
+          readsCost: document.getElementById('resReadsCost').textContent,
+          writesCost: document.getElementById('resWritesCost').textContent,
+          deletesCost: document.getElementById('resDeletesCost').textContent,
+          storageGiB: document.getElementById('resStorageGiB').textContent,
+          storageCost: document.getElementById('resStorageCost').textContent,
+          monthlyTotal: document.getElementById('resMonthlyTotal').textContent,
+          savings: document.getElementById('savingsContainer').style.display !== 'none' 
+            ? document.getElementById('savingsBadgeText').textContent 
+            : null,
+        }
+      };
+    }
+
+    // Historical Trend Data & SVG Renderer
+    let historyData = ${JSON.stringify(data.historicalUsage || { days: 7, points: [], source: "simulated" })};
+
+    function renderHistoricalChart() {
+      const svg = document.getElementById('trendSvg');
+      if (!svg) return;
+
+      const points = historyData.points || [];
+      if (points.length === 0) {
+        svg.innerHTML = '<text x="400" y="110" text-anchor="middle" fill="#888" font-size="14">No historical metrics available</text>';
+        return;
+      }
+
+      // Compute statistics
+      let totalReads = 0;
+      let totalWrites = 0;
+      let totalDeletes = 0;
+      let maxReads = 1;
+
+      points.forEach(pt => {
+        totalReads += pt.reads;
+        totalWrites += pt.writes;
+        totalDeletes += pt.deletes;
+        if (pt.reads > maxReads) maxReads = pt.reads;
+      });
+
+      document.getElementById('histTotalReads').textContent = totalReads.toLocaleString();
+      document.getElementById('histTotalWrites').textContent = totalWrites.toLocaleString();
+      document.getElementById('histTotalDeletes').textContent = totalDeletes.toLocaleString();
+      document.getElementById('histPeakReads').textContent = maxReads.toLocaleString();
+
+      const width = 800;
+      const height = 220;
+      const padLeft = 60;
+      const padRight = 30;
+      const padTop = 25;
+      const padBottom = 35;
+      const chartW = width - padLeft - padRight;
+      const chartH = height - padTop - padBottom;
+
+      const yMax = Math.ceil(maxReads * 1.15);
+
+      // Y-axis grid lines and labels
+      let elements = [];
+      const yTicks = 4;
+      for (let i = 0; i <= yTicks; i++) {
+        const val = Math.round((yMax / yTicks) * i);
+        const y = padTop + chartH - (i / yTicks) * chartH;
+        const valLabel = val >= 1000 ? (val/1000).toFixed(1) + 'k' : val;
+        elements.push('<line x1="' + padLeft + '" y1="' + y + '" x2="' + (width - padRight) + '" y2="' + y + '" stroke="rgba(128,128,128,0.2)" stroke-dasharray="3,3" />');
+        elements.push('<text x="' + (padLeft - 10) + '" y="' + (y + 4) + '" text-anchor="end" fill="#888" font-size="10">' + valLabel + '</text>');
+      }
+
+      // Spark free quota reference line if within bounds
+      if (SPARK_FREE_QUOTA.readsPerDay <= yMax) {
+        const freeY = padTop + chartH - (SPARK_FREE_QUOTA.readsPerDay / yMax) * chartH;
+        elements.push('<line x1="' + padLeft + '" y1="' + freeY + '" x2="' + (width - padRight) + '" y2="' + freeY + '" stroke="#cca700" stroke-width="1.5" stroke-dasharray="4,4" />');
+        elements.push('<text x="' + (width - padRight) + '" y="' + (freeY - 6) + '" text-anchor="end" fill="#cca700" font-size="10">Spark Free Quota (50k)</text>');
+      }
+
+      const numPoints = points.length;
+      const xStep = numPoints > 1 ? chartW / (numPoints - 1) : chartW;
+
+      const makePath = (key, color, strokeWidth = 2) => {
+        let coords = points.map((p, i) => {
+          const x = padLeft + i * xStep;
+          const val = p[key] || 0;
+          const y = padTop + chartH - (val / yMax) * chartH;
+          return { x, y, val, date: p.date };
+        });
+
+        const d = coords.map((c, i) => (i === 0 ? 'M ' + c.x + ' ' + c.y : 'L ' + c.x + ' ' + c.y)).join(' ');
+        elements.push('<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="' + strokeWidth + '" />');
+
+        // Dots and hover tooltips
+        coords.forEach(c => {
+          elements.push('<circle cx="' + c.x + '" cy="' + c.y + '" r="3.5" fill="' + color + '" stroke="#1e1e1e" stroke-width="1.5"><title>' + c.date + ': ' + c.val.toLocaleString() + ' ' + key + '</title></circle>');
+        });
+      };
+
+      // Draw series: Deletes (red), Writes (teal), Reads (blue)
+      makePath('deletes', '#f14c4c', 1.5);
+      makePath('writes', '#4ec9b0', 2);
+      makePath('reads', '#3794ff', 2.5);
+
+      // X-axis labels
+      points.forEach((p, i) => {
+        // Sample labels so they don't crowd (e.g. at most 7 labels)
+        const skip = numPoints > 14 ? 4 : numPoints > 7 ? 2 : 1;
+        if (i % skip === 0 || i === numPoints - 1) {
+          const x = padLeft + i * xStep;
+          const label = p.date.slice(5); // MM-DD
+          elements.push('<text x="' + x + '" y="' + (height - 10) + '" text-anchor="middle" fill="#888" font-size="10">' + label + '</text>');
+        }
+      });
+
+      svg.innerHTML = elements.join('');
+    }
+
+    // Time selector buttons
+    document.querySelectorAll('.time-btn').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const days = parseInt(btn.getAttribute('data-days')) || 7;
+        vscode.postMessage({ command: 'fetchHistory', days });
+      };
+    });
+
     // Toolbar buttons
     document.getElementById('refreshBtn').onclick = () => {
-      vscode.postMessage({ command: 'refresh' });
+      const activeTimeBtn = document.querySelector('.time-btn.active');
+      const days = activeTimeBtn ? parseInt(activeTimeBtn.getAttribute('data-days')) : 7;
+      vscode.postMessage({ command: 'refresh', days });
     };
 
     document.getElementById('resetSessionBtn').onclick = () => {
@@ -730,11 +993,11 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
     };
 
     document.getElementById('exportMdBtn').onclick = () => {
-      vscode.postMessage({ command: 'exportMarkdown' });
+      vscode.postMessage({ command: 'exportMarkdown', scenario: getScenarioPayload() });
     };
 
     document.getElementById('exportJsonBtn').onclick = () => {
-      vscode.postMessage({ command: 'exportJson' });
+      vscode.postMessage({ command: 'exportJson', scenario: getScenarioPayload() });
     };
 
     // Messages from extension
@@ -746,10 +1009,18 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
           usageData.source === 'cloud-monitoring' ? 'Live Cloud Monitoring' : 'Active Session Accounting';
         updateMeters();
       }
+
+      if (msg.type === 'historicalUpdate') {
+        historyData = msg.historicalUsage;
+        document.getElementById('historySourceBadge').textContent =
+          historyData.source === 'cloud-monitoring' ? 'Cloud Monitoring Metrics' : 'Simulated Historical Baseline';
+        renderHistoricalChart();
+      }
     });
 
     // Init
     updateMeters();
+    renderHistoricalChart();
     runCapacityCalculation();
   </script>
 </body>

@@ -136,12 +136,9 @@ export async function copyCollectionToInstanceCommand(
           }
 
           if (targetConn.isLocalJson) {
-            // Local JSON -> Local JSON
-            for (const doc of localDocs) {
-              if (token.isCancellationRequested) break;
-              LocalJsonService.getInstance().setDocument(targetConn, `${targetCollName}/${doc.id}`, doc.data);
-              copiedCount++;
-            }
+            // Local JSON -> Local JSON (batch write)
+            LocalJsonService.getInstance().setDocuments(targetConn, targetCollName, localDocs);
+            copiedCount = localDocs.length;
           } else {
             // Local JSON -> Firestore / Emulator
             const firestore = await connectionManager.getFirestore(targetConn.id);
@@ -170,7 +167,7 @@ export async function copyCollectionToInstanceCommand(
           const sourceCollRef = sourceFirestore.collection(sourceCollPath);
 
           if (targetConn.isLocalJson) {
-            // Firestore -> Local JSON
+            // Firestore -> Local JSON (batch write per query page)
             const batchSize = 250;
             let lastDoc: QueryDocumentSnapshot | null = null;
             let hasMore = true;
@@ -183,10 +180,12 @@ export async function copyCollectionToInstanceCommand(
               const snapshot = await query.get();
               if (snapshot.empty) break;
 
-              for (const doc of snapshot.docs) {
-                LocalJsonService.getInstance().setDocument(targetConn, `${targetCollName}/${doc.id}`, doc.data());
-                copiedCount++;
-              }
+              const batchDocs = snapshot.docs.map((doc) => ({
+                id: doc.id,
+                data: doc.data(),
+              }));
+              LocalJsonService.getInstance().setDocuments(targetConn, targetCollName, batchDocs);
+              copiedCount += batchDocs.length;
 
               lastDoc = snapshot.docs[snapshot.docs.length - 1];
               progress.report({ message: `${copiedCount} documents copied...` });

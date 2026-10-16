@@ -50,6 +50,19 @@ export interface DailyUsageSnapshot {
   egressBytes?: number;
 }
 
+export interface HistoricalUsagePoint {
+  date: string; // YYYY-MM-DD
+  reads: number;
+  writes: number;
+  deletes: number;
+}
+
+export interface HistoricalUsageData {
+  days: number;
+  points: HistoricalUsagePoint[];
+  source: "cloud-monitoring" | "simulated";
+}
+
 export interface CapacityPlanInputs {
   dau: number; // Daily Active Users
   readsPerUserSession: number;
@@ -86,6 +99,10 @@ export class CostService {
   private _sessionCounts: Map<string, SessionOperationCounts> = new Map();
   private _onDidChangeUsage = new vscode.EventEmitter<string>();
   public readonly onDidChangeUsage = this._onDidChangeUsage.event;
+
+  // TTL cache for Cloud Monitoring snapshots to prevent redundant API queries
+  private _monitoringDailyCache = new Map<string, { timestamp: number; snapshot: DailyUsageSnapshot }>();
+  private _monitoringHistoryCache = new Map<string, { timestamp: number; data: HistoricalUsageData }>();
 
   private constructor() {}
 
@@ -128,9 +145,17 @@ export class CostService {
   public resetSessionCounts(connectionId?: string): void {
     if (connectionId) {
       this._sessionCounts.delete(connectionId);
+      this._monitoringDailyCache.delete(connectionId);
+      for (const k of this._monitoringHistoryCache.keys()) {
+        if (k.startsWith(`${connectionId}:`)) {
+          this._monitoringHistoryCache.delete(k);
+        }
+      }
       this._onDidChangeUsage.fire(connectionId);
     } else {
       this._sessionCounts.clear();
+      this._monitoringDailyCache.clear();
+      this._monitoringHistoryCache.clear();
       this._onDidChangeUsage.fire("*");
     }
   }
@@ -283,7 +308,7 @@ export class CostService {
    * Attempt to query Google Cloud Monitoring API for real 24-hour Firestore document read/write/delete metrics.
    * If permissions are missing or connection is local/emulator, falls back gracefully.
    */
-  public async fetchDailyUsage(connectionId: string): Promise<DailyUsageSnapshot> {
+  public async fetchDailyUsage(connectionId: string, forceRefresh = false): Promise<DailyUsageSnapshot> {
     const conn = ConnectionManager.getInstance().getConnection(connectionId);
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
@@ -297,6 +322,13 @@ export class CostService {
         writes: session.writes,
         deletes: session.deletes,
       };
+    }
+
+    if (!forceRefresh) {
+      const cached = this._monitoringDailyCache.get(connectionId);
+      if (cached && Date.now() - cached.timestamp < 120_000) {
+        return { ...cached.snapshot };
+      }
     }
 
     try {
@@ -357,25 +389,155 @@ export class CostService {
       ]);
 
       if (reads >= 0 || writes >= 0 || deletes >= 0) {
-        return {
+        const snap: DailyUsageSnapshot = {
           date: dateStr,
           source: "cloud-monitoring",
           reads: Math.max(0, reads),
           writes: Math.max(0, writes),
           deletes: Math.max(0, deletes),
         };
+        this._monitoringDailyCache.set(connectionId, { timestamp: Date.now(), snapshot: snap });
+        return snap;
       }
     } catch {
       // Fallback silently to session accounting
     }
 
     const session = this.getSessionCounts(connectionId);
-    return {
+    const fallbackSnap: DailyUsageSnapshot = {
       date: dateStr,
       source: "session-accounting",
       reads: session.reads,
       writes: session.writes,
       deletes: session.deletes,
     };
+    this._monitoringDailyCache.set(connectionId, { timestamp: Date.now(), snapshot: fallbackSnap });
+    return fallbackSnap;
+  }
+
+  /**
+   * Fetch historical daily time-series usage for 7, 14, or 30 days.
+   * Leverages Cloud Monitoring API when credentials exist, otherwise provides simulated trend based on current session/daily baseline.
+   */
+  public async fetchHistoricalUsage(
+    connectionId: string,
+    days: 7 | 14 | 30 = 7,
+    forceRefresh = false
+  ): Promise<HistoricalUsageData> {
+    const cacheKey = `${connectionId}:${days}`;
+    if (!forceRefresh) {
+      const cached = this._monitoringHistoryCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < 300_000) {
+        return cached.data;
+      }
+    }
+
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+
+    // Helper to generate dates array
+    const dateLabels: string[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      dateLabels.push(new Date(now - i * oneDayMs).toISOString().slice(0, 10));
+    }
+
+    if (conn && !conn.isLocalJson && !conn.isEmulator && conn.projectId) {
+      try {
+        const app = await ConnectionManager.getInstance().getApp(connectionId);
+        const credential = app.options.credential;
+        if (credential && typeof (credential as any).getAccessToken === "function") {
+          const tokenObj = await (credential as any).getAccessToken();
+          const accessToken = tokenObj?.access_token;
+          if (accessToken) {
+            const projectId = conn.projectId;
+            const startTime = new Date(now - days * oneDayMs).toISOString();
+            const endTime = new Date(now).toISOString();
+
+            const fetchTimeSeries = async (metricType: string): Promise<Map<string, number>> => {
+              const filter = `metric.type="firestore.googleapis.com/document/${metricType}"`;
+              const url = `https://monitoring.googleapis.com/v3/projects/${projectId}/timeSeries?filter=${encodeURIComponent(
+                filter
+              )}&interval.startTime=${startTime}&interval.endTime=${endTime}&aggregation.alignmentPeriod=86400s&aggregation.perSeriesAligner=ALIGN_SUM`;
+
+              const res = await fetch(url, {
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  Accept: "application/json",
+                },
+              });
+
+              const map = new Map<string, number>();
+              if (res.ok) {
+                const data: any = await res.json();
+                if (Array.isArray(data.timeSeries)) {
+                  for (const ts of data.timeSeries) {
+                    if (Array.isArray(ts.points)) {
+                      for (const pt of ts.points) {
+                        const dateKey = (pt.interval?.endTime || "").slice(0, 10);
+                        const val = Number(pt.value?.int64Value || pt.value?.doubleValue || 0);
+                        map.set(dateKey, (map.get(dateKey) || 0) + val);
+                      }
+                    }
+                  }
+                }
+              }
+              return map;
+            };
+
+            const [readMap, writeMap, deleteMap] = await Promise.all([
+              fetchTimeSeries("read_count").catch(() => new Map<string, number>()),
+              fetchTimeSeries("write_count").catch(() => new Map<string, number>()),
+              fetchTimeSeries("delete_count").catch(() => new Map<string, number>()),
+            ]);
+
+            if (readMap.size > 0 || writeMap.size > 0 || deleteMap.size > 0) {
+              const points: HistoricalUsagePoint[] = dateLabels.map((dateStr) => ({
+                date: dateStr,
+                reads: readMap.get(dateStr) || 0,
+                writes: writeMap.get(dateStr) || 0,
+                deletes: deleteMap.get(dateStr) || 0,
+              }));
+
+              const result: HistoricalUsageData = {
+                days,
+                points,
+                source: "cloud-monitoring",
+              };
+              this._monitoringHistoryCache.set(cacheKey, { timestamp: Date.now(), data: result });
+              return result;
+            }
+          }
+        }
+      } catch {
+        // Fall through to simulated fallback
+      }
+    }
+
+    // Fallback: Generate realistic simulated trend anchored to current daily usage
+    const daily = await this.fetchDailyUsage(connectionId);
+    const baseReads = Math.max(daily.reads, 120);
+    const baseWrites = Math.max(daily.writes, 25);
+    const baseDeletes = Math.max(daily.deletes, 5);
+
+    const points: HistoricalUsagePoint[] = dateLabels.map((dateStr, idx) => {
+      // Deterministic variation factor between 0.75 and 1.25 based on day index
+      const variation = 0.8 + 0.4 * ((idx * 7 + 3) % 10) / 10;
+      const isToday = idx === dateLabels.length - 1;
+      return {
+        date: dateStr,
+        reads: isToday ? daily.reads : Math.round(baseReads * variation),
+        writes: isToday ? daily.writes : Math.round(baseWrites * variation),
+        deletes: isToday ? daily.deletes : Math.round(baseDeletes * variation),
+      };
+    });
+
+    const simResult: HistoricalUsageData = {
+      days,
+      points,
+      source: "simulated",
+    };
+    this._monitoringHistoryCache.set(cacheKey, { timestamp: Date.now(), data: simResult });
+    return simResult;
   }
 }

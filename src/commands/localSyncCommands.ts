@@ -254,11 +254,12 @@ export async function snapshotFirestoreToLocalJsonCommand(
             break;
           }
 
-          for (const doc of snapshot.docs) {
-            const data = doc.data();
-            LocalJsonService.getInstance().setDocument(targetConfig, `${sourceCollName}/${doc.id}`, data);
-            fetchedCount++;
-          }
+          const batchDocs = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            data: doc.data(),
+          }));
+          LocalJsonService.getInstance().setDocuments(targetConfig, sourceCollName, batchDocs);
+          fetchedCount += batchDocs.length;
 
           lastDoc = snapshot.docs[snapshot.docs.length - 1];
           progress.report({ message: `Captured ${fetchedCount} documents...` });

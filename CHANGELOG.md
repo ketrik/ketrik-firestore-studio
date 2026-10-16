@@ -2,6 +2,39 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.12.2] - 2026-10-16
+
+### Added & Improved
+- **Interactive Firestore Cost Simulator & Capacity Modeler (`ketrik-firestore-studio.openCostSimulator`)**:
+  * Dedicated interactive webview dashboard visualizing Spark Free Quota progress meters (Reads, Writes, Deletes, Storage, Egress).
+  * Direct Google Cloud Monitoring API integration with in-session operation delta tracking and 1-click session counter resets.
+  * Historical daily usage time-series graphs with 7-day, 14-day, and 30-day view selectors.
+  * Architectural Scenario & Capacity Planning simulator with live monthly Blaze cost projections, storage accumulation estimates, and client caching ROI calculator.
+  * 1-Click export of cost and capacity projections to Markdown and JSON reports.
+
+### Performance & Memory Optimizations
+- **Cloud Monitoring Caching & Status Bar Debounce**:
+  * Added 120s TTL caching for daily monitoring usage snapshots and 300s TTL caching for historical metrics in `CostService`.
+  * Debounced `CostStatusBarController` updates (1,000ms) with concurrency re-entrancy locks to prevent burst network queries on rapid mutations.
+  * Debounced webview live usage updates (500ms) and added listener disposal on panel closure.
+- **Editor Hover & Inlay Hints CPU Tuning**:
+  * Fast $O(1)$ early exit in `TimestampEditorDecorations` when documents lack timestamp keys (`_seconds`/`_nanoseconds`).
+  * LRU cache (50 entries) keyed by document URI and version, eliminating redundant regex parsing and JSON decoding on hover and scrolling.
+  * Added `onDidCloseTextDocument` hook to free memory immediately when documents close.
+- **Zero-Allocation ASCII Fast-Path**:
+  * Implemented an inline zero-allocation ASCII loop in `getUtf8ByteLength` to eliminate Node.js V8 C++ boundary crossings during document storage size calculations.
+- **Real-Time Live Watch DOM Batching**:
+  * Batched `liveWatchEvent` DOM updates using `requestAnimationFrame` to eliminate UI layout thrashing.
+  * Replaced per-change virtual file system notifications with batch `DocumentFileSystemProvider.invalidateAndNotifyMany`.
+- **Local JSON Disk I/O Caching & Batch Operations**:
+  * Added in-memory `_fileCache` with `mtimeMs` file stat validation to avoid repeated disk reads and JSON parsing.
+  * Implemented batch atomic writes (`setDocuments` and `deleteDocuments`) in `LocalJsonService` and refactored collection copy, local sync, and synthetic seeding commands.
+- **Field Mutator Integrity & Safety**:
+  * Added Local JSON support and `FieldPath` dot-notation safety to `deleteMultipleFieldsCommand`.
+  * Wired `CostService.recordOperation` tracking across all field modification and deletion commands.
+- **Emulator Service Config Debouncing**:
+  * Debounced workspace config watcher by 300ms to eliminate port probing socket bursts on file changes.
+
 ## [1.12.1] - 2026-10-16
 
 ### Fixed

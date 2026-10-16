@@ -12,12 +12,89 @@ export interface LocalJsonDoc {
  */
 export class LocalJsonService {
   private static instance: LocalJsonService;
+  private static readonly MAX_CACHE_SIZE = 50;
+
+  /** In-memory cache for parsed JSON files to avoid synchronous disk I/O and JSON.parse on every lookup. */
+  private _fileCache: Map<string, { mtimeMs: number; size: number; parsed: any }> = new Map();
 
   public static getInstance(): LocalJsonService {
     if (!LocalJsonService.instance) {
       LocalJsonService.instance = new LocalJsonService();
     }
     return LocalJsonService.instance;
+  }
+
+  /**
+   * Clear the in-memory file cache.
+   */
+  public clearCache(): void {
+    this._fileCache.clear();
+  }
+
+  /**
+   * Safely read and parse a JSON file with mtime/size caching.
+   */
+  private _readJsonFile(filePath: string): any {
+    if (!fs.existsSync(filePath)) {
+      this._fileCache.delete(filePath);
+      return undefined;
+    }
+
+    try {
+      const stat = fs.statSync(filePath);
+      const cached = this._fileCache.get(filePath);
+      if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+        return cached.parsed;
+      }
+
+      const content = fs.readFileSync(filePath, "utf8");
+      const parsed = JSON.parse(content);
+
+      this._fileCache.delete(filePath);
+      this._fileCache.set(filePath, {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        parsed,
+      });
+
+      if (this._fileCache.size > LocalJsonService.MAX_CACHE_SIZE) {
+        const oldest = this._fileCache.keys().next().value;
+        if (oldest !== undefined) {
+          this._fileCache.delete(oldest);
+        }
+      }
+
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Safely serialize and write a JSON file, updating the in-memory cache.
+   */
+  private _writeJsonFile(filePath: string, data: any): void {
+    const jsonStr = JSON.stringify(data, null, 2);
+    fs.writeFileSync(filePath, jsonStr, "utf8");
+
+    try {
+      const stat = fs.statSync(filePath);
+      this._fileCache.delete(filePath);
+      this._fileCache.set(filePath, {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        parsed: data,
+      });
+
+      if (this._fileCache.size > LocalJsonService.MAX_CACHE_SIZE) {
+        const oldest = this._fileCache.keys().next().value;
+        if (oldest !== undefined) {
+          this._fileCache.delete(oldest);
+        }
+      }
+    } catch {
+      this._fileCache.delete(filePath);
+    }
   }
 
   /**
@@ -49,13 +126,10 @@ export class LocalJsonService {
     }
 
     // Single JSON file: Top-level keys represent collections
-    try {
-      const content = fs.readFileSync(config.localJsonPath, "utf8");
-      const parsed = JSON.parse(content);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return Object.keys(parsed).sort();
-      }
-    } catch {}
+    const parsed = this._readJsonFile(config.localJsonPath);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return Object.keys(parsed).sort();
+    }
 
     return [];
   }
@@ -64,32 +138,21 @@ export class LocalJsonService {
    * Load entire collection map: { [docId: string]: Record<string, any> }
    */
   public getCollectionData(config: FirestoreConnectionConfig, collectionId: string): Record<string, any> {
-    if (!config.localJsonPath || !fs.existsSync(config.localJsonPath)) {
+    if (!config.localJsonPath) {
       return {};
     }
 
     if (this.isDirectoryMode(config)) {
       const filePath = path.join(config.localJsonPath, `${collectionId}.json`);
-      if (!fs.existsSync(filePath)) {
-        return {};
-      }
-      try {
-        const raw = fs.readFileSync(filePath, "utf8");
-        const parsed = JSON.parse(raw);
-        return this._normalizeToDocumentMap(parsed);
-      } catch {
-        return {};
-      }
+      const parsed = this._readJsonFile(filePath);
+      return this._normalizeToDocumentMap(parsed);
     }
 
     // Single JSON file
-    try {
-      const content = fs.readFileSync(config.localJsonPath, "utf8");
-      const parsed = JSON.parse(content);
-      if (parsed && typeof parsed === "object" && parsed[collectionId]) {
-        return this._normalizeToDocumentMap(parsed[collectionId]);
-      }
-    } catch {}
+    const parsed = this._readJsonFile(config.localJsonPath);
+    if (parsed && typeof parsed === "object" && parsed[collectionId]) {
+      return this._normalizeToDocumentMap(parsed[collectionId]);
+    }
 
     return {};
   }
@@ -157,20 +220,12 @@ export class LocalJsonService {
       const filePath = path.join(config.localJsonPath!, `${collectionId}.json`);
       const collMap = this.getCollectionData(config, collectionId);
       collMap[docId] = data;
-      fs.writeFileSync(filePath, JSON.stringify(collMap, null, 2), "utf8");
+      this._writeJsonFile(filePath, collMap);
       return;
     }
 
     // Single JSON file
-    const content = fs.existsSync(config.localJsonPath!)
-      ? fs.readFileSync(config.localJsonPath!, "utf8")
-      : "{}";
-    let parsed: any = {};
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      parsed = {};
-    }
+    let parsed: any = this._readJsonFile(config.localJsonPath!) || {};
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       parsed = {};
     }
@@ -178,7 +233,41 @@ export class LocalJsonService {
       parsed[collectionId] = {};
     }
     parsed[collectionId][docId] = data;
-    fs.writeFileSync(config.localJsonPath!, JSON.stringify(parsed, null, 2), "utf8");
+    this._writeJsonFile(config.localJsonPath!, parsed);
+  }
+
+  /**
+   * Atomically save / set multiple documents into a collection in a single disk write.
+   */
+  public setDocuments(
+    config: FirestoreConnectionConfig,
+    collectionId: string,
+    docs: Array<{ id: string; data: Record<string, any> }>
+  ): void {
+    if (docs.length === 0) return;
+
+    if (this.isDirectoryMode(config)) {
+      const filePath = path.join(config.localJsonPath!, `${collectionId}.json`);
+      const collMap = this.getCollectionData(config, collectionId);
+      for (const d of docs) {
+        collMap[d.id] = d.data;
+      }
+      this._writeJsonFile(filePath, collMap);
+      return;
+    }
+
+    // Single JSON file
+    let parsed: any = this._readJsonFile(config.localJsonPath!) || {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      parsed = {};
+    }
+    if (!parsed[collectionId] || typeof parsed[collectionId] !== "object") {
+      parsed[collectionId] = {};
+    }
+    for (const d of docs) {
+      parsed[collectionId][d.id] = d.data;
+    }
+    this._writeJsonFile(config.localJsonPath!, parsed);
   }
 
   /**
@@ -196,19 +285,48 @@ export class LocalJsonService {
       const filePath = path.join(config.localJsonPath!, `${collectionId}.json`);
       const collMap = this.getCollectionData(config, collectionId);
       delete collMap[docId];
-      fs.writeFileSync(filePath, JSON.stringify(collMap, null, 2), "utf8");
+      this._writeJsonFile(filePath, collMap);
       return;
     }
 
     // Single JSON file
-    if (!fs.existsSync(config.localJsonPath!)) return;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(config.localJsonPath!, "utf8"));
-      if (parsed && parsed[collectionId]) {
-        delete parsed[collectionId][docId];
-        fs.writeFileSync(config.localJsonPath!, JSON.stringify(parsed, null, 2), "utf8");
+    if (!config.localJsonPath || !fs.existsSync(config.localJsonPath)) return;
+    const parsed = this._readJsonFile(config.localJsonPath);
+    if (parsed && parsed[collectionId]) {
+      delete parsed[collectionId][docId];
+      this._writeJsonFile(config.localJsonPath, parsed);
+    }
+  }
+
+  /**
+   * Atomically delete multiple documents from a collection in a single disk write.
+   */
+  public deleteDocuments(
+    config: FirestoreConnectionConfig,
+    collectionId: string,
+    docIds: string[]
+  ): void {
+    if (docIds.length === 0) return;
+
+    if (this.isDirectoryMode(config)) {
+      const filePath = path.join(config.localJsonPath!, `${collectionId}.json`);
+      const collMap = this.getCollectionData(config, collectionId);
+      for (const id of docIds) {
+        delete collMap[id];
       }
-    } catch {}
+      this._writeJsonFile(filePath, collMap);
+      return;
+    }
+
+    // Single JSON file
+    if (!config.localJsonPath || !fs.existsSync(config.localJsonPath)) return;
+    const parsed = this._readJsonFile(config.localJsonPath);
+    if (parsed && parsed[collectionId]) {
+      for (const id of docIds) {
+        delete parsed[collectionId][id];
+      }
+      this._writeJsonFile(config.localJsonPath, parsed);
+    }
   }
 
   /**

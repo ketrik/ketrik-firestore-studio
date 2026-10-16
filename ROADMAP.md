@@ -13,7 +13,7 @@ timeline
         2026-10-13 : v1.8.0 Security Rules & Auth Table : v1.9.0 User Cloning, Tokens & Force Logout : v1.9.1 Batch Tools, Schemas & Aggregations : v1.9.2 Local Emulator, Collection Groups & UX Polish
         2026-10-14 : v1.10.0 In-Table Editing Suite, 2-Column Inspector Drawer, Storage Media Preview & Filter.or() : v1.11.0 Local JSON Database, Mock Store, Bi-Directional Sync & Timestamp Inlay Hints
         2026-10-15 : v1.12.0 Firestore Indexes Suite, Synthetic Mock Data Generator, Live Watch Mode & 750KB High-Quota Alerts
-        2026-10-16 : v1.12.1 Table Loading Fixes, Cost & Quota Tree Link, Pre-Flight Query Cost Estimator & Status Bar Sync
+        2026-10-16 : v1.12.1 Table Loading Fixes & Pre-Flight Cost Estimator : v1.12.2 Cost Simulator, Capacity Modeler & CPU/Memory Optimizations
     section Planned
         Q1 2027 : v1.13.0 Cloud Functions Triggers, Storage Explorer & Vector Search
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
@@ -42,6 +42,7 @@ timeline
 | **v1.11.0** | Shipped | 2026-10-14 | Local JSON Database & Mock Store, cross-instance collection copy (`copyCollectionToInstance`), bi-directional sync (Push/Seed & Pull Snapshot), document storage size monitoring & status bar, timestamp formatting & inlay hints, table batch load controls (+50, +100, Load All 1K cap) & auto-replenish |
 | **v1.12.0** | Shipped | 2026-10-15 | Firestore Composite Indexes Suite (tree inspector, firestore.indexes.json 2-way sync & auto-fixer), Synthetic Mock Data Generator (schema inference, 400 docs/batch), Real-Time Live Watch Mode (onSnapshot with animated flash feedback), 750KB High-Quota Warning Indicators |
 | **v1.12.1** | Shipped | 2026-10-16 | Collection table loading fixes, Cost & Quota explorer tree item, unified Status Bar Cloud Monitoring metrics, query pre-flight cost estimator |
+| **v1.12.2** | Shipped | 2026-10-16 | Interactive Cost Simulator dashboard, capacity modeling, comprehensive CPU & memory optimizations |
 | **v1.13.0** | Planned | Q1 2027 | Cloud Functions Triggers, Storage Explorer, Vector Search (kNN) & Schema Anomaly Analyzer |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer, local offline cache & mocking |
 
@@ -317,34 +318,38 @@ timeline
 
 ---
 
+### [v1.12.2] — Cost Simulator, Capacity Modeler & CPU/Memory Optimizations (Shipped: 2026-10-16)
+
+*Theme: Interactive cost modeling, capacity planning simulations, and comprehensive CPU and memory tuning.*
+
+* **Interactive Firestore Cost Simulator & Capacity Modeler (`ketrik-firestore-studio.openCostSimulator`)**:
+  * **Daily Free Allowance Tracking & Progress Meters**:
+    * Full integration of standard Google Cloud / Firebase Free Tier daily quotas (50K reads, 20K writes, 20K deletes, 1 GiB storage, 10 GiB egress).
+    * Real-time progress bars showing daily % consumed before Blaze billing kicks in.
+  * **Live Cloud Usage Retrieval (GCP Cloud Monitoring API)**:
+    * Non-blocking background querying of Google Cloud Monitoring metrics (`firestore.googleapis.com/document/read_count`, `write_count`, `delete_count`).
+    * Session operation counter with in-memory delta tracking and 1-click session reset.
+    * Interactive historical charts with 7-day, 14-day, and 30-day time-series views.
+  * **Architectural Scenario & What-If Modeling Tool**:
+    * Visual calculator for capacity planning: inputs for DAU, operations per session, document size, retention policies, and client-side caching.
+    * Live monthly Blaze cost projections and estimated caching ROI savings.
+    * 1-Click export of simulation reports to Markdown or JSON.
+* **Core Runtime & Webview Performance Optimizations**:
+  * **Cloud Monitoring API Caching**: 120s TTL caching for daily monitoring metrics and 300s TTL for historical metrics in `CostService`.
+  * **Status Bar & Webview Debouncing**: Debounced `CostStatusBarController` updates (1,000ms) with concurrency re-entrancy locks; debounced webview usage updates (500ms) and proper disposal on panel closure.
+  * **Timestamp Editor Decorations**: Fast $O(1)$ early substring check and 50-entry LRU cache in `TimestampEditorDecorations`, eliminating redundant regex and JSON parsing on editor hover/scrolls; freed on document close.
+  * **Zero-Allocation ASCII Fast-Path**: Zero-allocation ASCII loop in `getUtf8ByteLength` eliminating V8 C++ boundary crossings during document storage size calculation.
+  * **Real-Time Live Watch DOM Batching**: Batched `liveWatchEvent` DOM updates using `requestAnimationFrame` to eliminate UI layout thrashing, and batch `DocumentFileSystemProvider.invalidateAndNotifyMany`.
+  * **Local JSON Disk Caching**: In-memory `_fileCache` in `LocalJsonService` with `mtimeMs` validation to avoid repeated disk reads, plus batch atomic writes for collection copying, syncing, and seeding.
+  * **Safe Mode Field Operations**: Added Local JSON support and `FieldPath` dot-notation safety to `deleteMultipleFieldsCommand`, plus `CostService.recordOperation` tracking across all field commands.
+  * **Emulator Config Watcher**: 300ms debounce to eliminate port probing socket bursts on workspace file changes.
+
+---
+
 ### [v1.13.0] — Storage Explorer, Vector Search & Cloud Functions Triggers (Target: Q1 2027)
 
 *Theme: Cloud Storage bucket exploration, vector similarity search, and comprehensive Firebase triggers.*
 
-* **Firestore Cost Simulator & Free Quota Usage Dashboard (`ketrik-firestore-studio.openCostSimulator`)**:
-  * **Daily Free Allowance Tracking & Progress Meters**:
-    * Full integration of standard Google Cloud / Firebase Free Tier daily quotas:
-      * **Document Reads**: `50,000 free reads / day`
-      * **Document Writes**: `20,000 free writes / day`
-      * **Document Deletes**: `20,000 free deletes / day`
-      * **Stored Data**: `1 GiB free storage`
-      * **Network Egress**: `10 GiB / month free egress`
-    * Real-time progress bars showing daily % consumed before Blaze billing kicks in.
-  * **Live Cloud Usage Retrieval (GCP Cloud Monitoring API)**:
-    * Non-blocking background querying of Google Cloud Monitoring metrics (`firestore.googleapis.com/document/read_count`, `write_count`, `delete_count`, `network/sent_bytes_count`).
-    * **Connection Status Badges**: Connection header displays daily usage summary: e.g. `📊 Today: 18.4K/50K reads (Free) | 2.1K writes`.
-    * **Interactive Historical Charts**: 7-day, 14-day, and 30-day time-series graphs breaking down operations by collection.
-  * **Query Pre-Flight Cost Profiler (Table & Query Builder)**:
-    * **"Estimate Cost" Action**: In Collection Table and Server Query Builder, executes a single-read `count()` to project the total billable reads.
-    * Highlights whether the query falls within the remaining daily free quota or calculates the estimated cost on Blaze pay-as-you-go rates ($0.06 / 100K reads).
-    * Warning guardrail when an unbounded query without `limit()` will read >10,000 documents.
-  * **Architectural Scenario & What-If Modeling Tool**:
-    * Visual calculator for capacity planning: inputs for DAU, operations per session, document size, and retention policies.
-    * Side-by-side cost projection: *Uncached Architecture* vs *Client-Cached Architecture* showing estimated monthly savings.
-    * Export simulation reports to Markdown or JSON for architectural documentation.
-  * **Configurable Budget Guardrails & Threshold Alerts**:
-    * Workspace settings (`ketrik-firestore-studio.costAlerts.dailyReadThreshold`, `dailyWriteThreshold`).
-    * Non-intrusive status bar indicator alerting developers when daily usage approaches or exceeds free quota.
 * **Dedicated Cloud Storage Explorer in Sidebar Tree**:
   * Dedicated **Cloud Storage** branch under each connection (`StorageBucketsBranchItem`): browse buckets, folders, files, MIME types, file sizes, and download URLs.
   * Drag-and-drop file upload into document fields (auto-uploads to bucket and writes resulting URL or `gs://` path).

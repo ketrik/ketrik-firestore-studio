@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.12.1",
+  "version": "1.12.2",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -219,6 +219,26 @@
           "type": "boolean",
           "default": true,
           "description": "Show the Firebase Local Emulator status indicator in the VS Code status bar.",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.costAlerts.dailyReadThreshold": {
+          "type": "number",
+          "default": 40000,
+          "minimum": 1,
+          "description": "Daily Firestore document read threshold to trigger warning indicator in status bar and alerts (Default: 40,000, 80% of Spark free quota).",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.costAlerts.dailyWriteThreshold": {
+          "type": "number",
+          "default": 16000,
+          "minimum": 1,
+          "description": "Daily Firestore document write threshold to trigger warning indicator in status bar and alerts (Default: 16,000, 80% of Spark free quota).",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.costAlerts.enableNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Display a notification alert when daily Firestore read/write quota exceeds configured budget thresholds.",
           "scope": "window"
         }
       }

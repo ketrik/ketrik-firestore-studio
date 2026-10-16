@@ -174,9 +174,10 @@ export async function generateSyntheticDataCommand(
       let totalCreated = 0;
 
       if (conn.isLocalJson) {
-        // Local JSON insertion
+        // Local JSON batch insertion
         const currentLocal = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
         const startIndex = currentLocal.length + 1;
+        const generatedDocs: Array<{ id: string; data: Record<string, any> }> = [];
 
         for (let i = 0; i < docCount; i++) {
           if (token.isCancellationRequested) break;
@@ -191,10 +192,12 @@ export async function generateSyntheticDataCommand(
             docId = autoId();
           }
 
-          LocalJsonService.getInstance().setDocument(conn, `${collectionPath}/${docId}`, data);
+          generatedDocs.push({ id: docId, data });
           totalCreated++;
           progress.report({ increment: (1 / docCount) * 100 });
         }
+
+        LocalJsonService.getInstance().setDocuments(conn, collectionPath, generatedDocs);
       } else {
         // Cloud Firestore / Emulator batch ingestion
         const firestore = await connectionManager.getFirestore(item.connectionId);

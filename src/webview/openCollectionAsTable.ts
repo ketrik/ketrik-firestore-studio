@@ -1042,17 +1042,17 @@ export async function openCollectionAsTable(
           }
 
           const docChanges = snapshot.docChanges();
+          const changedPaths: string[] = [];
+
           for (const change of docChanges) {
             const doc = change.doc;
+            changedPaths.push(doc.ref.path);
             const docData = {
               ...sanitizeFirestoreValue(doc.data()),
               __path: doc.ref.path,
               __id: doc.id,
               __parentPath: doc.ref.parent && doc.ref.parent.parent ? doc.ref.parent.parent.path : null,
             };
-
-            // Invalidate virtual file system cache for open editor tabs
-            DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, doc.ref.path);
 
             if (change.type === "added") {
               const headerSet = new Set(headers);
@@ -1116,6 +1116,12 @@ export async function openCollectionAsTable(
                 docPath: doc.ref.path,
               });
             }
+          }
+
+          if (changedPaths.length > 0) {
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
+              changedPaths.map((docPath) => ({ connectionId, docPath }))
+            );
           }
         },
         (error) => {

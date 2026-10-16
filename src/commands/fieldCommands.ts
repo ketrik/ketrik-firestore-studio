@@ -7,6 +7,7 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { isTimestampLike, timestampToDate, formatDateTime } from "../utils/timestampUtils";
 import { LocalJsonService } from "../services/LocalJsonService";
+import { CostService } from "../cost/costService";
 
 /**
  * Handle opening or quick-editing a field.
@@ -25,6 +26,7 @@ export async function openFieldCommand(
       LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, item.fieldName, newVal);
     } else {
       await item.parentDocRef.update(new FieldPath(item.fieldName), newVal);
+      CostService.getInstance().recordOperation(item.connectionId, "write", 1);
     }
   };
 
@@ -400,6 +402,7 @@ export async function renameFieldCommand(
       return;
     }
 
+    CostService.getInstance().recordOperation(item.connectionId, "read", 1);
     const snapshot = await item.parentDocRef.get();
     if (!snapshot.exists) {
       vscode.window.showErrorMessage(`Document "${item.parentDocRef.id}" no longer exists.`);
@@ -432,6 +435,7 @@ export async function renameFieldCommand(
       new FieldPath(item.fieldName),
       FieldValue.delete()
     );
+    CostService.getInstance().recordOperation(item.connectionId, "write", 1);
 
     documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
     vscode.window.showInformationMessage(`Renamed '${item.fieldName}' to '${targetName}'`);
@@ -504,6 +508,7 @@ export async function deleteFieldCommand(
       }
 
       await targetItem.parentDocRef.update(new FieldPath(targetItem.fieldName), FieldValue.delete());
+      CostService.getInstance().recordOperation(targetItem.connectionId, "write", 1);
       documentFileSystemProvider.invalidateAndNotify(targetItem.connectionId, targetItem.parentDocRef.path);
       vscode.window.showInformationMessage(`Field "${targetItem.fieldName}" deleted!`);
       explorerDataProvider.refreshNode(targetItem);
@@ -521,7 +526,7 @@ export async function deleteMultipleFieldsCommand(
   explorerDataProvider: ExplorerDataProvider,
   documentFileSystemProvider: DocumentFileSystemProvider
 ) {
-  let docRef: import("firebase-admin/firestore").DocumentReference | undefined;
+  let docRef: any | undefined;
   let connectionId: string | undefined;
   let refreshTarget: any = item;
 
@@ -535,8 +540,13 @@ export async function deleteMultipleFieldsCommand(
     const parsed = documentFileSystemProvider.parseUri(item);
     connectionId = parsed.connectionId;
     if (parsed.docPath && !parsed.isRules) {
-      const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-      docRef = firestore.doc(parsed.docPath);
+      const conn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (conn?.isLocalJson) {
+        docRef = { id: parsed.docPath.split("/").pop()!, path: parsed.docPath };
+      } else {
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        docRef = firestore.doc(parsed.docPath);
+      }
     }
   } else {
     // Check active text editor
@@ -545,8 +555,13 @@ export async function deleteMultipleFieldsCommand(
       const parsed = documentFileSystemProvider.parseUri(activeEditor.document.uri);
       connectionId = parsed.connectionId;
       if (parsed.docPath && !parsed.isRules) {
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-        docRef = firestore.doc(parsed.docPath);
+        const conn = ConnectionManager.getInstance().getConnection(connectionId);
+        if (conn?.isLocalJson) {
+          docRef = { id: parsed.docPath.split("/").pop()!, path: parsed.docPath };
+        } else {
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          docRef = firestore.doc(parsed.docPath);
+        }
       }
     }
   }
@@ -557,15 +572,22 @@ export async function deleteMultipleFieldsCommand(
   }
 
   try {
-    const snapshot = await docRef.get();
-    if (!snapshot.exists) {
-      vscode.window.showErrorMessage(`Document "${docRef.id}" does not exist.`);
-      return;
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    let data: Record<string, any> = {};
+
+    if (conn?.isLocalJson) {
+      data = LocalJsonService.getInstance().getDocument(conn, docRef.path) || {};
+    } else {
+      CostService.getInstance().recordOperation(connectionId, "read", 1);
+      const snapshot = await docRef.get();
+      if (!snapshot.exists) {
+        vscode.window.showErrorMessage(`Document "${docRef.id}" does not exist.`);
+        return;
+      }
+      data = snapshot.data() || {};
     }
 
-    const data = snapshot.data() || {};
     const keys = Object.keys(data);
-
     if (keys.length === 0) {
       vscode.window.showInformationMessage(`Document "${docRef.id}" has no fields to delete.`);
       return;
@@ -639,13 +661,33 @@ export async function deleteMultipleFieldsCommand(
       return;
     }
 
-    // Build atomic update payload
-    const updatePayload: Record<string, any> = {};
-    for (const key of selectedKeys) {
-      updatePayload[key] = FieldValue.delete();
+    if (conn?.isLocalJson) {
+      for (const key of selectedKeys) {
+        LocalJsonService.getInstance().updateField(conn, docRef.path, key, undefined, true);
+      }
+      documentFileSystemProvider.invalidateAndNotify(connectionId, docRef.path);
+      vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} field(s) from "${docRef.id}".`);
+
+      if (refreshTarget) {
+        explorerDataProvider.refreshNode(refreshTarget);
+      } else {
+        explorerDataProvider.refresh();
+      }
+      return;
     }
 
-    await docRef.update(updatePayload);
+    // Build atomic update arguments with FieldPath for dot-safety
+    if (selectedKeys.length === 1) {
+      await docRef.update(new FieldPath(selectedKeys[0]), FieldValue.delete());
+    } else {
+      const args: any[] = [];
+      for (const key of selectedKeys) {
+        args.push(new FieldPath(key), FieldValue.delete());
+      }
+      await (docRef.update as any)(...args);
+    }
+
+    CostService.getInstance().recordOperation(connectionId, "write", 1);
     documentFileSystemProvider.invalidateAndNotify(connectionId, docRef.path);
     vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} field(s) from "${docRef.id}".`);
 
@@ -804,6 +846,7 @@ export async function addFieldCommand(
     } else {
       await docRef.update(new FieldPath(fieldName.trim()), fieldValue);
       if (connectionId) {
+        CostService.getInstance().recordOperation(connectionId, "write", 1);
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
       }
     }

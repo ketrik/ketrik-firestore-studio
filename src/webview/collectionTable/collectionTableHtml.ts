@@ -1255,6 +1255,41 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
       }
 
       let hasMoreState = false;
+      let pendingLiveRender = null;
+      let pendingLiveFlashes = [];
+      let pendingHeadersUpdate = null;
+
+      function scheduleLiveBatchRender() {
+        if (pendingLiveRender) return;
+        pendingLiveRender = requestAnimationFrame(() => {
+          pendingLiveRender = null;
+          if (pendingHeadersUpdate) {
+            currentHeaders = pendingHeadersUpdate;
+            pendingHeadersUpdate = null;
+            document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
+          }
+          filterCurrentDocs();
+
+          const flashesToApply = pendingLiveFlashes.slice();
+          pendingLiveFlashes = [];
+
+          flashesToApply.forEach(({ docPath, changeType }) => {
+            const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
+            if (tr) {
+              tr.classList.remove('row-flash-added', 'row-flash-modified', 'row-flash-removed');
+              if (changeType === 'added') {
+                tr.classList.add('row-flash-added');
+                setTimeout(() => tr.classList.remove('row-flash-added'), 2200);
+              } else if (changeType === 'modified') {
+                tr.classList.add('row-flash-modified');
+                setTimeout(() => tr.classList.remove('row-flash-modified'), 2200);
+              } else if (changeType === 'removed') {
+                tr.classList.add('row-flash-removed');
+              }
+            }
+          });
+        });
+      }
 
       // ── message handler ───────────────────────────────────────────
       window.addEventListener('message', function(event) {
@@ -1530,57 +1565,34 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           const { changeType, doc, docId, docPath, updatedHeaders } = msg;
 
           if (updatedHeaders && Array.isArray(updatedHeaders)) {
-            currentHeaders = updatedHeaders;
-            document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
+            pendingHeadersUpdate = updatedHeaders;
           }
 
-          if (changeType === 'added') {
-            // Check if document is already present
+          if (changeType === 'added' || changeType === 'modified') {
             const existingIdx = allLoadedDocs.findIndex(d => d.__path === docPath);
             if (existingIdx >= 0) {
               allLoadedDocs[existingIdx] = doc;
             } else {
-              allLoadedDocs.unshift(doc);
+              if (changeType === 'added') {
+                allLoadedDocs.unshift(doc);
+              } else {
+                allLoadedDocs.push(doc);
+              }
             }
-            filterCurrentDocs();
-
-            // Find tr and animate flash
-            const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
-            if (tr) {
-              tr.classList.remove('row-flash-added', 'row-flash-modified', 'row-flash-removed');
-              void tr.offsetWidth; // force reflow
-              tr.classList.add('row-flash-added');
-              setTimeout(() => tr.classList.remove('row-flash-added'), 2200);
-            }
-          } else if (changeType === 'modified') {
-            const idx = allLoadedDocs.findIndex(d => d.__path === docPath);
-            if (idx >= 0) {
-              allLoadedDocs[idx] = doc;
-            } else {
-              allLoadedDocs.unshift(doc);
-            }
-            filterCurrentDocs();
-
-            const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
-            if (tr) {
-              tr.classList.remove('row-flash-added', 'row-flash-modified', 'row-flash-removed');
-              void tr.offsetWidth; // force reflow
-              tr.classList.add('row-flash-modified');
-              setTimeout(() => tr.classList.remove('row-flash-modified'), 2200);
-            }
+            pendingLiveFlashes.push({ docPath, changeType });
+            scheduleLiveBatchRender();
           } else if (changeType === 'removed') {
             const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
             if (tr) {
               tr.classList.remove('row-flash-added', 'row-flash-modified', 'row-flash-removed');
-              void tr.offsetWidth; // force reflow
               tr.classList.add('row-flash-removed');
               setTimeout(() => {
                 allLoadedDocs = allLoadedDocs.filter(d => d.__path !== docPath);
-                filterCurrentDocs();
+                scheduleLiveBatchRender();
               }, 1200);
             } else {
               allLoadedDocs = allLoadedDocs.filter(d => d.__path !== docPath);
-              filterCurrentDocs();
+              scheduleLiveBatchRender();
             }
           }
         }

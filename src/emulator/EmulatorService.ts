@@ -44,6 +44,7 @@ export class EmulatorService implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private cachedConfigs: DetectedEmulatorConfig[] | null = null;
   private lastKnownOnline = false;
+  private configChangeTimer: NodeJS.Timeout | null = null;
 
   private constructor() {}
 
@@ -92,9 +93,15 @@ export class EmulatorService implements vscode.Disposable {
     await this.handleStartupDiscovery(context);
   }
 
-  private async onWorkspaceConfigChanged(): Promise<void> {
-    this.cachedConfigs = null;
-    await this.refreshStatus();
+  private onWorkspaceConfigChanged(): void {
+    if (this.configChangeTimer) {
+      clearTimeout(this.configChangeTimer);
+    }
+    this.configChangeTimer = setTimeout(async () => {
+      this.configChangeTimer = null;
+      this.cachedConfigs = null;
+      await this.refreshStatus();
+    }, 300);
   }
 
   /**
@@ -698,6 +705,10 @@ export class EmulatorService implements vscode.Disposable {
   }
 
   public dispose(): void {
+    if (this.configChangeTimer) {
+      clearTimeout(this.configChangeTimer);
+      this.configChangeTimer = null;
+    }
     if (this.fileWatcher) {
       this.fileWatcher.dispose();
     }
