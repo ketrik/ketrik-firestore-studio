@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.12.0",
+  "version": "1.12.1",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -664,6 +664,12 @@
         "category": "Firestore Studio",
         "title": "Create Composite Index...",
         "icon": "$(add)"
+      },
+      {
+        "command": "ketrik-firestore-studio.openCostSimulator",
+        "category": "Firestore Studio",
+        "title": "Open Cost Simulator & Quota Usage Dashboard",
+        "icon": "$(graph)"
       }
     ],
     "menus": {
@@ -694,6 +700,11 @@
           "command": "ketrik-firestore-studio.emulatorStatusMenu",
           "when": "view == ketrik-firestore-studio-view",
           "group": "navigation@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.openCostSimulator",
+          "when": "view == ketrik-firestore-studio-view",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -743,9 +754,14 @@
           "group": "1_manage@6"
         },
         {
-          "command": "ketrik-firestore-studio.deleteConnection",
+          "command": "ketrik-firestore-studio.openCostSimulator",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_manage@7"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteConnection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_manage@8"
         },
         {
           "command": "ketrik-firestore-studio.openAuthUsersAsTable",

@@ -666,6 +666,7 @@ export function getCollectionTableHtml(
               <option value="or">Match: ANY (OR)</option>
             </select>
             <button id="addClauseBtn" class="secondary icon-btn">+ Add Clause</button>
+            <button id="estimateQueryCostBtn" class="secondary icon-btn" title="Calculate pre-flight read cost using a 1-read aggregation before fetching documents">💰 Estimate Cost</button>
             <button id="runQueryBtn">Run Query</button>
             <button id="resetQueryBtn" class="secondary">Reset</button>
           </div>
@@ -1277,6 +1278,25 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           updateBatchToolbar();
         }
 
+        if (msg.type === 'queryCostEstimateResult') {
+          const btn = document.getElementById('estimateQueryCostBtn');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '💰 Estimate Cost';
+          }
+          const badge = document.getElementById('total-count-badge');
+          if (badge) {
+            const warningSymbol = msg.warning ? ' ⚠️' : '';
+            badge.textContent = "Cost: ~$" + Number(msg.cost).toFixed(5) + " (" + Number(msg.count).toLocaleString() + " reads)" + warningSymbol;
+            badge.title = msg.warning || ("Estimated read cost based on $0.06/100K reads for " + msg.count + " documents.");
+            badge.style.display = 'inline-block';
+            if (msg.warning) {
+              badge.style.color = 'var(--vscode-errorForeground, #f48771)';
+              badge.style.borderColor = 'var(--vscode-errorForeground, #f48771)';
+            }
+          }
+        }
+
         if (msg.type === 'countResult') {
           const btn = document.getElementById('countCollBtn');
           if (btn) {
@@ -1490,6 +1510,10 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
               td.innerHTML = formatCell(doc ? doc[field] : null);
               td.classList.add('cell-flash-error');
               setTimeout(() => td.classList.remove('cell-flash-error'), 1400);
+            }
+          }
+        }
+
         if (msg.type === 'liveWatchState') {
           const liveWatchBtn = document.getElementById('toggleLiveWatchBtn');
           if (liveWatchBtn) {
@@ -1650,6 +1674,12 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         clauses.forEach(c => {
           createClauseRow(c.field, c.op, c.value);
         });
+      };
+
+      document.getElementById('estimateQueryCostBtn').onclick = function() {
+        this.disabled = true;
+        this.innerHTML = '<span>⏳</span> Estimating...';
+        vscode.postMessage({ command: 'estimateQueryCost' });
       };
 
       document.getElementById('countCollBtn').onclick = function() {

@@ -1,0 +1,757 @@
+import { SPARK_FREE_QUOTA, BLAZE_PRICING, DailyUsageSnapshot } from "../../cost/costService";
+
+export interface CostSimulatorInitialData {
+  connectionId: string;
+  connectionName: string;
+  projectId?: string;
+  isEmulator: boolean;
+  isLocalJson: boolean;
+  usageSnapshot: DailyUsageSnapshot;
+}
+
+export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firestore Cost Simulator & Quota Usage</title>
+  <style>
+    :root {
+      --bg-color: var(--vscode-editor-background, #1e1e1e);
+      --text-color: var(--vscode-editor-foreground, #d4d4d4);
+      --card-bg: var(--vscode-editorWidget-background, rgba(255, 255, 255, 0.04));
+      --card-border: var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.2)));
+      --accent: var(--vscode-textLink-foreground, #3794ff);
+      --success: #4ec9b0;
+      --warning: #cca700;
+      --danger: #f14c4c;
+      --muted: var(--vscode-descriptionForeground, #888888);
+      --font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: var(--font-family);
+      padding: 24px;
+      line-height: 1.5;
+    }
+
+    .header-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 16px;
+    }
+
+    .header-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge-source {
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: rgba(55, 148, 255, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(55, 148, 255, 0.3);
+      font-weight: 500;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    button {
+      background: var(--vscode-button-background, #0e639c);
+      color: var(--vscode-button-foreground, #ffffff);
+      border: none;
+      padding: 6px 14px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: inherit;
+    }
+
+    button:hover {
+      background: var(--vscode-button-hoverBackground, #1177bb);
+    }
+
+    button.secondary {
+      background: var(--vscode-button-secondaryBackground, #3a3d41);
+      color: var(--vscode-button-secondaryForeground, #ffffff);
+    }
+
+    button.secondary:hover {
+      background: var(--vscode-button-secondaryHoverBackground, #45494e);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 20px;
+    }
+
+    .tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: 8px 16px;
+      color: var(--muted);
+      border-radius: 0;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .tab-btn:hover {
+      background: rgba(128, 128, 128, 0.08);
+      color: var(--text-color);
+    }
+
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom: 2px solid var(--accent);
+      background: none;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .grid-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      position: relative;
+    }
+
+    .card-title {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-value {
+      font-size: 1.7rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .card-subtext {
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    .progress-bar-container {
+      background: rgba(128, 128, 128, 0.2);
+      border-radius: 4px;
+      height: 8px;
+      width: 100%;
+      overflow: hidden;
+      margin: 10px 0 6px 0;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.4s ease, background-color 0.4s ease;
+    }
+
+    .fill-green {
+      background: var(--success);
+    }
+
+    .fill-yellow {
+      background: var(--warning);
+    }
+
+    .fill-red {
+      background: var(--danger);
+    }
+
+    .calculator-layout {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 800px) {
+      .calculator-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+
+    .label-hint {
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: normal;
+      margin-left: 4px;
+    }
+
+    input[type="number"], select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--card-border);
+      background: var(--vscode-input-background, #2d2d2d);
+      color: var(--vscode-input-foreground, #cccccc);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    input[type="number"]:focus, select:focus {
+      outline: 1px solid var(--accent);
+      border-color: var(--accent);
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      cursor: pointer;
+    }
+
+    .checkbox-row input {
+      cursor: pointer;
+    }
+
+    .results-panel {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 20px;
+    }
+
+    .results-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .results-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+    }
+
+    .results-table th, .results-table td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .results-table th {
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .results-table td.numeric {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .total-highlight {
+      font-weight: 700;
+      font-size: 1.05rem;
+      color: var(--accent);
+    }
+
+    .savings-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 4px;
+      background: rgba(78, 201, 176, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(78, 201, 176, 0.3);
+      font-weight: 600;
+      font-size: 0.85rem;
+      margin-top: 8px;
+    }
+
+    .rates-legend {
+      margin-top: 24px;
+      background: rgba(128, 128, 128, 0.06);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 16px;
+      font-size: 0.85rem;
+    }
+
+    .rates-legend h4 {
+      margin-bottom: 8px;
+      color: var(--text-color);
+    }
+
+    .rates-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      color: var(--muted);
+    }
+
+    .rates-grid strong {
+      color: var(--text-color);
+    }
+  </style>
+</head>
+<body>
+  <div class="header-container">
+    <div>
+      <div class="header-title">
+        <span>💰 Firestore Cost Simulator & Free Quota Usage</span>
+        <span class="badge-source" id="sourceBadge">${
+          data.usageSnapshot.source === "cloud-monitoring"
+            ? "Live Cloud Monitoring"
+            : "Active Session Accounting"
+        }</span>
+      </div>
+      <div style="font-size: 0.85rem; color: var(--muted); margin-top: 4px;">
+        Connection: <strong>${data.connectionName}</strong> ${
+    data.projectId ? `(${data.projectId})` : ""
+  } &bull; Target: ${
+    data.isEmulator ? "Local Emulator" : data.isLocalJson ? "Local JSON" : "Cloud Firestore"
+  }
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="refreshBtn" class="secondary" title="Re-fetch usage data">🔄 Refresh Usage</button>
+      <button id="resetSessionBtn" class="secondary" title="Reset in-memory session operations counter">🧹 Reset Session</button>
+      <button id="exportMdBtn" title="Export report as Markdown">📝 Export Markdown</button>
+      <button id="exportJsonBtn" class="secondary" title="Export report as JSON">⬇ Export JSON</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="quotasTab">📊 Daily Quota Meters</button>
+    <button class="tab-btn" data-tab="calculatorTab">🧮 Capacity & Cost Modeler</button>
+    <button class="tab-btn" data-tab="pricingTab">📋 Pricing Matrix & Rates</button>
+  </div>
+
+  <!-- TAB 1: DAILY QUOTAS -->
+  <div id="quotasTab" class="tab-content active">
+    <div class="grid-cards">
+      <!-- READS CARD -->
+      <div class="card">
+        <div class="card-title">
+          <span>Daily Reads</span>
+          <span>50,000 Free / Day</span>
+        </div>
+        <div class="card-value" id="meterReadsVal">${data.usageSnapshot.reads.toLocaleString()}</div>
+        <div class="progress-bar-container">
+          <div id="meterReadsBar" class="progress-bar-fill fill-green" style="width: 0%;"></div>
+        </div>
+        <div class="card-subtext" id="meterReadsSub">0% of free daily allowance used</div>
+      </div>
+
+      <!-- WRITES CARD -->
+      <div class="card">
+        <div class="card-title">
+          <span>Daily Writes</span>
+          <span>20,000 Free / Day</span>
+        </div>
+        <div class="card-value" id="meterWritesVal">${data.usageSnapshot.writes.toLocaleString()}</div>
+        <div class="progress-bar-container">
+          <div id="meterWritesBar" class="progress-bar-fill fill-green" style="width: 0%;"></div>
+        </div>
+        <div class="card-subtext" id="meterWritesSub">0% of free daily allowance used</div>
+      </div>
+
+      <!-- DELETES CARD -->
+      <div class="card">
+        <div class="card-title">
+          <span>Daily Deletes</span>
+          <span>20,000 Free / Day</span>
+        </div>
+        <div class="card-value" id="meterDeletesVal">${data.usageSnapshot.deletes.toLocaleString()}</div>
+        <div class="progress-bar-container">
+          <div id="meterDeletesBar" class="progress-bar-fill fill-green" style="width: 0%;"></div>
+        </div>
+        <div class="card-subtext" id="meterDeletesSub">0% of free daily allowance used</div>
+      </div>
+
+      <!-- ESTIMATED OVERAGE COST -->
+      <div class="card">
+        <div class="card-title">
+          <span>Blaze Daily Overage</span>
+          <span>Pay-As-You-Go</span>
+        </div>
+        <div class="card-value" id="meterCostVal">$0.00</div>
+        <div class="card-subtext" id="meterCostSub" style="margin-top: 14px;">$0.00 across all operations within free quota</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 16px;">
+      <h3 style="font-size: 1rem; margin-bottom: 8px;">💡 Quota Health & Optimization Insights</h3>
+      <p id="quotaInsightText" style="font-size: 0.88rem; color: var(--text-color);">
+        All operations are currently running comfortably within Google Cloud Firestore's Spark Free Allowance. No billable overage charges incurred today.
+      </p>
+    </div>
+  </div>
+
+  <!-- TAB 2: CAPACITY MODELER -->
+  <div id="calculatorTab" class="tab-content">
+    <div class="calculator-layout">
+      <!-- INPUTS FORM -->
+      <div class="card">
+        <h3 style="font-size: 1.05rem; margin-bottom: 16px;">Architecture & Traffic Inputs</h3>
+        
+        <div class="form-group">
+          <label for="inpDau">Daily Active Users (DAU):</label>
+          <input type="number" id="inpDau" value="1000" min="1" step="100" />
+        </div>
+
+        <div class="form-group">
+          <label for="inpReadsPerSession">Reads per User Session: <span class="label-hint">(views, feeds)</span></label>
+          <input type="number" id="inpReadsPerSession" value="25" min="0" step="1" />
+        </div>
+
+        <div class="form-group">
+          <label for="inpWritesPerSession">Writes per User Session: <span class="label-hint">(mutations, logs)</span></label>
+          <input type="number" id="inpWritesPerSession" value="5" min="0" step="1" />
+        </div>
+
+        <div class="form-group">
+          <label for="inpDeletesPerSession">Deletes per User Session: <span class="label-hint">(cleanups)</span></label>
+          <input type="number" id="inpDeletesPerSession" value="1" min="0" step="1" />
+        </div>
+
+        <div class="form-group">
+          <label for="inpDocSize">Avg Document Size (Bytes): <span class="label-hint">(1 KB = 1024)</span></label>
+          <input type="number" id="inpDocSize" value="1024" min="100" step="256" />
+        </div>
+
+        <div class="form-group">
+          <label for="inpRetention">Data Retention (Days): <span class="label-hint">(TTL / storage window)</span></label>
+          <input type="number" id="inpRetention" value="90" min="1" step="30" />
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="inpCaching" checked />
+          <label for="inpCaching" style="margin-bottom:0; cursor:pointer;">Simulate In-Memory / Client Caching</label>
+        </div>
+
+        <div class="form-group" id="cacheGroup" style="margin-top: 10px;">
+          <label for="inpCacheHitRate">Cache Hit Rate (%): <span class="label-hint">(avoided server reads)</span></label>
+          <input type="number" id="inpCacheHitRate" value="65" min="0" max="99" step="5" />
+        </div>
+      </div>
+
+      <!-- RESULTS PANEL -->
+      <div class="results-panel">
+        <div class="results-title">
+          <span>Projected Cloud Cost Breakdown</span>
+          <span style="font-size:0.8rem; color:var(--muted); font-weight:normal;">Calculated against standard Blaze tier</span>
+        </div>
+
+        <table class="results-table">
+          <thead>
+            <tr>
+              <th>Operation / Resource</th>
+              <th class="numeric">Daily Volume</th>
+              <th class="numeric">Billable Units</th>
+              <th class="numeric">Monthly Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Document Reads ($0.06 / 100k)</td>
+              <td class="numeric" id="resReadsDaily">0</td>
+              <td class="numeric" id="resReadsBillable">0</td>
+              <td class="numeric" id="resReadsCost">$0.00</td>
+            </tr>
+            <tr>
+              <td>Document Writes ($0.18 / 100k)</td>
+              <td class="numeric" id="resWritesDaily">0</td>
+              <td class="numeric" id="resWritesBillable">0</td>
+              <td class="numeric" id="resWritesCost">$0.00</td>
+            </tr>
+            <tr>
+              <td>Document Deletes ($0.02 / 100k)</td>
+              <td class="numeric" id="resDeletesDaily">0</td>
+              <td class="numeric" id="resDeletesBillable">0</td>
+              <td class="numeric" id="resDeletesCost">$0.00</td>
+            </tr>
+            <tr>
+              <td>Retained Data Storage ($0.18 / GiB)</td>
+              <td class="numeric" id="resStorageGiB">0.00 GiB</td>
+              <td class="numeric" id="resStorageBillable">0.00 GiB</td>
+              <td class="numeric" id="resStorageCost">$0.00</td>
+            </tr>
+            <tr style="border-top: 2px solid var(--card-border);">
+              <td class="total-highlight">Total Estimated Monthly Cost</td>
+              <td colspan="2"></td>
+              <td class="numeric total-highlight" id="resMonthlyTotal">$0.00</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div id="savingsContainer" style="display:none;">
+          <div class="savings-badge" id="savingsBadgeText">
+            🎉 Client Caching saves ~$0.00 / month on document reads!
+          </div>
+        </div>
+
+        <div style="margin-top: 20px; font-size: 0.82rem; color: var(--muted); line-height: 1.4;">
+          * Projections subtract the daily Spark free allowance (50k reads, 20k writes, 20k deletes, 1 GiB storage). Exact monthly costs may vary with network egress and multi-region replication.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: PRICING MATRIX -->
+  <div id="pricingTab" class="tab-content">
+    <div class="rates-legend">
+      <h4>Google Cloud Firestore Free Quota (Spark Tier)</h4>
+      <div class="rates-grid" style="margin-bottom: 20px;">
+        <div><strong>Daily Reads:</strong> 50,000 / day</div>
+        <div><strong>Daily Writes:</strong> 20,000 / day</div>
+        <div><strong>Daily Deletes:</strong> 20,000 / day</div>
+        <div><strong>Stored Database:</strong> 1 GiB total</div>
+        <div><strong>Network Egress:</strong> 10 GiB / month</div>
+      </div>
+
+      <h4>Google Cloud Firestore Pay-As-You-Go Rates (Blaze Tier)</h4>
+      <div class="rates-grid">
+        <div><strong>Document Reads:</strong> $0.06 per 100,000</div>
+        <div><strong>Document Writes:</strong> $0.18 per 100,000</div>
+        <div><strong>Document Deletes:</strong> $0.02 per 100,000</div>
+        <div><strong>Stored Data:</strong> $0.18 per GiB / month</div>
+        <div><strong>Network Egress:</strong> $0.12 per GiB</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+
+    let usageData = ${JSON.stringify(data.usageSnapshot)};
+    const SPARK_FREE_QUOTA = ${JSON.stringify(SPARK_FREE_QUOTA)};
+    const BLAZE_PRICING = ${JSON.stringify(BLAZE_PRICING)};
+
+    function updateMeters() {
+      const reads = usageData.reads || 0;
+      const writes = usageData.writes || 0;
+      const deletes = usageData.deletes || 0;
+
+      const readsPct = Math.min(100, Math.round((reads / SPARK_FREE_QUOTA.readsPerDay) * 100));
+      const writesPct = Math.min(100, Math.round((writes / SPARK_FREE_QUOTA.writesPerDay) * 100));
+      const deletesPct = Math.min(100, Math.round((deletes / SPARK_FREE_QUOTA.deletesPerDay) * 100));
+
+      const getFillClass = (pct) => pct >= 90 ? 'fill-red' : pct >= 70 ? 'fill-yellow' : 'fill-green';
+
+      // Reads
+      document.getElementById('meterReadsVal').textContent = reads.toLocaleString();
+      const readsBar = document.getElementById('meterReadsBar');
+      readsBar.style.width = readsPct + '%';
+      readsBar.className = 'progress-bar-fill ' + getFillClass(readsPct);
+      document.getElementById('meterReadsSub').textContent = readsPct + '% of free daily allowance used';
+
+      // Writes
+      document.getElementById('meterWritesVal').textContent = writes.toLocaleString();
+      const writesBar = document.getElementById('meterWritesBar');
+      writesBar.style.width = writesPct + '%';
+      writesBar.className = 'progress-bar-fill ' + getFillClass(writesPct);
+      document.getElementById('meterWritesSub').textContent = writesPct + '% of free daily allowance used';
+
+      // Deletes
+      document.getElementById('meterDeletesVal').textContent = deletes.toLocaleString();
+      const deletesBar = document.getElementById('meterDeletesBar');
+      deletesBar.style.width = deletesPct + '%';
+      deletesBar.className = 'progress-bar-fill ' + getFillClass(deletesPct);
+      document.getElementById('meterDeletesSub').textContent = deletesPct + '% of free daily allowance used';
+
+      // Calculate billable overage
+      const billableReads = Math.max(0, reads - SPARK_FREE_QUOTA.readsPerDay);
+      const billableWrites = Math.max(0, writes - SPARK_FREE_QUOTA.writesPerDay);
+      const billableDeletes = Math.max(0, deletes - SPARK_FREE_QUOTA.deletesPerDay);
+
+      const overageCost = (billableReads / 100000) * BLAZE_PRICING.readsPer100k +
+                          (billableWrites / 100000) * BLAZE_PRICING.writesPer100k +
+                          (billableDeletes / 100000) * BLAZE_PRICING.deletesPer100k;
+
+      document.getElementById('meterCostVal').textContent = '$' + overageCost.toFixed(2);
+      if (overageCost > 0) {
+        document.getElementById('meterCostSub').textContent = '⚠️ Billable overage charges incurred today';
+        document.getElementById('quotaInsightText').textContent = '⚠️ You have exceeded free tier limits in some operations today. Consider caching frequently read documents or pruning unneeded writes.';
+      } else {
+        document.getElementById('meterCostSub').textContent = '$0.00 across all operations within free quota';
+        document.getElementById('quotaInsightText').textContent = 'All operations are currently running comfortably within Google Cloud Firestore Spark Free Allowance. No billable overage charges incurred today.';
+      }
+    }
+
+    function runCapacityCalculation() {
+      const dau = Math.max(1, parseInt(document.getElementById('inpDau').value) || 1000);
+      const readsPerSession = Math.max(0, parseInt(document.getElementById('inpReadsPerSession').value) || 0);
+      const writesPerSession = Math.max(0, parseInt(document.getElementById('inpWritesPerSession').value) || 0);
+      const deletesPerSession = Math.max(0, parseInt(document.getElementById('inpDeletesPerSession').value) || 0);
+      const docSize = Math.max(10, parseInt(document.getElementById('inpDocSize').value) || 1024);
+      const retentionDays = Math.max(1, parseInt(document.getElementById('inpRetention').value) || 30);
+      const enableCaching = document.getElementById('inpCaching').checked;
+      const cacheHitRate = Math.max(0, Math.min(99, parseInt(document.getElementById('inpCacheHitRate').value) || 0));
+
+      const cacheMultiplier = enableCaching ? (1 - cacheHitRate / 100) : 1;
+      const effectiveReads = Math.round(dau * readsPerSession * cacheMultiplier);
+      const totalWrites = Math.round(dau * writesPerSession);
+      const totalDeletes = Math.round(dau * deletesPerSession);
+
+      const billableReadsDaily = Math.max(0, effectiveReads - SPARK_FREE_QUOTA.readsPerDay);
+      const billableWritesDaily = Math.max(0, totalWrites - SPARK_FREE_QUOTA.writesPerDay);
+      const billableDeletesDaily = Math.max(0, totalDeletes - SPARK_FREE_QUOTA.deletesPerDay);
+
+      const monthlyReadsCost = ((billableReadsDaily * 30.416) / 100000) * BLAZE_PRICING.readsPer100k;
+      const monthlyWritesCost = ((billableWritesDaily * 30.416) / 100000) * BLAZE_PRICING.writesPer100k;
+      const monthlyDeletesCost = ((billableDeletesDaily * 30.416) / 100000) * BLAZE_PRICING.deletesPer100k;
+
+      // Storage
+      const netDailyDocs = Math.max(0, totalWrites - totalDeletes);
+      const totalRetainedDocs = netDailyDocs * retentionDays;
+      const storageBytes = totalRetainedDocs * docSize;
+      const storageGiB = storageBytes / (1024 * 1024 * 1024);
+      const billableStorageGiB = Math.max(0, storageGiB - SPARK_FREE_QUOTA.storageGiB);
+      const monthlyStorageCost = billableStorageGiB * BLAZE_PRICING.storagePerGiBMonth;
+
+      const monthlyTotal = monthlyReadsCost + monthlyWritesCost + monthlyDeletesCost + monthlyStorageCost;
+
+      // Uncached comparison
+      const uncachedReads = dau * readsPerSession;
+      const uncachedBillableReads = Math.max(0, uncachedReads - SPARK_FREE_QUOTA.readsPerDay);
+      const uncachedMonthlyReadsCost = ((uncachedBillableReads * 30.416) / 100000) * BLAZE_PRICING.readsPer100k;
+      const savings = Math.max(0, uncachedMonthlyReadsCost - monthlyReadsCost);
+
+      // Render
+      document.getElementById('resReadsDaily').textContent = effectiveReads.toLocaleString();
+      document.getElementById('resReadsBillable').textContent = billableReadsDaily.toLocaleString();
+      document.getElementById('resReadsCost').textContent = '$' + monthlyReadsCost.toFixed(2);
+
+      document.getElementById('resWritesDaily').textContent = totalWrites.toLocaleString();
+      document.getElementById('resWritesBillable').textContent = billableWritesDaily.toLocaleString();
+      document.getElementById('resWritesCost').textContent = '$' + monthlyWritesCost.toFixed(2);
+
+      document.getElementById('resDeletesDaily').textContent = totalDeletes.toLocaleString();
+      document.getElementById('resDeletesBillable').textContent = billableDeletesDaily.toLocaleString();
+      document.getElementById('resDeletesCost').textContent = '$' + monthlyDeletesCost.toFixed(2);
+
+      document.getElementById('resStorageGiB').textContent = storageGiB.toFixed(2) + ' GiB';
+      document.getElementById('resStorageBillable').textContent = billableStorageGiB.toFixed(2) + ' GiB';
+      document.getElementById('resStorageCost').textContent = '$' + monthlyStorageCost.toFixed(2);
+
+      document.getElementById('resMonthlyTotal').textContent = '$' + monthlyTotal.toFixed(2) + ' / mo';
+
+      const savingsContainer = document.getElementById('savingsContainer');
+      if (enableCaching && savings > 0.05) {
+        savingsContainer.style.display = 'block';
+        document.getElementById('savingsBadgeText').textContent = '🎉 Client Caching saves ~$' + savings.toFixed(2) + ' / month on Firestore reads!';
+      } else {
+        savingsContainer.style.display = 'none';
+      }
+    }
+
+    // Tabs
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.getAttribute('data-tab')).classList.add('active');
+      };
+    });
+
+    // Inputs listeners
+    ['inpDau', 'inpReadsPerSession', 'inpWritesPerSession', 'inpDeletesPerSession', 'inpDocSize', 'inpRetention', 'inpCacheHitRate'].forEach(id => {
+      document.getElementById(id).addEventListener('input', runCapacityCalculation);
+    });
+
+    document.getElementById('inpCaching').addEventListener('change', (e) => {
+      document.getElementById('cacheGroup').style.display = e.target.checked ? 'block' : 'none';
+      runCapacityCalculation();
+    });
+
+    // Toolbar buttons
+    document.getElementById('refreshBtn').onclick = () => {
+      vscode.postMessage({ command: 'refresh' });
+    };
+
+    document.getElementById('resetSessionBtn').onclick = () => {
+      vscode.postMessage({ command: 'resetSession' });
+    };
+
+    document.getElementById('exportMdBtn').onclick = () => {
+      vscode.postMessage({ command: 'exportMarkdown' });
+    };
+
+    document.getElementById('exportJsonBtn').onclick = () => {
+      vscode.postMessage({ command: 'exportJson' });
+    };
+
+    // Messages from extension
+    window.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (msg.type === 'usageUpdate') {
+        usageData = msg.usageSnapshot;
+        document.getElementById('sourceBadge').textContent =
+          usageData.source === 'cloud-monitoring' ? 'Live Cloud Monitoring' : 'Active Session Accounting';
+        updateMeters();
+      }
+    });
+
+    // Init
+    updateMeters();
+    runCapacityCalculation();
+  </script>
+</body>
+</html>`;
+}

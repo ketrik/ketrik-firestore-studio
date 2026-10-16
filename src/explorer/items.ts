@@ -486,3 +486,24 @@ export class CompositeIndexItem extends Item {
     };
   }
 }
+
+/**
+ * A Tree View item representing the "Cost & Quotas" branch/link of a connection.
+ */
+export class CostQuotaBranchItem extends Item {
+  reference = undefined;
+
+  constructor(public connectionId: string) {
+    super("Cost & Quotas", vscode.TreeItemCollapsibleState.None);
+    this.id = `costQuota:${connectionId}`;
+    this.contextValue = "costQuotaBranch";
+    this.iconPath = new vscode.ThemeIcon("graph", new vscode.ThemeColor("charts.green"));
+    this.description = "Simulator & Usage";
+    this.tooltip = "Firestore Cost Simulator & Quota Usage (Daily free allowance & capacity planning)";
+    this.command = {
+      command: "ketrik-firestore-studio.openCostSimulator",
+      title: "Open Cost Simulator",
+      arguments: [{ connectionId }],
+    };
+  }
+}

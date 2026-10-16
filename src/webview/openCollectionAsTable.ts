@@ -8,6 +8,7 @@ import { QueryClause, sortHeaders, parseFilterValue } from "./common/tableUtils"
 import { getCollectionTableHtml } from "./collectionTable/collectionTableHtml";
 import { openFieldAsTable } from "./openFieldAsTable";
 import { LocalJsonService } from "../services/LocalJsonService";
+import { CostService } from "../cost/costService";
 
 export { QueryClause };
 
@@ -63,6 +64,7 @@ export async function openCollectionAsTable(
     vscode.ViewColumn.One,
     {
       enableScripts: true,
+      retainContextWhenHidden: true,
     }
   );
 
@@ -184,6 +186,7 @@ export async function openCollectionAsTable(
         query = query.startAfter(lastDoc);
       }
       const snapshot = await query.get();
+      CostService.getInstance().recordOperation(connectionId, "read", snapshot.docs.length);
       const docs = snapshot.docs.map((doc: QueryDocumentSnapshot) => ({
         ...sanitizeFirestoreValue(doc.data()),
         __path: doc.ref.path,
@@ -302,6 +305,9 @@ export async function openCollectionAsTable(
     .catch((err) => {
       vscode.window.showErrorMessage(`Failed to load initial documents: ${err.message}`);
     });
+
+  // Assign HTML content to render webview and trigger client-side ready handshake
+  panel.webview.html = getCollectionTableHtml({ collectionId, connectionId }, isGroup);
 
   const messageSubscription = panel.webview.onDidReceiveMessage(async (message) => {
     if (message.command === "ready") {
@@ -650,6 +656,34 @@ export async function openCollectionAsTable(
         );
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to count collection: ${err.message}`);
+      }
+    }
+
+    if (message.command === "estimateQueryCost") {
+      try {
+        const query = await buildBaseQuery();
+        const countSnapshot = await query.count().get();
+        const count = countSnapshot.data().count;
+        const estimation = CostService.getInstance().estimateQueryCost(count);
+        panel.webview.postMessage({
+          type: "queryCostEstimateResult",
+          count: estimation.documentCount,
+          cost: estimation.estimatedCost,
+          warning: estimation.warning,
+        });
+
+        const costFormatted = `$${estimation.estimatedCost.toFixed(5)}`;
+        if (estimation.warning) {
+          vscode.window.showWarningMessage(
+            `💰 Estimated Query Cost: ${costFormatted} for ${count.toLocaleString()} document reads. ⚠️ ${estimation.warning}`
+          );
+        } else {
+          vscode.window.showInformationMessage(
+            `💰 Estimated Query Cost: ${costFormatted} for ${count.toLocaleString()} document read(s) ($0.06/100K reads).`
+          );
+        }
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to estimate query cost: ${err.message}`);
       }
     }
 
@@ -1107,9 +1141,6 @@ export async function openCollectionAsTable(
       startLiveWatch();
     }
   }
-
-  // Assign HTML content to render webview and trigger client-side ready handshake
-  panel.webview.html = getCollectionTableHtml({ collectionId, connectionId }, isGroup);
 
   panel.onDidDispose(() => {
     stopLiveWatch(true);

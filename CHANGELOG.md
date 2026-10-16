@@ -2,6 +2,21 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.12.1] - 2026-10-16
+
+### Fixed
+- **Collection Table View Loading**:
+  * Fixed syntax error in table client script (`msg.type === 'fieldUpdateFailed'`) that prevented collection table views from initializing or loading documents.
+  * Added `retainContextWhenHidden: true` to collection webview panel preventing state loss and reload flicker when switching editor tabs.
+  * Ensured `panel.webview.html` assignment reliably executes the initial client handshake and queries documents.
+
+### Added & Improved
+- **Firestore Cost Simulator & Quota Usage**:
+  * Added **Cost & Quotas** link directly in the Explorer Tree under each connection alongside Authentication and Composite Indexes.
+  * **Unified Status Bar Quota Indicator**: Resolved discrepancy between session counter and daily cloud usage by querying 24-hour Google Cloud Monitoring metrics (`firestore.googleapis.com/document/read_count`) alongside the current session in-memory delta.
+  * **Pre-Flight Query Cost Estimator**: Added **"💰 Estimate Cost"** action button in Collection Table server-side query builder to calculate projected read cost using a single-read `count()` aggregation before executing large queries.
+  * Automatic active connection synchronization in the status bar based on focused editor document URIs.
+
 ## [1.12.0] - 2026-10-15
 
 ### Added

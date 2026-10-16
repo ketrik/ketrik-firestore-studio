@@ -90,6 +90,8 @@ import { ConnectionManager } from "./connections/ConnectionManager";
 import { TemplateService } from "./services/TemplateService";
 import { TimestampInlayHintsProvider, TimestampHoverProvider } from "./editor/TimestampEditorDecorations";
 import { DocumentSizeStatusBarController } from "./editor/DocumentSizeStatusBarController";
+import { openCostSimulator } from "./webview/openCostSimulator";
+import { CostStatusBarController } from "./cost/CostStatusBarController";
 
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize ConnectionManager singleton
@@ -115,6 +117,10 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize status bar item for active Firestore document storage size
   const documentSizeStatusBar = new DocumentSizeStatusBarController();
   context.subscriptions.push(documentSizeStatusBar);
+
+  // Initialize status bar item for Firestore Quota & Cost tracking
+  const costStatusBar = new CostStatusBarController();
+  context.subscriptions.push(costStatusBar);
 
   // Automatically refresh Explorer Tree whenever a document or sub-field is saved in the editor (granular, debounced)
   context.subscriptions.push(
@@ -466,6 +472,13 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.generateSyntheticData",
       (item: CollectionItem) =>
         generateSyntheticDataCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openCostSimulator",
+      (item?: any) => {
+        const connectionId = item?.config?.id || item?.connectionId || (typeof item === "string" ? item : undefined);
+        return openCostSimulator(connectionId ? { connectionId } : undefined);
+      }
     )
   );
 

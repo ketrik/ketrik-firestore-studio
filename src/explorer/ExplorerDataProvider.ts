@@ -15,6 +15,7 @@ import {
   CompositeIndexItem,
   CompositeIndexesBranchItem,
   ConnectionTreeItem,
+  CostQuotaBranchItem,
   DocumentFieldItem,
   DocumentItem,
   Item,
@@ -251,7 +252,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         element.reference,
         element.connectionId
       );
-    } else if (element instanceof AuthUsersBranchItem || element instanceof CompositeIndexesBranchItem) {
+    } else if (
+      element instanceof AuthUsersBranchItem ||
+      element instanceof CompositeIndexesBranchItem ||
+      element instanceof CostQuotaBranchItem
+    ) {
       const conn = this._connectionManager.getConnection(element.connectionId);
       return conn ? new ConnectionTreeItem(conn) : undefined;
     } else if (element instanceof CompositeIndexItem) {
@@ -354,10 +359,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           });
         });
 
-        // Add Authentication (Users & Claims) and Composite Indexes nodes alongside Root Collections
+        // Add Authentication, Composite Indexes, and Cost & Quotas nodes alongside Root Collections
         const authBranch = new AuthUsersBranchItem(element.config.id);
         const indexesBranch = new CompositeIndexesBranchItem(element.config.id);
-        const items: Item[] = [authBranch, indexesBranch, ...collItems];
+        const costQuotaBranch = new CostQuotaBranchItem(element.config.id);
+        const items: Item[] = [authBranch, indexesBranch, costQuotaBranch, ...collItems];
         return storeAndReturn(items);
       } catch (err: any) {
         const isUnavailable =

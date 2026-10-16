@@ -13,8 +13,9 @@ timeline
         2026-10-13 : v1.8.0 Security Rules & Auth Table : v1.9.0 User Cloning, Tokens & Force Logout : v1.9.1 Batch Tools, Schemas & Aggregations : v1.9.2 Local Emulator, Collection Groups & UX Polish
         2026-10-14 : v1.10.0 In-Table Editing Suite, 2-Column Inspector Drawer, Storage Media Preview & Filter.or() : v1.11.0 Local JSON Database, Mock Store, Bi-Directional Sync & Timestamp Inlay Hints
         2026-10-15 : v1.12.0 Firestore Indexes Suite, Synthetic Mock Data Generator, Live Watch Mode & 750KB High-Quota Alerts
+        2026-10-16 : v1.12.1 Table Loading Fixes, Cost & Quota Tree Link, Pre-Flight Query Cost Estimator & Status Bar Sync
     section Planned
-        Q1 2027 : v1.13.0 Cloud Functions Triggers, Cost Simulator & Free Quota Usage Dashboard, Storage Explorer & Vector Search
+        Q1 2027 : v1.13.0 Cloud Functions Triggers, Storage Explorer & Vector Search
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -40,7 +41,8 @@ timeline
 | **v1.10.0** | Shipped | 2026-10-14 | In-table spreadsheet editing suite (in-cell primitives, 2-column Key-Value Property Drawer for Maps/Arrays, atomic `FieldPath` updates), Bulk Field Deletion Checklist (`deleteMultipleFields`), inline hover trash icon (`$(trash)`), Cloud Storage media preview, DocumentReference jump, disjunctive queries (`Filter.or()`), starts-with operator |
 | **v1.11.0** | Shipped | 2026-10-14 | Local JSON Database & Mock Store, cross-instance collection copy (`copyCollectionToInstance`), bi-directional sync (Push/Seed & Pull Snapshot), document storage size monitoring & status bar, timestamp formatting & inlay hints, table batch load controls (+50, +100, Load All 1K cap) & auto-replenish |
 | **v1.12.0** | Shipped | 2026-10-15 | Firestore Composite Indexes Suite (tree inspector, firestore.indexes.json 2-way sync & auto-fixer), Synthetic Mock Data Generator (schema inference, 400 docs/batch), Real-Time Live Watch Mode (onSnapshot with animated flash feedback), 750KB High-Quota Warning Indicators |
-| **v1.13.0** | Planned | Q1 2027 | Cloud Functions Triggers & Simulator, Firestore Cost Simulator & Free Quota Usage Dashboard, Storage Explorer & Vector Search |
+| **v1.12.1** | Shipped | 2026-10-16 | Collection table loading fixes, Cost & Quota explorer tree item, unified Status Bar Cloud Monitoring metrics, query pre-flight cost estimator |
+| **v1.13.0** | Planned | Q1 2027 | Cloud Functions Triggers, Storage Explorer, Vector Search (kNN) & Schema Anomaly Analyzer |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer, local offline cache & mocking |
 
 ---
@@ -295,9 +297,29 @@ timeline
 
 ---
 
-### [v1.13.0] — Firestore Cost Simulator, Free Quota Dashboard & Storage Explorer (Target: Q1 2027)
+### [v1.12.1] — Table Loading Fixes & Quota Governance Suite (Shipped: 2026-10-16)
 
-*Theme: Real-time billing transparency, free allowance tracking, query cost pre-flight estimation, and comprehensive Cloud Storage management.*
+*Theme: Webview stability, query cost transparency, and real-time Google Cloud Monitoring status bar sync.*
+
+* **Collection Table Webview Reliability & State Retention**:
+  * Fixed table client-side event parser syntax error (`msg.type === 'fieldUpdateFailed'`) that caused document grid loading to hang on initial open.
+  * Enabled `retainContextWhenHidden: true` on collection table webviews to preserve pagination, active filters, search text, and scroll position when switching between editor tabs.
+  * Synchronized webview HTML initialization to guarantee instant document queries upon tab focus.
+* **Cost & Quotas Tree Navigation**:
+  * Added top-level **"Cost & Quotas"** item under every Firestore connection in the Explorer sidebar tree (`CostQuotaBranchItem` with `$(graph)` icon).
+  * Direct 1-click launcher for the interactive **Cost Simulator & Quota Usage Dashboard**.
+* **Unified Status Bar Quota Indicator**:
+  * Unified status bar reads indicator to reflect true 24-hour cloud usage from Google Cloud Monitoring REST API (`firestore.googleapis.com/document/read_count`) alongside current session in-memory delta.
+  * Automatically switches active connection context based on the document currently focused in the editor (`ketrik-firestore-studio://<connId>/...`).
+* **Pre-Flight Query Cost Estimator (`estimateQueryCost`)**:
+  * Added **"💰 Estimate Cost"** action button in Collection Table server-side query builder.
+  * Uses a lightweight single-read `count()` server aggregation to project read counts and estimated Blaze billable cost ($0.06 / 100K reads) with warning badges if queries exceed free quota limits.
+
+---
+
+### [v1.13.0] — Storage Explorer, Vector Search & Cloud Functions Triggers (Target: Q1 2027)
+
+*Theme: Cloud Storage bucket exploration, vector similarity search, and comprehensive Firebase triggers.*
 
 * **Firestore Cost Simulator & Free Quota Usage Dashboard (`ketrik-firestore-studio.openCostSimulator`)**:
   * **Daily Free Allowance Tracking & Progress Meters**:

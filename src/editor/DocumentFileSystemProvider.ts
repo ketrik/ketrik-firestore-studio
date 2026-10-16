@@ -6,6 +6,7 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { scheme } from "../constants";
 import { RulesService } from "../rules/RulesService";
 import { LocalJsonService } from "../services/LocalJsonService";
+import { CostService } from "../cost/costService";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -106,6 +107,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     }
 
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+    CostService.getInstance().recordOperation(connectionId, "read", 1);
     const promise: Promise<import("firebase-admin/firestore").DocumentSnapshot> = firestore
       .doc(docPath)
       .get()
@@ -458,6 +460,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       }
       // The saved version becomes the new baseline for the next save.
       this.rememberBaseline(uri, writeTime, this.serializeDoc(json));
+      CostService.getInstance().recordOperation(connectionId, "write", 1);
       // Invalidate again after the write completes so no stale snapshot survives.
       this._snapshotCache.delete(`${connectionId}:${docPath}`);
       this._snapshotInFlight.delete(`${connectionId}:${docPath}`);

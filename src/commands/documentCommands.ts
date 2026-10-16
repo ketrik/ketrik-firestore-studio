@@ -7,6 +7,7 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentClipboard } from "../services/DocumentClipboard";
 import { TemplateService } from "../services/TemplateService";
 import { LocalJsonService } from "../services/LocalJsonService";
+import { CostService } from "../cost/costService";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 
 /**
@@ -153,6 +154,7 @@ export async function createDocumentCommand(
   try {
     const ref = docId ? item.reference.doc(docId) : item.reference.doc();
     await ref.set(data);
+    CostService.getInstance().recordOperation(item.connectionId, "write", 1);
     DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, ref.path);
     await openPath(ref.path, item.connectionId);
     vscode.window.showInformationMessage("Document created!");
@@ -245,6 +247,7 @@ export async function deleteDocumentCommand(
   } else if (confirm === "Delete" || confirm === "Delete Document Only") {
     try {
       await item.reference.delete();
+      CostService.getInstance().recordOperation(item.connectionId, "delete", 1);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.reference.path);
       vscode.window.showInformationMessage("Document deleted!");
       const parentItem = new CollectionItem(item.reference.parent.id, item.reference.parent, item.connectionId);
