@@ -5,6 +5,7 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import openPath from "../commands/openPath";
+import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
 
 function resolveConnectionId(
   target?: AuthUserItem | AuthUsersBranchItem | ConnectionTreeItem | { id?: string; connectionId?: string } | string
@@ -482,6 +483,18 @@ export async function deleteAuthUserCommand(
 
   const shouldDeleteProfile = choice.includes("Profile Doc");
 
+  // Check for avatar or profile storage files
+  try {
+    const userRecord = item?.user || (await authService.getUser(connectionId, uid));
+    if (userRecord?.photoURL) {
+      await promptAndCleanupOrphanStorageFiles(
+        connectionId,
+        { photoURL: userRecord.photoURL },
+        userIdentifier || uid
+      );
+    }
+  } catch {}
+
   try {
     const result = await authService.deleteUserAndProfile(
       connectionId,
@@ -718,6 +731,255 @@ export async function inspectProjectAuthConfigCommand(
     });
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to inspect project Auth config: ${err.message}`);
+  }
+}
+
+/**
+ * Generate email verification link for a user.
+ */
+export async function generateEmailVerificationLinkCommand(item?: AuthUserItem) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+  let email = item?.user?.email;
+
+  if (!email) {
+    const picked = await pickAuthUser(connectionId);
+    if (!picked) {
+      return;
+    }
+    email = picked.email;
+  }
+
+  if (!email) {
+    vscode.window.showWarningMessage("Selected user does not have an email address associated with their account.");
+    return;
+  }
+
+  try {
+    const link = await authService.generateEmailVerificationLink(connectionId, email);
+    await vscode.env.clipboard.writeText(link);
+    const choice = await vscode.window.showInformationMessage(
+      `Email verification link generated for ${email} and copied to clipboard!`,
+      "Open Link in Browser"
+    );
+    if (choice === "Open Link in Browser") {
+      await vscode.env.openExternal(vscode.Uri.parse(link));
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to generate email verification link: ${err.message}`);
+  }
+}
+
+/**
+ * Generate passwordless sign-in (email link) for a user.
+ */
+export async function generateSignInWithEmailLinkCommand(item?: AuthUserItem) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+  let email = item?.user?.email;
+
+  if (!email) {
+    const picked = await pickAuthUser(connectionId);
+    if (!picked) {
+      return;
+    }
+    email = picked.email;
+  }
+
+  if (!email) {
+    vscode.window.showWarningMessage("Selected user does not have an email address associated with their account.");
+    return;
+  }
+
+  const redirectUrl = await vscode.window.showInputBox({
+    title: `Generate Passwordless Sign-in Link for ${email}`,
+    prompt: "Enter continue / redirect URL for the authentication completion flow",
+    value: "http://localhost:3000/finishSignIn",
+    placeHolder: "https://your-domain.com/finishSignIn",
+  });
+  if (redirectUrl === undefined) return;
+
+  try {
+    const link = await authService.generateSignInWithEmailLink(connectionId, email, {
+      url: redirectUrl.trim() || "http://localhost:3000/finishSignIn",
+      handleCodeInApp: true,
+    });
+    await vscode.env.clipboard.writeText(link);
+    const choice = await vscode.window.showInformationMessage(
+      `Passwordless sign-in link generated for ${email} and copied to clipboard!`,
+      "Open Link in Browser"
+    );
+    if (choice === "Open Link in Browser") {
+      await vscode.env.openExternal(vscode.Uri.parse(link));
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to generate passwordless sign-in link: ${err.message}`);
+  }
+}
+
+/**
+ * View MFA factors enrolled for a user.
+ */
+export async function viewUserMfaCommand(item?: AuthUserItem) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+  let user = item?.user;
+
+  if (!user) {
+    const picked = await pickAuthUser(connectionId);
+    if (!picked) return;
+    user = picked;
+  }
+
+  try {
+    // Re-fetch latest user record to ensure accurate multiFactor data
+    const fullUser = await authService.getUser(connectionId, user.uid);
+    const factors = fullUser.multiFactor?.enrolledFactors || [];
+
+    if (factors.length === 0) {
+      vscode.window.showInformationMessage(`User '${fullUser.email || fullUser.uid}' has no enrolled Multi-Factor Authentication (MFA) factors.`);
+      return;
+    }
+
+    const items: vscode.QuickPickItem[] = factors.map(f => ({
+      label: `$(shield) ${f.factorId.toUpperCase()}: ${f.displayName || (f as any).phoneNumber || "Enrolled Factor"}`,
+      description: `UID: ${f.uid}`,
+      detail: `Enrolled at: ${f.enrollmentTime || "unknown"}`
+    }));
+
+    await vscode.window.showQuickPick(items, {
+      title: `Enrolled MFA Factors for ${fullUser.email || fullUser.uid} (${factors.length})`,
+      placeHolder: "Multi-Factor Authentication enrollment details"
+    });
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to fetch MFA details: ${err.message}`);
+  }
+}
+
+/**
+ * Bulk import users wizard from JSON or CSV file.
+ */
+export async function importAuthUsersWizardCommand(
+  item?: AuthUsersBranchItem | ConnectionTreeItem,
+  explorerDataProvider?: ExplorerDataProvider
+) {
+  const authService = AuthService.getInstance();
+  const connectionId = resolveConnectionId(item);
+
+  try {
+    const files = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectMany: false,
+      openLabel: "Select Auth Users Dataset (JSON/CSV)",
+      filters: {
+        "User Datasets": ["json", "csv"],
+      },
+    });
+    if (!files || files.length === 0) return;
+
+    const fileUri = files[0];
+    const rawBuffer = await vscode.workspace.fs.readFile(fileUri);
+    const content = Buffer.from(rawBuffer).toString("utf8");
+
+    let usersToImport: import("firebase-admin/auth").UserImportRecord[] = [];
+    if (fileUri.fsPath.endsWith(".json")) {
+      const parsed = JSON.parse(content);
+      const rawList = Array.isArray(parsed) ? parsed : (parsed.users || [parsed]);
+      usersToImport = rawList.map((u: any) => ({
+        uid: String(u.uid || u.localId || ""),
+        email: u.email || undefined,
+        emailVerified: !!u.emailVerified,
+        displayName: u.displayName || undefined,
+        photoURL: u.photoURL || undefined,
+        phoneNumber: u.phoneNumber || undefined,
+        disabled: !!u.disabled,
+        customClaims: u.customClaims || undefined,
+      })).filter((u: any) => u.uid);
+    } else {
+      const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length > 1) {
+        const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+          const rowObj: any = {};
+          headers.forEach((h, idx) => {
+            rowObj[h] = cols[idx];
+          });
+          if (rowObj.uid || rowObj.email) {
+            usersToImport.push({
+              uid: rowObj.uid || `import_${Date.now()}_${i}`,
+              email: rowObj.email || undefined,
+              displayName: rowObj.displayName || undefined,
+              emailVerified: rowObj.emailVerified === "true",
+              disabled: rowObj.disabled === "true",
+            });
+          }
+        }
+      }
+    }
+
+    if (usersToImport.length === 0) {
+      vscode.window.showWarningMessage("No valid user records found in selected file.");
+      return;
+    }
+
+    const hashPick = await vscode.window.showQuickPick(
+      [
+        { label: "None / Plain Accounts", description: "Users without password hashes or with external providers", value: "none" },
+        { label: "BCRYPT", description: "Standard Bcrypt hash algorithm", value: "BCRYPT" },
+        { label: "SCRYPT (Firebase Default)", description: "Firebase default scrypt hash config", value: "SCRYPT" },
+        { label: "PBKDF2_SHA256", description: "Standard PBKDF2 with SHA-256 rounds", value: "PBKDF2_SHA256" },
+      ],
+      { title: "Select Password Hash Algorithm for Import (Optional)" }
+    );
+    if (!hashPick) return;
+
+    let importOptions: import("firebase-admin/auth").UserImportOptions | undefined = undefined;
+    if (hashPick.value === "BCRYPT") {
+      importOptions = { hash: { algorithm: "BCRYPT" } };
+    } else if (hashPick.value === "SCRYPT") {
+      importOptions = {
+        hash: {
+          algorithm: "SCRYPT",
+          key: Buffer.from("secret_key"),
+          saltSeparator: Buffer.from("Bw=="),
+          rounds: 8,
+          memoryCost: 14,
+        },
+      };
+    } else if (hashPick.value === "PBKDF2_SHA256") {
+      importOptions = {
+        hash: {
+          algorithm: "PBKDF2_SHA256",
+          rounds: 10000,
+        },
+      };
+    }
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Importing ${usersToImport.length} users to Firebase Auth (${connectionId})...`,
+        cancellable: false,
+      },
+      async () => {
+        const res = await authService.importUsers(connectionId, usersToImport, importOptions);
+        if (res.errors && res.errors.length > 0) {
+          vscode.window.showWarningMessage(
+            `Imported ${res.successCount} users. Encountered ${res.failureCount} error(s) (first error: ${res.errors[0].error.message})`
+          );
+        } else {
+          vscode.window.showInformationMessage(
+            `Successfully imported ${res.successCount} user(s) into Firebase Authentication!`
+          );
+        }
+        if (explorerDataProvider) {
+          explorerDataProvider.refresh();
+        }
+      }
+    );
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to import users: ${err.message}`);
   }
 }
 

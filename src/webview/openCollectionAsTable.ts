@@ -9,6 +9,8 @@ import { getCollectionTableHtml } from "./collectionTable/collectionTableHtml";
 import { openFieldAsTable } from "./openFieldAsTable";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
+import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
+import { openSchemaAnalyzer } from "../schema/openSchemaAnalyzer";
 
 export { QueryClause };
 
@@ -36,6 +38,14 @@ function sanitizeFirestoreValue(val: any): any {
   if (Buffer.isBuffer(val) || val instanceof Uint8Array) {
     return `[Blob: ${val.length} bytes]`;
   }
+  if (val.constructor?.name === "VectorValue" || (Array.isArray(val._values) && typeof val.isEqual === "function")) {
+    const arr = typeof val.toArray === "function" ? val.toArray() : val._values;
+    return {
+      __type: "VectorValue",
+      values: arr,
+      dimensions: arr.length,
+    };
+  }
   if (Array.isArray(val)) {
     return val.map(sanitizeFirestoreValue);
   }
@@ -46,9 +56,13 @@ function sanitizeFirestoreValue(val: any): any {
   return result;
 }
 
+// Active collection table panels registry to avoid duplicate webview allocation and memory retention
+const activeCollectionPanels = new Map<string, vscode.WebviewPanel>();
+
 export async function openCollectionAsTable(
   item: CollectionItem | CollectionTableTarget,
-  isCollectionGroup = false
+  isCollectionGroup = false,
+  explorerDataProvider?: ExplorerDataProvider
 ) {
   const isGroup = isCollectionGroup || (item as any).isCollectionGroup === true;
   const collectionId = item.collectionId;
@@ -58,17 +72,26 @@ export async function openCollectionAsTable(
     (item as any).collectionPath ||
     collectionId;
 
+  const panelKey = `${connectionId}:${collectionPath}:${isGroup}`;
+  const existingPanel = activeCollectionPanels.get(panelKey);
+  if (existingPanel) {
+    existingPanel.reveal(vscode.ViewColumn.One);
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+  const retainContextWhenHidden = config.get<boolean>("retainWebviewTabs", true);
+
   const panel = vscode.window.createWebviewPanel(
     "firestoreCollectionTable",
     isGroup ? `Collection Group: ${collectionId}` : `Collection: ${collectionPath}`,
     vscode.ViewColumn.One,
     {
       enableScripts: true,
-      retainContextWhenHidden: true,
+      retainContextWhenHidden,
     }
   );
-
-  const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+  activeCollectionPanels.set(panelKey, panel);
   const limit = (config.get<number>("pagingLimit") as number) || 10;
   const maxRows = Math.max(1, config.get<number>("maxTableRows") ?? 100);
 
@@ -400,6 +423,9 @@ export async function openCollectionAsTable(
 
     if (message.command === "openRef" && message.refPath) {
       openPath(message.refPath, connectionId);
+      if (explorerDataProvider) {
+        explorerDataProvider.revealDocument(message.refPath, connectionId);
+      }
       return;
     }
 
@@ -480,6 +506,9 @@ export async function openCollectionAsTable(
 
     if (message.command === "openDoc" && message.path) {
       openPath(message.path, connectionId);
+      if (explorerDataProvider) {
+        explorerDataProvider.revealDocument(message.path, connectionId);
+      }
     }
 
     if (message.command === "updateField" && message.docPath && message.field !== undefined) {
@@ -631,6 +660,198 @@ export async function openCollectionAsTable(
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to lookup document '${docId}': ${err.message}`);
       }
+    }
+
+    if (message.command === "runVectorSearch") {
+      const vectorField = (message.vectorField as string || "").trim();
+      const rawVector = message.queryVector;
+      const distanceMeasure = (message.distanceMeasure as "COSINE" | "EUCLIDEAN" | "DOT_PRODUCT") || "COSINE";
+      const topK = Math.max(1, Math.min(Number(message.limit) || 10, 100));
+      const distanceThreshold = typeof message.distanceThreshold === "number" ? message.distanceThreshold : undefined;
+
+      if (!vectorField) {
+        vscode.window.showErrorMessage("Vector Search: Vector field path is required.");
+        return;
+      }
+
+      let parsedVector: number[] = [];
+      if (Array.isArray(rawVector)) {
+        parsedVector = rawVector.map((n) => Number(n)).filter((n) => !isNaN(n));
+      } else if (typeof rawVector === "string") {
+        try {
+          const parsed = JSON.parse(rawVector.trim());
+          if (Array.isArray(parsed)) {
+            parsedVector = parsed.map((n) => Number(n)).filter((n) => !isNaN(n));
+          }
+        } catch {
+          // Try comma-separated values
+          parsedVector = rawVector
+            .split(",")
+            .map((s) => Number(s.trim()))
+            .filter((n) => !isNaN(n));
+        }
+      }
+
+      if (parsedVector.length === 0) {
+        vscode.window.showErrorMessage("Vector Search: Please provide a valid non-empty query vector of numbers.");
+        return;
+      }
+
+      try {
+        const conn = ConnectionManager.getInstance().getConnection(connectionId);
+        if (conn?.isLocalJson) {
+          // Local JSON Vector Search (in-memory math)
+          const allDocs = LocalJsonService.getInstance().listDocuments(conn, collectionId);
+          const scoredDocs: { doc: any; distance: number }[] = [];
+
+          const getNestedVal = (obj: any, path: string): any => {
+            if (!obj) return undefined;
+            const parts = path.split(".");
+            let cur = obj;
+            for (const p of parts) {
+              if (cur === null || cur === undefined) return undefined;
+              cur = cur[p];
+            }
+            return cur;
+          };
+
+          for (const d of allDocs) {
+            const rawVal = getNestedVal(d.data, vectorField);
+            let targetVec: number[] | null = null;
+            if (Array.isArray(rawVal)) {
+              targetVec = rawVal;
+            } else if (rawVal && typeof rawVal === "object" && Array.isArray(rawVal.values)) {
+              targetVec = rawVal.values;
+            } else if (rawVal && typeof rawVal === "object" && Array.isArray(rawVal._values)) {
+              targetVec = rawVal._values;
+            }
+
+            if (!targetVec || targetVec.length !== parsedVector.length) {
+              continue;
+            }
+
+            let dist = 0;
+            if (distanceMeasure === "EUCLIDEAN") {
+              let sumSq = 0;
+              for (let i = 0; i < parsedVector.length; i++) {
+                const diff = (targetVec[i] ?? 0) - parsedVector[i];
+                sumSq += diff * diff;
+              }
+              dist = Math.sqrt(sumSq);
+            } else if (distanceMeasure === "DOT_PRODUCT") {
+              let dot = 0;
+              for (let i = 0; i < parsedVector.length; i++) {
+                dot += (targetVec[i] ?? 0) * parsedVector[i];
+              }
+              // Higher dot product is closer, Firestore maps distance to -dot or 1 - dot
+              dist = -dot;
+            } else {
+              // COSINE distance: 1 - cosine_similarity
+              let dot = 0;
+              let normA = 0;
+              let normB = 0;
+              for (let i = 0; i < parsedVector.length; i++) {
+                const a = targetVec[i] ?? 0;
+                const b = parsedVector[i];
+                dot += a * b;
+                normA += a * a;
+                normB += b * b;
+              }
+              const mag = Math.sqrt(normA) * Math.sqrt(normB);
+              dist = mag > 0 ? 1 - (dot / mag) : 1;
+            }
+
+            if (distanceThreshold !== undefined && dist > distanceThreshold) {
+              continue;
+            }
+
+            scoredDocs.push({
+              doc: {
+                ...sanitizeFirestoreValue(d.data),
+                __path: `${collectionId}/${d.id}`,
+                __id: d.id,
+                __parentPath: null,
+                __vector_distance: Number(dist.toFixed(6)),
+              },
+              distance: dist,
+            });
+          }
+
+          scoredDocs.sort((a, b) => a.distance - b.distance);
+          const topDocs = scoredDocs.slice(0, topK).map((s) => s.doc);
+
+          const headerSet = new Set<string>(headers);
+          headerSet.add("__vector_distance");
+          topDocs.forEach((d) => {
+            Object.keys(d).forEach((k) => {
+              if (k !== "__path" && k !== "__id" && k !== "__parentPath") {
+                headerSet.add(k);
+              }
+            });
+          });
+          const newHeaders = sortHeaders(Array.from(headerSet));
+
+          panel.webview.postMessage({
+            type: "vectorSearchResults",
+            headers: newHeaders,
+            docs: topDocs,
+            vectorField,
+            distanceMeasure,
+            topK,
+          });
+          return;
+        }
+
+        // Live Cloud Firestore / Emulator Vector Search
+        const baseQuery = await buildBaseQuery();
+        const options: any = {
+          limit: topK,
+          distanceMeasure,
+          distanceResultField: "__vector_distance",
+        };
+        if (distanceThreshold !== undefined) {
+          options.distanceThreshold = distanceThreshold;
+        }
+
+        const vectorQuery = (baseQuery as any).findNearest(vectorField, parsedVector, options);
+        const snapshot = await vectorQuery.get();
+        CostService.getInstance().recordOperation(connectionId, "read", snapshot.docs.length);
+
+        const docs = snapshot.docs.map((doc: any) => {
+          const rawData = doc.data() || {};
+          const dist = typeof doc.get === "function" ? doc.get("__vector_distance") : rawData.__vector_distance;
+          return {
+            ...sanitizeFirestoreValue(rawData),
+            __path: doc.ref.path,
+            __id: doc.id,
+            __parentPath: doc.ref.parent && doc.ref.parent.parent ? doc.ref.parent.parent.path : null,
+            __vector_distance: dist !== undefined ? Number(Number(dist).toFixed(6)) : undefined,
+          };
+        });
+
+        const headerSet = new Set<string>(headers);
+        headerSet.add("__vector_distance");
+        docs.forEach((doc: any) => {
+          Object.keys(doc).forEach((k) => {
+            if (k !== "__path" && k !== "__id" && k !== "__parentPath") {
+              headerSet.add(k);
+            }
+          });
+        });
+        const newHeaders = sortHeaders(Array.from(headerSet));
+
+        panel.webview.postMessage({
+          type: "vectorSearchResults",
+          headers: newHeaders,
+          docs,
+          vectorField,
+          distanceMeasure,
+          topK,
+        });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Vector Search failed: ${err.message}`);
+      }
+      return;
     }
 
     if (message.command === "clearSearch") {
@@ -980,11 +1201,16 @@ export async function openCollectionAsTable(
     if (message.command === "toggleLiveWatch") {
       toggleLiveWatch();
     }
+
+    if (message.command === "openSchemaAnalyzer") {
+      openSchemaAnalyzer({ connectionId, collectionPath });
+    }
   });
 
   // ── Live Watch Mode (Real-Time onSnapshot & Inactivity Watchdog) ─────────
   let liveWatchUnsubscribe: (() => void) | null = null;
   let liveWatchTimeout: NodeJS.Timeout | null = null;
+  let isDisposed = false;
   const LIVE_WATCH_AUTO_PAUSE_MS = 5 * 60 * 1000; // 5 minutes inactivity auto-pause
 
   function stopLiveWatch(silent = false) {
@@ -996,8 +1222,12 @@ export async function openCollectionAsTable(
       clearTimeout(liveWatchTimeout);
       liveWatchTimeout = null;
     }
-    panel.webview.postMessage({ type: "liveWatchState", active: false });
-    if (!silent) {
+    if (!isDisposed) {
+      try {
+        panel.webview.postMessage({ type: "liveWatchState", active: false });
+      } catch {}
+    }
+    if (!silent && !isDisposed) {
       vscode.window.showInformationMessage(
         `Live Watch paused for ${isGroup ? "Collection Group" : "Collection"} '${collectionId}'.`
       );
@@ -1148,9 +1378,19 @@ export async function openCollectionAsTable(
     }
   }
 
+  // Auto-pause Live Watch when backgrounded to prevent burning CPU & Firestore quota
+  const viewStateSubscription = panel.onDidChangeViewState((e) => {
+    if (!e.webviewPanel.visible && liveWatchUnsubscribe) {
+      stopLiveWatch(true);
+    }
+  });
+
   panel.onDidDispose(() => {
+    isDisposed = true;
+    activeCollectionPanels.delete(panelKey);
     stopLiveWatch(true);
     messageSubscription.dispose();
+    viewStateSubscription.dispose();
     loadedDocs = [];
     headers = [];
     lastDoc = null;

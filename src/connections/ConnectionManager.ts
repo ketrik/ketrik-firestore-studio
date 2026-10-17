@@ -1,6 +1,7 @@
 import { App, initializeApp, getApps, deleteApp, cert } from "firebase-admin/app";
 import { Firestore, getFirestore } from "firebase-admin/firestore";
 import { Auth, getAuth } from "firebase-admin/auth";
+import { Storage, getStorage } from "firebase-admin/storage";
 import * as vscode from "vscode";
 import * as fs from "fs";
 import { parseHostPort, probePort } from "../emulator/portUtils";
@@ -11,9 +12,11 @@ export interface FirestoreConnectionConfig {
   serviceAccountKeyPath?: string;
   projectId?: string;
   databaseId?: string;
+  storageBucket?: string;
   isEmulator?: boolean;
   emulatorHost?: string;
   authEmulatorHost?: string;
+  emulatorStorageHost?: string;
   isLocalJson?: boolean;
   localJsonPath?: string;
 }
@@ -279,6 +282,20 @@ export class ConnectionManager implements vscode.Disposable {
   }
 
   /**
+   * Get the Firebase Cloud Storage instance for a connection.
+   */
+  public async getStorage(connectionId?: string): Promise<Storage> {
+    const conn = this.getConnection(connectionId);
+    if (conn?.isEmulator) {
+      process.env.FIREBASE_STORAGE_EMULATOR_HOST = conn.emulatorStorageHost || "127.0.0.1:9199";
+    } else {
+      delete process.env.FIREBASE_STORAGE_EMULATOR_HOST;
+    }
+    const app = await this.getApp(connectionId);
+    return getStorage(app);
+  }
+
+  /**
    * Create/get the Firestore instance for an app. Emulator connections are pointed at their host
    * through per-instance settings, so no process-wide environment variable is touched and
    * emulator and production connections can coexist.
@@ -323,10 +340,15 @@ export class ConnectionManager implements vscode.Disposable {
         const serviceAccountContent = await fs.promises.readFile(conn.serviceAccountKeyPath, "utf8");
         const serviceAccount = JSON.parse(serviceAccountContent);
 
+        const storageBucket =
+          conn.storageBucket ||
+          (serviceAccount.project_id ? `${serviceAccount.project_id}.appspot.com` : undefined);
+
         app = initializeApp(
           {
             credential: cert(serviceAccount),
             projectId: conn.projectId || serviceAccount.project_id,
+            storageBucket,
           },
           appName
         );

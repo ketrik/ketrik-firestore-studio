@@ -44,79 +44,34 @@ function findTimestampsInDocument(document: vscode.TextDocument): TimestampMatch
 
   const matches: TimestampMatch[] = [];
 
-  // Regex to match JSON objects with _seconds and _nanoseconds (either order)
-  const regex = /\{\s*"(?:_seconds|_nanoseconds)"\s*:\s*(\d+)\s*,\s*"(?:_seconds|_nanoseconds)"\s*:\s*(\d+)\s*\}/g;
+  // Single-pass regex matching both single-line and multi-line formatted timestamps in either order:
+  // Case A: { "_seconds": 123, "_nanoseconds": 456 }
+  // Case B: { "_nanoseconds": 456, "_seconds": 123 }
+  const regex = /\{\s*(?:"_seconds"\s*:\s*(\d+)\s*,\s*"_nanoseconds"\s*:\s*(\d+)|"_nanoseconds"\s*:\s*(\d+)\s*,\s*"_seconds"\s*:\s*(\d+))\s*\}/g;
 
   let m: RegExpExecArray | null;
   while ((m = regex.exec(text)) !== null) {
     const rawMatch = m[0];
     const matchIndex = m.index;
 
-    try {
-      const parsed = JSON.parse(rawMatch);
-      if (typeof parsed._seconds === "number" && typeof parsed._nanoseconds === "number") {
-        const date = new Date(parsed._seconds * 1000 + Math.floor(parsed._nanoseconds / 1000000));
-        if (!isNaN(date.getTime())) {
-          const startPos = document.positionAt(matchIndex);
-          const endPos = document.positionAt(matchIndex + rawMatch.length);
+    const seconds = m[1] !== undefined ? parseInt(m[1], 10) : parseInt(m[4], 10);
+    const nanoseconds = m[2] !== undefined ? parseInt(m[2], 10) : parseInt(m[3], 10);
 
-          // Find the exact line of the closing brace or first line
-          matches.push({
-            date,
-            seconds: parsed._seconds,
-            nanoseconds: parsed._nanoseconds,
-            openBracePos: startPos,
-            closeBracePos: endPos,
-            secondsKeyRange: new vscode.Range(startPos, endPos),
-          });
-        }
+    if (!isNaN(seconds) && !isNaN(nanoseconds)) {
+      const date = new Date(seconds * 1000 + Math.floor(nanoseconds / 1000000));
+      if (!isNaN(date.getTime())) {
+        const startPos = document.positionAt(matchIndex);
+        const endPos = document.positionAt(matchIndex + rawMatch.length);
+
+        matches.push({
+          date,
+          seconds,
+          nanoseconds,
+          openBracePos: startPos,
+          closeBracePos: endPos,
+          secondsKeyRange: new vscode.Range(startPos, endPos),
+        });
       }
-    } catch {
-      // Ignore parse errors on partial matches
-    }
-  }
-
-  // Also match multi-line formatted JSON:
-  // "createdAt": {
-  //   "_seconds": 1718365200,
-  //   "_nanoseconds": 0
-  // }
-  const multilineRegex = /\{\s*\r?\n\s*"_seconds"\s*:\s*(\d+)\s*,\s*\r?\n\s*"_nanoseconds"\s*:\s*(\d+)\s*\r?\n\s*\}/g;
-  while ((m = multilineRegex.exec(text)) !== null) {
-    const rawMatch = m[0];
-    const matchIndex = m.index;
-
-    try {
-      const parsed = JSON.parse(rawMatch);
-      if (typeof parsed._seconds === "number" && typeof parsed._nanoseconds === "number") {
-        const date = new Date(parsed._seconds * 1000 + Math.floor(parsed._nanoseconds / 1000000));
-        if (!isNaN(date.getTime())) {
-          const startPos = document.positionAt(matchIndex);
-          const endPos = document.positionAt(matchIndex + rawMatch.length);
-
-          matches.push({
-            date,
-            seconds: parsed._seconds,
-            nanoseconds: parsed._nanoseconds,
-            openBracePos: startPos,
-            closeBracePos: endPos,
-            secondsKeyRange: new vscode.Range(startPos, endPos),
-          });
-        }
-      }
-    } catch {
-      // Ignore
-    }
-  }
-
-  // Deduplicate matches by openBrace position offset
-  const seen = new Set<number>();
-  const uniqueMatches: TimestampMatch[] = [];
-  for (const match of matches) {
-    const offset = document.offsetAt(match.openBracePos);
-    if (!seen.has(offset)) {
-      seen.add(offset);
-      uniqueMatches.push(match);
     }
   }
 
@@ -124,9 +79,9 @@ function findTimestampsInDocument(document: vscode.TextDocument): TimestampMatch
     const oldest = _docTimestampCache.keys().next().value;
     if (oldest) _docTimestampCache.delete(oldest);
   }
-  _docTimestampCache.set(uriKey, { version: document.version, matches: uniqueMatches });
+  _docTimestampCache.set(uriKey, { version: document.version, matches });
 
-  return uniqueMatches;
+  return matches;
 }
 
 import { ConnectionManager } from "../connections/ConnectionManager";

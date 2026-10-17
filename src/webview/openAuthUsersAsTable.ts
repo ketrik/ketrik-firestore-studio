@@ -11,19 +11,32 @@ import { cloneAuthUserCommand, mintCustomTokenCommand } from "../auth/authComman
  * supports in-memory instant sorting by Creation Date (newest first),
  * real-time filtering, custom claims editing, and Firestore profile linking.
  */
+// Active auth users table panels registry to avoid duplicate webviews and memory retention
+const activeAuthPanels = new Map<string, vscode.WebviewPanel>();
+
 export async function openAuthUsersAsTable(
   connectionId: string,
   fsProvider?: DocumentFileSystemProvider
 ) {
+  const existingPanel = activeAuthPanels.get(connectionId);
+  if (existingPanel) {
+    existingPanel.reveal(vscode.ViewColumn.One);
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+  const retainContextWhenHidden = config.get<boolean>("retainWebviewTabs", true);
+
   const panel = vscode.window.createWebviewPanel(
     "firestoreAuthUsersTable",
     `Auth Users: ${connectionId}`,
     vscode.ViewColumn.One,
     {
       enableScripts: true,
-      retainContextWhenHidden: true,
+      retainContextWhenHidden,
     }
   );
+  activeAuthPanels.set(connectionId, panel);
 
   panel.webview.html = getAuthUsersTableHtml(connectionId);
 
@@ -41,7 +54,21 @@ export async function openAuthUsersAsTable(
         photoURL: u.photoURL,
         disabled: u.disabled,
         emailVerified: u.emailVerified,
+        phoneNumber: u.phoneNumber,
         customClaims: u.customClaims || {},
+        providerData: (u.providerData || []).map((p) => ({
+          providerId: p.providerId,
+          uid: p.uid,
+          email: p.email,
+          displayName: p.displayName,
+        })),
+        multiFactor: u.multiFactor?.enrolledFactors?.map((f: any) => ({
+          uid: f.uid,
+          factorId: f.factorId,
+          displayName: f.displayName,
+          enrollmentTime: f.enrollmentTime,
+          phoneNumber: f.phoneNumber,
+        })) || [],
         metadata: {
           creationTime: u.metadata?.creationTime,
           lastSignInTime: u.metadata?.lastSignInTime,
@@ -277,6 +304,189 @@ export async function openAuthUsersAsTable(
         break;
       }
 
+      case "generateVerificationLink": {
+        try {
+          let email = msg.email;
+          if (!email) {
+            const user = await authService.getUser(connectionId, msg.uid);
+            email = user.email;
+          }
+          if (!email) {
+            vscode.window.showWarningMessage(`User '${msg.uid}' has no email address associated with their account.`);
+            break;
+          }
+          const link = await authService.generateEmailVerificationLink(connectionId, email);
+          await vscode.env.clipboard.writeText(link);
+          const copyChoice = await vscode.window.showInformationMessage(
+            `Email verification link generated for ${email} and copied to clipboard!`,
+            "Open Link in Browser"
+          );
+          if (copyChoice === "Open Link in Browser") {
+            await vscode.env.openExternal(vscode.Uri.parse(link));
+          }
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to generate email verification link: ${err.message}`);
+        }
+        break;
+      }
+
+      case "generateSignInLink": {
+        try {
+          let email = msg.email;
+          if (!email) {
+            const user = await authService.getUser(connectionId, msg.uid);
+            email = user.email;
+          }
+          if (!email) {
+            vscode.window.showWarningMessage(`User '${msg.uid}' has no email address associated with their account.`);
+            break;
+          }
+          const redirectUrl = await vscode.window.showInputBox({
+            title: `Generate Passwordless Sign-in Link for ${email}`,
+            prompt: "Enter continue/redirect URL for the sign-in completion flow",
+            value: "http://localhost:3000/finishSignIn",
+            placeHolder: "https://your-app.com/finishSignIn",
+          });
+          if (redirectUrl === undefined) break;
+
+          const link = await authService.generateSignInWithEmailLink(connectionId, email, {
+            url: redirectUrl.trim() || "http://localhost:3000/finishSignIn",
+            handleCodeInApp: true,
+          });
+          await vscode.env.clipboard.writeText(link);
+          const copyChoice = await vscode.window.showInformationMessage(
+            `Passwordless sign-in link generated for ${email} and copied to clipboard!`,
+            "Open Link in Browser"
+          );
+          if (copyChoice === "Open Link in Browser") {
+            await vscode.env.openExternal(vscode.Uri.parse(link));
+          }
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to generate sign-in link: ${err.message}`);
+        }
+        break;
+      }
+
+      case "importUsersWizard": {
+        try {
+          const files = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectMany: false,
+            openLabel: "Select Auth Users Dataset (JSON/CSV)",
+            filters: {
+              "User Datasets": ["json", "csv"],
+            },
+          });
+          if (!files || files.length === 0) break;
+
+          const fileUri = files[0];
+          const rawBuffer = await vscode.workspace.fs.readFile(fileUri);
+          const content = Buffer.from(rawBuffer).toString("utf8");
+
+          let usersToImport: import("firebase-admin/auth").UserImportRecord[] = [];
+          if (fileUri.fsPath.endsWith(".json")) {
+            const parsed = JSON.parse(content);
+            const rawList = Array.isArray(parsed) ? parsed : (parsed.users || [parsed]);
+            usersToImport = rawList.map((u: any) => ({
+              uid: String(u.uid || u.localId || ""),
+              email: u.email || undefined,
+              emailVerified: !!u.emailVerified,
+              displayName: u.displayName || undefined,
+              photoURL: u.photoURL || undefined,
+              phoneNumber: u.phoneNumber || undefined,
+              disabled: !!u.disabled,
+              customClaims: u.customClaims || undefined,
+            })).filter((u: any) => u.uid);
+          } else {
+            // Basic CSV parser
+            const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+            if (lines.length > 1) {
+              const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+              for (let i = 1; i < lines.length; i++) {
+                const cols = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+                const rowObj: any = {};
+                headers.forEach((h, idx) => {
+                  rowObj[h] = cols[idx];
+                });
+                if (rowObj.uid || rowObj.email) {
+                  usersToImport.push({
+                    uid: rowObj.uid || `import_${Date.now()}_${i}`,
+                    email: rowObj.email || undefined,
+                    displayName: rowObj.displayName || undefined,
+                    emailVerified: rowObj.emailVerified === "true",
+                    disabled: rowObj.disabled === "true",
+                  });
+                }
+              }
+            }
+          }
+
+          if (usersToImport.length === 0) {
+            vscode.window.showWarningMessage("No valid user records found in selected file.");
+            break;
+          }
+
+          // Optional hash algorithm picker
+          const hashPick = await vscode.window.showQuickPick(
+            [
+              { label: "None / Plain Accounts", description: "Users without password hashes or with external providers", value: "none" },
+              { label: "BCRYPT", description: "Standard Bcrypt hash support", value: "BCRYPT" },
+              { label: "SCRYPT (Firebase / Standard)", description: "Firebase default scrypt hash config", value: "SCRYPT" },
+              { label: "PBKDF2_SHA256", description: "Standard PBKDF2 with SHA-256 rounds", value: "PBKDF2_SHA256" },
+            ],
+            { title: "Select Password Hash Algorithm for Import (Optional)" }
+          );
+          if (!hashPick) break;
+
+          let importOptions: import("firebase-admin/auth").UserImportOptions | undefined = undefined;
+          if (hashPick.value === "BCRYPT") {
+            importOptions = { hash: { algorithm: "BCRYPT" } };
+          } else if (hashPick.value === "SCRYPT") {
+            importOptions = {
+              hash: {
+                algorithm: "SCRYPT",
+                key: Buffer.from("secret_key"),
+                saltSeparator: Buffer.from("Bw=="),
+                rounds: 8,
+                memoryCost: 14,
+              },
+            };
+          } else if (hashPick.value === "PBKDF2_SHA256") {
+            importOptions = {
+              hash: {
+                algorithm: "PBKDF2_SHA256",
+                rounds: 10000,
+              },
+            };
+          }
+
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `Importing ${usersToImport.length} users to Firebase Auth...`,
+              cancellable: false,
+            },
+            async () => {
+              const res = await authService.importUsers(connectionId, usersToImport, importOptions);
+              if (res.errors && res.errors.length > 0) {
+                vscode.window.showWarningMessage(
+                  `Imported ${res.successCount} users. Encountered ${res.failureCount} error(s) (first error: ${res.errors[0].error.message})`
+                );
+              } else {
+                vscode.window.showInformationMessage(
+                  `Successfully imported ${res.successCount} user(s) into Firebase Authentication!`
+                );
+              }
+              // Reload table
+              await loadInitialBatch();
+            }
+          );
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to import users: ${err.message}`);
+        }
+        break;
+      }
+
       case "deleteUser": {
         try {
           const uid = msg.uid;
@@ -344,6 +554,7 @@ export async function openAuthUsersAsTable(
   });
 
   panel.onDidDispose(() => {
+    activeAuthPanels.delete(connectionId);
     messageSubscription.dispose();
   });
 }

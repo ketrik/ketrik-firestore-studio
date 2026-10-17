@@ -350,21 +350,25 @@ timeline
 
 *Theme: Cloud Storage bucket exploration, vector similarity search, and comprehensive Firebase triggers.*
 
-* **Dedicated Cloud Storage Explorer in Sidebar Tree**:
+* [x] **Dedicated Cloud Storage Explorer in Sidebar Tree**:
   * Dedicated **Cloud Storage** branch under each connection (`StorageBucketsBranchItem`): browse buckets, folders, files, MIME types, file sizes, and download URLs.
   * Drag-and-drop file upload into document fields (auto-uploads to bucket and writes resulting URL or `gs://` path).
   * Signed URL minter (`getSignedUrl`) with customizable expiry (15m, 1h, 24h).
   * Cascade orphan file cleanup prompt when deleting documents or Auth users.
-* **Firebase Auth Suite Expansion**:
+* [x] **Firebase Auth Suite Expansion**:
   * Email verification link (`generateEmailVerificationLink`) and passwordless sign-in link generators.
   * Bulk Auth user import/export wizard (JSON/CSV with SCRYPT, BCRYPT, PBKDF2 hash support).
   * Provider identity chips (`Google`, `GitHub`, `Apple`, `Phone`, `Password`, `Anonymous`) and provider-based filtering.
   * Enrolled Multi-Factor Authentication (MFA) second factors viewer.
-* **Firestore Vector Search & Embeddings Explorer (kNN)**:
+* [x] **Firestore Vector Search & Embeddings Explorer (kNN)**:
   * Dedicated column renderer for `VectorValue` fields showing dimension count and cosine magnitude preview.
-  * Similarity search query builder: execute kNN queries (`findNearest`) with vector inputs, distance metric (`COSINE`, `EUCLIDEAN`, `DOT_PRODUCT`), and similarity scores per row.
-* **Collection Schema Drift & Anomaly Analyzer**:
+  * Similarity search query builder: execute kNN queries (`findNearest`) with vector inputs, distance metric (`COSINE`, `EUCLIDEAN`, `DOT_PRODUCT`), and similarity scores per row (`__vector_distance` badge column).
+  * In-place vector inspection drawer and full Local JSON client-side kNN calculation fallback.
+  * Quick-picker support for adding and editing `FieldValue.vector` embeddings directly from tree context menus.
+* [x] **Collection Schema Drift & Anomaly Analyzer**:
   * Scans collection sample to produce interactive visual health reports: field presence percentages, type consistency matrix, and orphan keys.
+  * In-table toolbar launcher (`🔬 Schema Health`) and Tree context menu action (`Analyze Schema Drift & Anomalies...`).
+  * Instant filter pills (`Anomalies & Warnings`, `Mixed Types`, `Orphan Keys`, `100% Present`) and 1-click export to Markdown or JSON.
 
 ---
 

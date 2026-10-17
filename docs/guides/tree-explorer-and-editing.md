@@ -50,6 +50,7 @@ You do not need to open editor tabs to edit primitive values:
   ```
 - **Numbers**: Click a numeric field to open an inline modal with number validation.
 - **Strings**: Click a string field to open an inline text editor.
+- **Vectors (`FieldValue.vector`)**: Click a vector field to open an inline modal showing its dimension count and allowing you to edit coordinates directly (as a JSON array or comma-separated numbers).
 - **Null Fields**: Clicking a `null` field presents a type selector allowing you to convert the field to an `Object ({})`, `Array ([])`, `String`, `Number`, `Boolean`, or open a raw JSON editor.
 
 ---
@@ -61,7 +62,7 @@ Right-click any document or field item to access operations:
 | Action | Applies To | Description |
 |---|---|---|
 | **Rename Field...** | Root Fields | Atomically transfers value to new field name and deletes old key using `FieldValue.delete()`. Overwrite protection included. |
-| **Add Field...** | Documents & Fields | Create a new root field with type assistance (`Object`, `Array`, `String`, `Number`, `Boolean`, or custom `JSON`). |
+| **Add Field...** | Documents & Fields | Create a new root field with type assistance (`Object`, `Array`, `Vector (FieldValue.vector)`, `Timestamp`, `String`, `Number`, `Boolean`, or custom `JSON`). |
 | **Delete Field** | Root Fields | Permanently removes a key from the document using `FieldValue.delete()`. |
 | **Duplicate Document...** | Documents | Clone document within collection with an instant ID prompt. |
 | **Copy Document** | Documents | Copy document to internal clipboard for cross-collection/connection paste. |

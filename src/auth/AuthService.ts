@@ -89,6 +89,45 @@ export class AuthService {
   }
 
   /**
+   * Generate an email verification link for a user's email.
+   */
+  public async generateEmailVerificationLink(connectionId: string, email: string): Promise<string> {
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.generateEmailVerificationLink(email)
+    );
+  }
+
+  /**
+   * Generate a passwordless email sign-in link (email link authentication).
+   */
+  public async generateSignInWithEmailLink(
+    connectionId: string,
+    email: string,
+    actionCodeSettings?: import("firebase-admin/auth").ActionCodeSettings
+  ): Promise<string> {
+    const settings: import("firebase-admin/auth").ActionCodeSettings = actionCodeSettings || {
+      url: "https://localhost:3000/finishSignUp",
+      handleCodeInApp: true,
+    };
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.generateSignInWithEmailLink(email, settings)
+    );
+  }
+
+  /**
+   * Bulk import users with optional password hash configuration (SCRYPT, BCRYPT, PBKDF2, HMAC).
+   */
+  public async importUsers(
+    connectionId: string,
+    users: import("firebase-admin/auth").UserImportRecord[],
+    options?: import("firebase-admin/auth").UserImportOptions
+  ): Promise<import("firebase-admin/auth").UserImportResult> {
+    return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
+      auth.importUsers(users, options)
+    );
+  }
+
+  /**
    * Mint a custom JWT auth token for a user.
    */
   public async createCustomToken(

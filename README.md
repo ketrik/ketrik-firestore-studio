@@ -54,8 +54,12 @@ Unlike basic viewers that only render static JSON trees, **Ketrik Firestore Stud
 * Full parity with live Firestore: collections, subdocuments, table views, and in-place virtual editing.
 * Bi-directional sync: push local seed data into Cloud Firestore / Emulators, or snapshot live cloud data into local JSON files.
 
-### 6. Firebase Auth User Management & Claims
-* **Auth Users Table View**: High-density grid with profile pictures, sign-in providers, creation dates, and last sign-in timestamps.
+### 6. Firebase Auth User Suite & Identity Management
+* **Auth Users Table View**: High-density grid with profile pictures, sign-in providers, MFA status, creation dates, and last sign-in timestamps.
+* **Provider Identity Chips & Filter**: Visual badges (`Google`, `GitHub`, `Apple`, `Phone`, `Password`, `Anonymous`) with instant dropdown filtering by identity provider or enrolled MFA.
+* **Enrolled MFA Viewer**: Inspect Multi-Factor Authentication second factors (phone, authenticator apps) enrolled on any user account.
+* **Email Verification & Passwordless Sign-In**: Generate out-of-band email verification links (`generateEmailVerificationLink`) and passwordless email sign-in links (`generateSignInWithEmailLink`) copied directly to clipboard.
+* **Bulk User Import/Export Wizard**: Import user datasets from JSON or CSV files with optional password hash configuration (SCRYPT, BCRYPT, PBKDF2), or export loaded users to JSON with 1 click.
 * **Custom Claims Editor**: View and modify role claims (`{ "admin": true, "role": "editor" }`) in real-time.
 * **Login Impersonation**: Mint signed custom JWT tokens directly to your clipboard to test user permissions in frontend apps.
 * **Cross-Environment User Cloning**: Clone complete accounts with custom claims and linked Firestore `/users/{uid}` documents from Production to Staging.
@@ -65,6 +69,26 @@ Unlike basic viewers that only render static JSON trees, **Ketrik Firestore Stud
 * **Live Rules Inspector**: Pull deployed `firestore.rules` directly from Firebase Rules API into a virtual editor.
 * **Side-by-Side Diff**: Compare live cloud rules against your local workspace `firestore.rules` before deployment.
 * **AST Permission Badges**: Visual indicators in the tree (`🚨 Public Read/Write`, `🔒 Restricted`) warn of open security rules instantly.
+
+### 8. Firestore Vector Search & Embeddings Explorer (kNN)
+Explore, inspect, and perform similarity search on AI embeddings stored in Firestore (`FieldValue.vector`):
+* **Vector Chips & Inspector**: Visual table badges (`⚡ Vector[1536d] | 1.000`) detailing dimension count and L2 norm magnitude. Double-click any vector cell or open the slide-out inspector to view or edit embedding floats in tabular grid or raw JSON.
+* **Interactive kNN Search Panel (`findNearest`)**: Click **"🧠 Vector Search (kNN)"** in the table toolbar to execute nearest-neighbor searches:
+  * Select your embedding field path (e.g. `embedding`, `text_vector`).
+  * Paste a query vector as a JSON array (`[0.024, -0.158, 0.892, ...]`) or comma-separated numbers (`0.024, -0.158, 0.892`).
+  * Choose your distance metric: `COSINE`, `EUCLIDEAN`, or `DOT_PRODUCT`.
+  * Set top-K limit (1–100) and optional distance threshold cutoff.
+* **Live Similarity Scores**: Displays the calculated distance in a dedicated badge column (`🎯 0.0412`) ranked by proximity.
+* **Add & Edit Vectors in Tree**: Right-click any document $\rightarrow$ **Add Field** $\rightarrow$ select **Vector (FieldValue.vector)** to store embeddings directly from VS Code.
+* **Full Local JSON Parity**: In-memory vector similarity calculations for offline development and mock databases without requiring active Cloud Firestore credentials.
+
+### 9. Collection Schema Drift & Anomaly Analyzer
+Scan and evaluate document consistency across collections:
+* **Interactive Health Reports**: Generates an overall Collection Health Score (0–100) based on schema stability, type divergences, and obsolete attributes.
+* **Presence & Frequency Meters**: Visual progress bars representing key occurrence rates across sampled documents.
+* **Type Inconsistency Matrix**: Identifies divergent scalar types across documents (e.g. `age: number (85%)` vs `string (15%)`).
+* **Zombie / Orphan Key Detection**: Surfaces dead keys and obsolete attributes found in $< 5\%$ of sampled records.
+* **1-Click Audit Export**: Export reports directly to GitHub Flavored Markdown or structured JSON.
 
 ---
 
@@ -84,6 +108,7 @@ Unlike basic viewers that only render static JSON trees, **Ketrik Firestore Stud
 | Command | Palette / Context | Description |
 | :--- | :--- | :--- |
 | `ketrik-firestore-studio.openCollectionAsTable` | Collection Menu / Table Icon | Open collection in interactive table grid with query builder |
+| `ketrik-firestore-studio.analyzeCollectionSchema` | Collection Menu / Table Toolbar | Scan collection for schema drift, type conflicts & orphan keys |
 | `ketrik-firestore-studio.generateSyntheticData` | Collection Context Menu | Generate 1 to 5,000 realistic mock documents |
 | `ketrik-firestore-studio.jumpToDocument` | Connection / Collection Menu | Single-read document lookup by exact Doc ID |
 | `ketrik-firestore-studio.openAuthUsersAsTable` | Auth Branch / Palette | Interactive Firebase Auth user management grid |

@@ -21,9 +21,14 @@ import {
   Item,
   ShowMoreAuthUsersItem,
   ShowMoreItemsItem,
+  StorageBucketsBranchItem,
+  StorageBucketTreeItem,
+  StorageFolderTreeItem,
+  StorageFileTreeItem,
 } from "./items";
 import { AuthService } from "../auth/AuthService";
 import { IndexesService } from "../indexes/indexesService";
+import { StorageService } from "../storage/storageService";
 import { parseHostPort, probePort } from "../emulator/portUtils";
 import { LocalJsonService } from "../services/LocalJsonService";
 
@@ -64,6 +69,14 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   private _debounceTimer: NodeJS.Timeout | undefined;
   private _pendingInvalidations = new Set<string>();
 
+  private _treeView: vscode.TreeView<Item> | undefined;
+  private _revealingDoc: { connectionId: string; docPath: string; docId: string } | null = null;
+  private _revealDebounceTimer: NodeJS.Timeout | undefined;
+
+  public setTreeView(treeView: vscode.TreeView<Item>): void {
+    this._treeView = treeView;
+  }
+
   readonly onDidChangeTreeData: vscode.Event<Item | undefined> =
     this._onDidChangeTreeData.event;
 
@@ -87,6 +100,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   dispose(): void {
     if (this._debounceTimer) {
       clearTimeout(this._debounceTimer);
+    }
+    if (this._revealDebounceTimer) {
+      clearTimeout(this._revealDebounceTimer);
+      this._revealDebounceTimer = undefined;
     }
     this._pendingInvalidations.clear();
     this._connectionListener.dispose();
@@ -209,6 +226,33 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     } else if (element instanceof CompositeIndexItem) {
       this._treeCache.delete(`indexes:${element.connectionId}`);
       this._onDidChangeTreeData.fire(undefined);
+    } else if (element instanceof StorageBucketsBranchItem) {
+      this._treeCache.delete(`storage:${element.connectionId}`);
+      this._onDidChangeTreeData.fire(element);
+    } else if (element instanceof StorageBucketTreeItem) {
+      const prefix = `storageFiles:${element.connectionId}:${element.bucketName}:`;
+      for (const k of this._treeCache.keys()) {
+        if (k.startsWith(prefix)) {
+          this._treeCache.delete(k);
+        }
+      }
+      this._onDidChangeTreeData.fire(element);
+    } else if (element instanceof StorageFolderTreeItem) {
+      const folderKey = `storageFiles:${element.connectionId}:${element.bucketName}:${element.prefix}`;
+      for (const k of this._treeCache.keys()) {
+        if (k === folderKey || k.startsWith(folderKey.endsWith("/") ? folderKey : folderKey + "/")) {
+          this._treeCache.delete(k);
+        }
+      }
+      this._onDidChangeTreeData.fire(element);
+    } else if (element instanceof StorageFileTreeItem) {
+      const prefix = `storageFiles:${element.connectionId}:${element.bucketName}:`;
+      for (const k of this._treeCache.keys()) {
+        if (k.startsWith(prefix)) {
+          this._treeCache.delete(k);
+        }
+      }
+      this._onDidChangeTreeData.fire(undefined);
     } else if (element instanceof ConnectionTreeItem) {
       this._treeCache.delete(`conn:${element.config.id}`);
       this._onDidChangeTreeData.fire(element);
@@ -223,18 +267,39 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
   async getParent(element: Item): Promise<Item | undefined> {
     if (element instanceof DocumentItem) {
-      return new CollectionItem(
-        element.reference.parent.id,
-        element.reference.parent,
-        element.connectionId
-      );
+      if (element.reference && element.reference.parent) {
+        return new CollectionItem(
+          element.reference.parent.id,
+          element.reference.parent,
+          element.connectionId
+        );
+      }
+      const pathStr = element.reference?.path || "";
+      const segments = pathStr.split("/").filter(Boolean);
+      if (segments.length >= 2) {
+        segments.pop(); // remove docId
+        const collPath = segments.join("/");
+        const collId = segments[segments.length - 1];
+        const fakeCollRef = { id: collId, path: collPath } as any;
+        return new CollectionItem(collId, fakeCollRef, element.connectionId);
+      }
+      return undefined;
     } else if (element instanceof CollectionItem) {
-      if (element.reference.parent !== null) {
+      if (element.reference && element.reference.parent) {
         return new DocumentItem(
           element.reference.parent.id,
           element.reference.parent,
           element.connectionId
         );
+      }
+      const pathStr = element.reference?.path || "";
+      const segments = pathStr.split("/").filter(Boolean);
+      if (segments.length > 1) {
+        segments.pop(); // remove collId
+        const docPath = segments.join("/");
+        const docId = segments[segments.length - 1];
+        const fakeDocRef = { id: docId, path: docPath } as any;
+        return new DocumentItem(docId, fakeDocRef, element.connectionId);
       }
       const conn = this._connectionManager.getConnection(element.connectionId);
       return conn ? new ConnectionTreeItem(conn) : undefined;
@@ -255,12 +320,19 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     } else if (
       element instanceof AuthUsersBranchItem ||
       element instanceof CompositeIndexesBranchItem ||
-      element instanceof CostQuotaBranchItem
+      element instanceof CostQuotaBranchItem ||
+      element instanceof StorageBucketsBranchItem
     ) {
       const conn = this._connectionManager.getConnection(element.connectionId);
       return conn ? new ConnectionTreeItem(conn) : undefined;
     } else if (element instanceof CompositeIndexItem) {
       return new CompositeIndexesBranchItem(element.connectionId);
+    } else if (element instanceof StorageBucketTreeItem) {
+      return new StorageBucketsBranchItem(element.connectionId);
+    } else if (element instanceof StorageFolderTreeItem) {
+      return new StorageBucketTreeItem(element.connectionId, element.bucketName);
+    } else if (element instanceof StorageFileTreeItem) {
+      return new StorageBucketTreeItem(element.connectionId, element.bucketName);
     }
     return undefined;
   }
@@ -291,6 +363,12 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         ? `auth:${element.connectionId}`
         : element instanceof CompositeIndexesBranchItem
         ? `indexes:${element.connectionId}`
+        : element instanceof StorageBucketsBranchItem
+        ? `storage:${element.connectionId}`
+        : element instanceof StorageBucketTreeItem
+        ? `storageFiles:${element.connectionId}:${element.bucketName}:root`
+        : element instanceof StorageFolderTreeItem
+        ? `storageFiles:${element.connectionId}:${element.bucketName}:${element.prefix}`
         : undefined
       : "root";
 
@@ -298,6 +376,23 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     if (cacheKey && ttl > 0) {
       const cached = this._treeCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < ttl) {
+        if (
+          this._revealingDoc &&
+          element instanceof CollectionItem &&
+          this._revealingDoc.connectionId === element.connectionId &&
+          (this._revealingDoc.docPath.startsWith(element.reference.path + "/") ||
+            element.reference.path === this._revealingDoc.docPath.split("/").slice(0, -1).join("/")) &&
+          !cached.items.some((it) => it.id === `${element.connectionId}:${this._revealingDoc!.docPath}`)
+        ) {
+          try {
+            const targetSnap = await element.reference.doc(this._revealingDoc.docId).get();
+            if (targetSnap.exists) {
+              cached.items.unshift(
+                new DocumentItem(targetSnap.id, targetSnap.ref, element.connectionId, targetSnap.data())
+              );
+            }
+          } catch {}
+        }
         return cached.items;
       }
     }
@@ -359,11 +454,12 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           });
         });
 
-        // Add Authentication, Composite Indexes, and Cost & Quotas nodes alongside Root Collections
+        // Add Authentication, Composite Indexes, Cloud Storage, and Cost & Quotas nodes alongside Root Collections
         const authBranch = new AuthUsersBranchItem(element.config.id);
         const indexesBranch = new CompositeIndexesBranchItem(element.config.id);
+        const storageBranch = new StorageBucketsBranchItem(element.config.id);
         const costQuotaBranch = new CostQuotaBranchItem(element.config.id);
-        const items: Item[] = [authBranch, indexesBranch, costQuotaBranch, ...collItems];
+        const items: Item[] = [authBranch, indexesBranch, storageBranch, costQuotaBranch, ...collItems];
         return storeAndReturn(items);
       } catch (err: any) {
         const isUnavailable =
@@ -403,6 +499,45 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         vscode.window.showErrorMessage(
           `Failed to load Firestore composite indexes: ${err.message}`
         );
+        return [];
+      }
+    } else if (element instanceof StorageBucketsBranchItem) {
+      try {
+        const storageService = StorageService.getInstance();
+        const buckets = await storageService.listBuckets(element.connectionId);
+        if (buckets.length === 0) {
+          return storeAndReturn([]);
+        }
+        const bucketItems = buckets.map((b) => new StorageBucketTreeItem(element.connectionId, b.name));
+        return storeAndReturn(bucketItems);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to load Cloud Storage buckets: ${err.message}`);
+        return [];
+      }
+    } else if (element instanceof StorageBucketTreeItem) {
+      try {
+        const storageService = StorageService.getInstance();
+        const { folders, files } = await storageService.listFilesAndFolders(element.connectionId, element.bucketName, "");
+        const folderItems = folders.map((f) => new StorageFolderTreeItem(element.connectionId, element.bucketName, f));
+        const fileItems = files.map((f) => new StorageFileTreeItem(element.connectionId, element.bucketName, f));
+        return storeAndReturn([...folderItems, ...fileItems]);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to load bucket contents: ${err.message}`);
+        return [];
+      }
+    } else if (element instanceof StorageFolderTreeItem) {
+      try {
+        const storageService = StorageService.getInstance();
+        const { folders, files } = await storageService.listFilesAndFolders(
+          element.connectionId,
+          element.bucketName,
+          element.prefix
+        );
+        const folderItems = folders.map((f) => new StorageFolderTreeItem(element.connectionId, element.bucketName, f));
+        const fileItems = files.map((f) => new StorageFileTreeItem(element.connectionId, element.bucketName, f));
+        return storeAndReturn([...folderItems, ...fileItems]);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to load folder contents: ${err.message}`);
         return [];
       }
     } else if (element instanceof AuthUsersBranchItem) {
@@ -540,6 +675,24 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           );
         });
 
+        // Ensure target revealing document is present in the children list even if beyond initial page limit
+        if (
+          this._revealingDoc &&
+          this._revealingDoc.connectionId === element.connectionId &&
+          (this._revealingDoc.docPath.startsWith(element.reference.path + "/") ||
+            element.reference.path === this._revealingDoc.docPath.split("/").slice(0, -1).join("/")) &&
+          !items.some((it) => it.id === `${element.connectionId}:${this._revealingDoc!.docPath}`)
+        ) {
+          try {
+            const targetSnap = await element.reference.doc(this._revealingDoc.docId).get();
+            if (targetSnap.exists) {
+              items.unshift(
+                new DocumentItem(targetSnap.id, targetSnap.ref, element.connectionId, targetSnap.data())
+              );
+            }
+          } catch {}
+        }
+
         if (items.length > limit) {
           items.pop();
           const result = [
@@ -642,5 +795,110 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     evictIfNeeded(this._orderBy, MAX_MAP_SIZE);
 
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /**
+   * Reveal, expand to, and highlight a Firestore document or document property/field in the Tree View.
+   */
+  public async revealDocument(
+    docPath: string,
+    connectionId: string,
+    options: { select?: boolean; focus?: boolean; expand?: boolean | number } = { select: true, focus: false, expand: true },
+    fieldName?: string
+  ): Promise<void> {
+    if (!this._treeView) {
+      return;
+    }
+
+    if (this._revealDebounceTimer) {
+      clearTimeout(this._revealDebounceTimer);
+    }
+
+    this._revealDebounceTimer = setTimeout(async () => {
+      this._revealDebounceTimer = undefined;
+      const cleanPath = docPath.replace(/^\//, "").replace(/\.json$/, "");
+      const segments = cleanPath.split("/").filter(Boolean);
+
+      let targetField = fieldName;
+      // Must be a document path (even number of segments >= 2)
+      if (segments.length % 2 !== 0) {
+        if (segments.length > 2) {
+          const popped = decodeURIComponent(segments.pop()!); // trailing segment is a field name
+          if (!targetField) {
+            targetField = popped;
+          }
+        } else {
+          return;
+        }
+      }
+
+      const fullDocPath = segments.join("/");
+      const docId = segments[segments.length - 1];
+
+      try {
+        const conn = this._connectionManager.getConnection(connectionId);
+        let docItem: DocumentItem;
+        let docRef: any;
+
+        if (conn?.isLocalJson) {
+          const fakeDocRef = {
+            id: docId,
+            path: fullDocPath,
+          } as any;
+          const docData = LocalJsonService.getInstance().getDocument(conn, fullDocPath);
+          docItem = new DocumentItem(docId, fakeDocRef, connectionId, docData);
+          docRef = fakeDocRef;
+        } else {
+          const firestore = await this._connectionManager.getFirestore(connectionId);
+          docRef = firestore.doc(fullDocPath);
+          docItem = new DocumentItem(docId, docRef, connectionId);
+        }
+
+        // If a specific field/property is targeted, reveal the DocumentFieldItem
+        if (targetField) {
+          const docCacheKey = `doc:${connectionId}:${fullDocPath}`;
+          let cachedChildren = this._treeCache.get(docCacheKey)?.items;
+          if (!cachedChildren) {
+            // Populate children so VS Code tree model has the field item loaded
+            cachedChildren = (await this.getChildren(docItem)) || [];
+          }
+
+          const fieldItem = cachedChildren.find(
+            (it) => it instanceof DocumentFieldItem && it.fieldName === targetField
+          );
+
+          if (fieldItem) {
+            await this._treeView?.reveal(fieldItem, options);
+            return;
+          }
+
+          // If not in cache or children, construct DocumentFieldItem directly
+          let fieldValue: any;
+          if (conn?.isLocalJson) {
+            const docData = LocalJsonService.getInstance().getDocument(conn, fullDocPath) || {};
+            fieldValue = docData[targetField];
+          } else {
+            const snap = await docRef.get();
+            fieldValue = snap.exists ? (snap.data() || {})[targetField] : undefined;
+          }
+
+          const fallbackFieldItem = new DocumentFieldItem(
+            targetField,
+            fieldValue,
+            docRef,
+            connectionId
+          );
+          await this._treeView?.reveal(fallbackFieldItem, options);
+          return;
+        }
+
+        this._revealingDoc = { connectionId, docPath: fullDocPath, docId };
+        await this._treeView?.reveal(docItem, options);
+      } catch {
+        // Silently fail if node cannot be revealed
+      } finally {
+        this._revealingDoc = null;
+      }
+    }, 60);
   }
 }

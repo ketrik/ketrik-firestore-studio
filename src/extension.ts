@@ -56,10 +56,16 @@ import {
   revokeUserSessionsCommand,
   createAuthUserCommand,
   inspectProjectAuthConfigCommand,
+  generateEmailVerificationLinkCommand,
+  generateSignInWithEmailLinkCommand,
+  viewUserMfaCommand,
+  importAuthUsersWizardCommand,
 } from "./auth/authCommands";
 import { generateSchemaCommand } from "./commands/schemaCommands";
+import { openSchemaAnalyzer } from "./schema/openSchemaAnalyzer";
 import { generateSyntheticDataCommand } from "./commands/syntheticDataCommands";
 import { registerIndexCommands } from "./commands/indexCommands";
+import { registerStorageCommands } from "./storage/storageCommands";
 import { exportCollectionCommand, importCollectionCommand } from "./commands/importExportCommands";
 
 import { convertDashboardFormatCommand } from "./commands/dashboardCommands";
@@ -132,6 +138,35 @@ export async function activate(context: vscode.ExtensionContext) {
   const explorerView = vscode.window.createTreeView("ketrik-firestore-studio-view", {
     treeDataProvider: explorerDataProvider,
   });
+  explorerDataProvider.setTreeView(explorerView);
+
+  // Auto-reveal active Firestore document or field in Tree View when switching tabs or opening docs
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!editor) {
+        return;
+      }
+      const uri = editor.document.uri;
+      if (uri.scheme === scheme) {
+        const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+        if (config.get<boolean>("autoRevealDocumentInTree", true)) {
+          const parsed = DocumentFileSystemProvider.getInstance().parseUri(uri);
+          if (!parsed.isRules && parsed.docPath) {
+            explorerDataProvider.revealDocument(
+              parsed.docPath,
+              parsed.connectionId,
+              {
+                select: true,
+                focus: false,
+                expand: true,
+              },
+              parsed.fieldPath
+            );
+          }
+        }
+      }
+    })
+  );
 
   // Register editor Inlay Hints & Hover providers for Firestore Timestamps
   const jsonSelector: vscode.DocumentSelector = [
@@ -229,6 +264,22 @@ export async function activate(context: vscode.ExtensionContext) {
       (item?: any) => revokeUserSessionsCommand(item)
     ),
     vscode.commands.registerCommand(
+      "ketrik-firestore-studio.generateEmailVerificationLink",
+      (item?: any) => generateEmailVerificationLinkCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.generateSignInWithEmailLink",
+      (item?: any) => generateSignInWithEmailLinkCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.viewUserMfa",
+      (item?: any) => viewUserMfaCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.importAuthUsersWizard",
+      (item?: any) => importAuthUsersWizardCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
       "ketrik-firestore-studio.openAuthUsersAsTable",
       async (item?: any) => {
         let connId = "default";
@@ -294,11 +345,11 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.openCollectionAsTable",
-      (item?: any) => openCollectionAsTableCommand(item)
+      (item?: any) => openCollectionAsTableCommand(item, explorerDataProvider)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.queryCollectionGroup",
-      (item?: any) => queryCollectionGroupCommand(item)
+      (item?: any) => queryCollectionGroupCommand(item, explorerDataProvider)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.addCollection",
@@ -308,6 +359,10 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.generateSchema",
       (item?: CollectionItem | DocumentItem) => generateSchemaCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.analyzeCollectionSchema",
+      (item?: any) => openSchemaAnalyzer(item)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.exportCollection",
@@ -329,6 +384,31 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Document Commands ─────────────────────────────────────────────────────────
   context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.revealActiveDocumentInTree",
+      async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.uri.scheme !== scheme) {
+          vscode.window.showInformationMessage("Active tab is not a Firestore document.");
+          return;
+        }
+        const parsed = DocumentFileSystemProvider.getInstance().parseUri(editor.document.uri);
+        if (parsed.isRules || !parsed.docPath) {
+          vscode.window.showInformationMessage("Active tab is not a Firestore document.");
+          return;
+        }
+        await explorerDataProvider.revealDocument(
+          parsed.docPath,
+          parsed.connectionId,
+          {
+            select: true,
+            focus: true,
+            expand: true,
+          },
+          parsed.fieldPath
+        );
+      }
+    ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.jumpToDocument",
       (item: CollectionItem) => jumpToDocumentCommand(item, explorerDataProvider)
@@ -483,7 +563,7 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   registerIndexCommands(context, explorerDataProvider);
-
+  registerStorageCommands(context, explorerDataProvider);
 
   context.subscriptions.push(explorerView);
 

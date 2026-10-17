@@ -507,3 +507,119 @@ export class CostQuotaBranchItem extends Item {
     };
   }
 }
+
+/**
+ * Top-level branch for Cloud Storage Buckets under a Connection.
+ */
+export class StorageBucketsBranchItem extends Item {
+  reference = undefined;
+
+  constructor(public connectionId: string) {
+    super("Cloud Storage", vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `storage:${connectionId}`;
+    this.contextValue = "storageBucketsBranch";
+    this.iconPath = new vscode.ThemeIcon("cloud", new vscode.ThemeColor("charts.purple"));
+    this.tooltip = "Firebase & Google Cloud Storage Buckets";
+  }
+}
+
+/**
+ * A specific Storage Bucket in the tree.
+ */
+export class StorageBucketTreeItem extends Item {
+  reference = undefined;
+
+  constructor(public connectionId: string, public bucketName: string) {
+    super(bucketName, vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `storageBucket:${connectionId}:${bucketName}`;
+    this.contextValue = "storageBucket";
+    this.iconPath = new vscode.ThemeIcon("archive", new vscode.ThemeColor("charts.blue"));
+    this.tooltip = `Storage Bucket: ${bucketName}`;
+  }
+}
+
+/**
+ * A virtual folder inside a Storage Bucket.
+ */
+export class StorageFolderTreeItem extends Item {
+  reference = undefined;
+
+  constructor(
+    public connectionId: string,
+    public bucketName: string,
+    public prefix: string
+  ) {
+    // Show only the directory segment name
+    const cleanPrefix = prefix.replace(/\/$/, "");
+    const folderName = cleanPrefix.split("/").pop() || cleanPrefix;
+    super(folderName, vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `storageFolder:${connectionId}:${bucketName}:${prefix}`;
+    this.contextValue = "storageFolder";
+    this.iconPath = new vscode.ThemeIcon("folder");
+    this.tooltip = `Folder: ${prefix} (${bucketName})`;
+  }
+}
+
+/**
+ * An individual file / object inside a Storage Bucket.
+ */
+export class StorageFileTreeItem extends Item {
+  reference = undefined;
+
+  constructor(
+    public connectionId: string,
+    public bucketName: string,
+    public fileData: import("../storage/storageService").StorageFileItemData
+  ) {
+    const fileName = fileData.name.split("/").pop() || fileData.name;
+    super(fileName, vscode.TreeItemCollapsibleState.None);
+    this.id = `storageFile:${connectionId}:${bucketName}:${fileData.name}`;
+    this.contextValue = "storageFile";
+
+    // Format file size
+    const size = fileData.size ?? 0;
+    const formattedSize =
+      size < 1024
+        ? `${size} B`
+        : size < 1024 * 1024
+        ? `${(size / 1024).toFixed(1)} KB`
+        : `${(size / (1024 * 1024)).toFixed(1)} MB`;
+
+    this.description = formattedSize;
+
+    // Pick appropriate icon based on file extension
+    const ext = fileName.split(".").pop()?.toLowerCase() || "";
+    let icon = "file";
+    if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp"].includes(ext)) {
+      icon = "file-media";
+    } else if (["mp3", "wav", "m4a", "ogg"].includes(ext)) {
+      icon = "unmute";
+    } else if (["mp4", "webm", "mov", "avi"].includes(ext)) {
+      icon = "device-camera-video";
+    } else if (["pdf", "doc", "docx", "txt", "md"].includes(ext)) {
+      icon = "file-text";
+    } else if (["json", "js", "ts", "html", "css"].includes(ext)) {
+      icon = "file-code";
+    } else if (["zip", "tar", "gz", "rar"].includes(ext)) {
+      icon = "file-zip";
+    }
+
+    this.iconPath = new vscode.ThemeIcon(icon);
+    this.tooltip = [
+      `File: ${fileData.name}`,
+      `Bucket: ${bucketName}`,
+      `Size: ${formattedSize} (${size.toLocaleString()} bytes)`,
+      fileData.contentType ? `Content-Type: ${fileData.contentType}` : undefined,
+      fileData.updated ? `Updated: ${fileData.updated}` : undefined,
+      `gs://${bucketName}/${fileData.name}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    this.command = {
+      command: "ketrik-firestore-studio.inspectStorageFile",
+      title: "Inspect File",
+      arguments: [this],
+    };
+  }
+}

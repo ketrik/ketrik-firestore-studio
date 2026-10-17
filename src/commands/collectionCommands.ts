@@ -9,13 +9,16 @@ import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 /**
  * Open collection in table view.
  */
-export async function openCollectionAsTableCommand(item?: CollectionItem | ConnectionTreeItem) {
+export async function openCollectionAsTableCommand(
+  item?: CollectionItem | ConnectionTreeItem,
+  explorerDataProvider?: ExplorerDataProvider
+) {
   if (item instanceof CollectionItem) {
-    await openCollectionAsTable(item);
+    await openCollectionAsTable(item, false, explorerDataProvider);
     return;
   }
   if (item && (item as any).collectionId && (item as any).connectionId) {
-    await openCollectionAsTable(item as any);
+    await openCollectionAsTable(item as any, false, explorerDataProvider);
     return;
   }
 
@@ -81,18 +84,23 @@ export async function openCollectionAsTableCommand(item?: CollectionItem | Conne
   const trimmed = targetCollection.trim();
   const collId = trimmed.includes("/") ? trimmed.split("/").pop()! : trimmed;
 
-  await openCollectionAsTable({
-    connectionId,
-    collectionId: collId,
-    collectionPath: trimmed,
-  });
+  await openCollectionAsTable(
+    {
+      connectionId,
+      collectionId: collId,
+      collectionPath: trimmed,
+    },
+    false,
+    explorerDataProvider
+  );
 }
 
 /**
  * Open Collection Group in table view across all matching subcollections.
  */
 export async function queryCollectionGroupCommand(
-  item?: ConnectionTreeItem | CollectionItem
+  item?: ConnectionTreeItem | CollectionItem,
+  explorerDataProvider?: ExplorerDataProvider
 ): Promise<void> {
   let connectionId: string;
   let defaultCollectionId = "";
@@ -132,11 +140,15 @@ export async function queryCollectionGroupCommand(
     return;
   }
 
-  await openCollectionAsTable({
-    connectionId,
-    collectionId: collectionId.trim(),
-    isCollectionGroup: true,
-  });
+  await openCollectionAsTable(
+    {
+      connectionId,
+      collectionId: collectionId.trim(),
+      isCollectionGroup: true,
+    },
+    true,
+    explorerDataProvider
+  );
 }
 
 /**

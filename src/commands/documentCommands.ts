@@ -8,6 +8,7 @@ import { DocumentClipboard } from "../services/DocumentClipboard";
 import { TemplateService } from "../services/TemplateService";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
+import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 
 /**
@@ -225,6 +226,13 @@ export async function deleteDocumentCommand(
   }
 
   if (confirm === "Deep Delete (Doc + Subcollections)") {
+    try {
+      const snap = await item.reference.get();
+      if (snap.exists) {
+        await promptAndCleanupOrphanStorageFiles(item.connectionId, snap.data(), item.label as string);
+      }
+    } catch {}
+
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -245,6 +253,13 @@ export async function deleteDocumentCommand(
       }
     );
   } else if (confirm === "Delete" || confirm === "Delete Document Only") {
+    try {
+      const snap = await item.reference.get();
+      if (snap.exists) {
+        await promptAndCleanupOrphanStorageFiles(item.connectionId, snap.data(), item.label as string);
+      }
+    } catch {}
+
     try {
       await item.reference.delete();
       CostService.getInstance().recordOperation(item.connectionId, "delete", 1);

@@ -3,6 +3,9 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { CostService, SPARK_FREE_QUOTA, BLAZE_PRICING } from "../cost/costService";
 import { getCostSimulatorHtml } from "./costSimulator/costSimulatorHtml";
 
+// Active cost simulator panels registry to avoid duplicate webviews and memory retention
+const activeCostPanels = new Map<string, vscode.WebviewPanel>();
+
 export async function openCostSimulator(target?: { connectionId?: string } | string) {
   const connectionManager = ConnectionManager.getInstance();
   const connections = connectionManager.getConnections();
@@ -44,11 +47,20 @@ export async function openCostSimulator(target?: { connectionId?: string } | str
     return;
   }
 
+  const existingPanel = activeCostPanels.get(conn.id);
+  if (existingPanel) {
+    existingPanel.reveal(vscode.ViewColumn.One);
+    return;
+  }
+
   const costService = CostService.getInstance();
   const [initialSnapshot, initialHistory] = await Promise.all([
     costService.fetchDailyUsage(conn.id),
     costService.fetchHistoricalUsage(conn.id, 7),
   ]);
+
+  const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+  const retainContextWhenHidden = config.get<boolean>("retainWebviewTabs", true);
 
   const panel = vscode.window.createWebviewPanel(
     "firestoreCostSimulator",
@@ -56,9 +68,10 @@ export async function openCostSimulator(target?: { connectionId?: string } | str
     vscode.ViewColumn.One,
     {
       enableScripts: true,
-      retainContextWhenHidden: true,
+      retainContextWhenHidden,
     }
   );
+  activeCostPanels.set(conn.id, panel);
 
   panel.webview.html = getCostSimulatorHtml({
     connectionId: conn.id,
@@ -217,6 +230,7 @@ ${scenarioSection}
   });
 
   panel.onDidDispose(() => {
+    activeCostPanels.delete(conn.id);
     if (usageDebounceTimer) {
       clearTimeout(usageDebounceTimer);
       usageDebounceTimer = undefined;

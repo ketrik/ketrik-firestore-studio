@@ -11,7 +11,17 @@ import { getFieldTableHtml } from "./fieldTable/fieldTableHtml";
  * - If Record<string, T> (Keyed Map / Registry): Dictionary keys become Row IDs.
  * - If T[] (Sequence / Array): Array indices or item.id become Row IDs.
  */
+// Active field table panels registry to avoid duplicate webviews and memory retention
+const activeFieldPanels = new Map<string, vscode.WebviewPanel>();
+
 export async function openFieldAsTable(item: DocumentFieldItem) {
+  const panelKey = `${item.connectionId}:${item.parentDocRef.path}:${item.fieldName}`;
+  const existingPanel = activeFieldPanels.get(panelKey);
+  if (existingPanel) {
+    existingPanel.reveal(vscode.ViewColumn.One);
+    return;
+  }
+
   const isArray = Array.isArray(item.value);
   const panelTitle = isArray
     ? `Array: ${item.fieldName} [${item.value?.length ?? 0}]`
@@ -25,6 +35,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
       enableScripts: true,
     }
   );
+  activeFieldPanels.set(panelKey, panel);
 
   let rawData = item.value;
   let rows: any[] = [];
@@ -149,8 +160,10 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
   });
 
   panel.onDidDispose(() => {
+    activeFieldPanels.delete(panelKey);
     messageSubscription.dispose();
     rows = [];
     headers = [];
+    rawData = null;
   });
 }

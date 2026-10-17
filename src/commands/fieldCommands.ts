@@ -37,6 +37,42 @@ export async function openFieldCommand(
     ? "null"
     : typeof value;
 
+  // If it's a Firestore VectorValue, prompt to edit vector numbers
+  const isVec = value && (value.constructor?.name === "VectorValue" || (Array.isArray(value._values) && typeof value.isEqual === "function") || (value.__type === "VectorValue" && Array.isArray(value.values)));
+  if (isVec) {
+    const rawNums: number[] = typeof value.toArray === "function" ? value.toArray() : (Array.isArray(value._values) ? value._values : (value.values || []));
+    const input = await vscode.window.showInputBox({
+      prompt: `Edit Vector (${rawNums.length} dimensions) for '${item.fieldName}'`,
+      value: JSON.stringify(rawNums),
+      validateInput: (v) => {
+        if (!v.trim()) return "Vector cannot be empty";
+        return undefined;
+      },
+    });
+    if (!input) return;
+    let newNums: number[] = [];
+    try {
+      const parsed = JSON.parse(input.trim());
+      if (Array.isArray(parsed)) newNums = parsed.map(Number).filter((n) => !isNaN(n));
+    } catch {
+      newNums = input.split(",").map((s) => Number(s.trim())).filter((n) => !isNaN(n));
+    }
+    if (newNums.length === 0) {
+      vscode.window.showErrorMessage("Invalid vector numbers provided.");
+      return;
+    }
+    try {
+      const writeVec = conn?.isLocalJson ? newNums : FieldValue.vector(newNums);
+      await setDocField(writeVec);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+      vscode.window.showInformationMessage(`Updated vector '${item.fieldName}' (${newNums.length} dimensions)`);
+      explorerDataProvider.refreshNode(item);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to update vector: ${err.message}`);
+    }
+    return;
+  }
+
   // If it's a Firestore Timestamp, prompt to update timestamp
   if (valType === "object" && isTimestampLike(value)) {
     const curDate = timestampToDate(value) ?? new Date();
@@ -745,6 +781,7 @@ export async function addFieldCommand(
     [
       { label: "$(symbol-namespace) Object / Map ({})", description: "Empty object (opens in editor)", type: "object" },
       { label: "$(symbol-array) Array ([])", description: "Empty array (opens in editor)", type: "array" },
+      { label: "$(zap) Vector (FieldValue.vector)", description: "Firestore Vector embedding (number array)", type: "vector" },
       { label: "$(calendar) Timestamp", description: "Set current time (Now) or custom date", type: "timestamp" },
       { label: "$(symbol-string) String", description: "Text value", type: "string" },
       { label: "$(symbol-number) Number", description: "Numeric value", type: "number" },
@@ -795,6 +832,37 @@ export async function addFieldCommand(
       fieldValue = [];
       shouldOpenInEditor = true;
       break;
+    case "vector": {
+      const vecInput = await vscode.window.showInputBox({
+        prompt: `Enter vector embedding values for '${fieldName.trim()}' (comma-separated numbers or JSON array)`,
+        placeHolder: "0.05, -0.12, 0.88, 0.31",
+        validateInput: (v) => {
+          if (!v.trim()) return "Vector values cannot be empty";
+          return undefined;
+        },
+      });
+      if (!vecInput) { return; }
+      let nums: number[] = [];
+      try {
+        const parsed = JSON.parse(vecInput.trim());
+        if (Array.isArray(parsed)) {
+          nums = parsed.map(Number).filter((n) => !isNaN(n));
+        }
+      } catch {
+        nums = vecInput.split(",").map((s) => Number(s.trim())).filter((n) => !isNaN(n));
+      }
+      if (nums.length === 0) {
+        vscode.window.showErrorMessage("Please provide a valid array of numbers for the vector.");
+        return;
+      }
+      const conn = connectionId ? ConnectionManager.getInstance().getConnection(connectionId) : undefined;
+      if (conn?.isLocalJson) {
+        fieldValue = nums;
+      } else {
+        fieldValue = FieldValue.vector(nums);
+      }
+      break;
+    }
     case "string": {
       const strVal = await vscode.window.showInputBox({
         prompt: `Enter string value for '${fieldName.trim()}'`,

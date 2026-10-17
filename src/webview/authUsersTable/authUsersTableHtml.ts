@@ -93,12 +93,44 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       color: var(--vscode-descriptionForeground);
       font-size: 0.9em;
     }
-    .th-sortable {
-      cursor: pointer;
+    .provider-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 1px 5px;
+      border-radius: 10px;
+      font-size: 0.76em;
+      margin-right: 3px;
+      margin-top: 2px;
+      font-weight: 500;
       user-select: none;
     }
-    .th-sortable:hover {
-      background: rgba(128, 128, 128, 0.15);
+    .provider-google { background: rgba(234, 67, 53, 0.15); color: #ea4335; border: 1px solid rgba(234, 67, 53, 0.35); }
+    .provider-github { background: rgba(128, 128, 128, 0.18); color: var(--vscode-foreground); border: 1px solid rgba(128, 128, 128, 0.35); }
+    .provider-apple { background: rgba(255, 255, 255, 0.12); color: var(--vscode-foreground); border: 1px solid rgba(255, 255, 255, 0.25); }
+    .provider-password { background: rgba(55, 148, 255, 0.15); color: #3794ff; border: 1px solid rgba(55, 148, 255, 0.35); }
+    .provider-phone { background: rgba(46, 204, 113, 0.15); color: #2ecc71; border: 1px solid rgba(46, 204, 113, 0.35); }
+    .provider-anonymous { background: rgba(155, 89, 182, 0.15); color: #9b59b6; border: 1px solid rgba(155, 89, 182, 0.35); }
+    .mfa-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 0.76em;
+      font-weight: 600;
+      background: rgba(243, 156, 18, 0.18);
+      color: #f39c12;
+      border: 1px solid rgba(243, 156, 18, 0.4);
+      cursor: pointer;
+    }
+    .provider-filter-select {
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 0.88em;
     }
   </style>
 </head>
@@ -113,10 +145,24 @@ export function getAuthUsersTableHtml(connectionId: string): string {
     </div>
     <div class="toolbar-actions">
       <div class="search-wrapper">
-        <input id="searchInput" type="text" placeholder="Filter by email, UID, role, name..." style="width: 250px;" />
+        <input id="searchInput" type="text" placeholder="Filter by email, UID, role, name..." style="width: 230px;" />
       </div>
+      <select id="providerFilter" class="provider-filter-select" title="Filter users by sign-in provider">
+        <option value="">All Providers</option>
+        <option value="password">Password (Email)</option>
+        <option value="google.com">Google</option>
+        <option value="github.com">GitHub</option>
+        <option value="apple.com">Apple</option>
+        <option value="phone">Phone / SMS</option>
+        <option value="anonymous">Anonymous</option>
+        <option value="mfa">MFA Enrolled 🔐</option>
+      </select>
       <button id="searchBtn">Filter</button>
       <button id="clearSearchBtn" class="secondary" style="display:none;">Clear</button>
+
+      <button id="importWizardBtn" class="secondary" title="Bulk Import Users from JSON or CSV with Password Hashes (SCRYPT, BCRYPT, PBKDF2)">
+        <span>⬆</span> Import Users...
+      </button>
 
       <button id="refreshBtn" class="secondary" title="Reload from Firebase Auth">
         <span>🔄</span> Reload
@@ -145,6 +191,7 @@ export function getAuthUsersTableHtml(connectionId: string): string {
           <th class="th-sortable" data-col="createdAt">Created Date <span id="sort-createdAt">▼</span></th>
           <th class="th-sortable" data-col="lastSignInTime">Last Sign-in <span id="sort-lastSignInTime"></span></th>
           <th class="th-sortable" data-col="disabled">Status <span id="sort-disabled"></span></th>
+          <th>Providers / MFA</th>
           <th>Custom Claims (RBAC)</th>
           <th>Profile Doc</th>
           <th class="actions-col sticky-actions">Actions</th>
@@ -176,8 +223,10 @@ export function getAuthUsersTableHtml(connectionId: string): string {
     const searchInput = document.getElementById('searchInput');
     const searchBtn = document.getElementById('searchBtn');
     const clearSearchBtn = document.getElementById('clearSearchBtn');
+    const providerFilter = document.getElementById('providerFilter');
     const refreshBtn = document.getElementById('refreshBtn');
     const fetchAllBtn = document.getElementById('fetchAllBtn');
+    const importWizardBtn = document.getElementById('importWizardBtn');
     const exportBtn = document.getElementById('exportBtn');
     const loadMoreBar = document.getElementById('loadMoreBar');
     const loadMoreBtn = document.getElementById('loadMoreBtn');
@@ -229,11 +278,24 @@ export function getAuthUsersTableHtml(connectionId: string): string {
     }
 
     function renderTable() {
-      // Filter
+      // Filter by text search & provider
+      const selectedProv = providerFilter ? providerFilter.value : '';
       let filtered = allUsers;
+      if (selectedProv) {
+        filtered = filtered.filter(u => {
+          if (selectedProv === 'mfa') {
+            return Array.isArray(u.multiFactor) && u.multiFactor.length > 0;
+          }
+          if (selectedProv === 'anonymous') {
+            return !u.providerData || u.providerData.length === 0;
+          }
+          return Array.isArray(u.providerData) && u.providerData.some(p => p.providerId === selectedProv);
+        });
+      }
+
       if (currentFilter.trim()) {
         const q = currentFilter.toLowerCase().trim();
-        filtered = allUsers.filter(u => {
+        filtered = filtered.filter(u => {
           const email = (u.email || '').toLowerCase();
           const name = (u.displayName || '').toLowerCase();
           const uid = (u.uid || '').toLowerCase();
@@ -314,6 +376,28 @@ export function getAuthUsersTableHtml(connectionId: string): string {
             ? '<img class="user-avatar" src="' + escapeHtml(u.photoURL) + '" alt="' + escapeHtml(initial) + '" onerror="this.style.display=\\'none\\'; this.nextElementSibling.style.display=\\'inline-flex\\';" /><span class="user-avatar-fallback" style="display:none;">' + escapeHtml(initial) + '</span>'
             : '<span class="user-avatar-fallback">' + escapeHtml(initial) + '</span>';
 
+          // Provider chips & MFA
+          let providersHtml = '';
+          const provs = Array.isArray(u.providerData) ? u.providerData : [];
+          if (provs.length === 0) {
+            providersHtml = '<span class="provider-chip provider-anonymous">Anonymous</span>';
+          } else {
+            provs.forEach(p => {
+              const pid = p.providerId || 'password';
+              let cls = 'provider-password';
+              let label = pid;
+              if (pid === 'google.com') { cls = 'provider-google'; label = 'Google'; }
+              else if (pid === 'github.com') { cls = 'provider-github'; label = 'GitHub'; }
+              else if (pid === 'apple.com') { cls = 'provider-apple'; label = 'Apple'; }
+              else if (pid === 'phone') { cls = 'provider-phone'; label = 'Phone'; }
+              else if (pid === 'password') { cls = 'provider-password'; label = 'Password'; }
+              providersHtml += '<span class="provider-chip ' + cls + '">' + escapeHtml(label) + '</span>';
+            });
+          }
+          if (Array.isArray(u.multiFactor) && u.multiFactor.length > 0) {
+            providersHtml += '<span class="mfa-chip" title="Multi-Factor Authentication Enrolled">🛡️ MFA (' + u.multiFactor.length + ')</span>';
+          }
+
           tr.innerHTML = \`
             <td class="sticky-col">
               <div class="user-cell">
@@ -329,10 +413,13 @@ export function getAuthUsersTableHtml(connectionId: string): string {
             <td>\${formatDate(u.metadata?.lastSignInTime)}</td>
             <td>\${statusHtml}</td>
             <td>\${claimsHtml}</td>
+            <td>\${providersHtml}</td>
             <td id="profile-cell-\${escapeHtml(u.uid)}">\${profileHtml}</td>
             <td class="actions-col sticky-actions">
               <button class="secondary btn-icon claims-btn" data-uid="\${escapeHtml(u.uid)}" title="Edit Custom Claims">Claims</button>
               <button class="secondary btn-icon profile-btn" data-uid="\${escapeHtml(u.uid)}" title="Open / Create Firestore Profile Doc">Profile</button>
+              <button class="secondary btn-icon verify-email-btn" data-uid="\${escapeHtml(u.uid)}" data-email="\${escapeHtml(u.email || '')}" title="Generate Email Verification Link">Verify Link</button>
+              <button class="secondary btn-icon signin-link-btn" data-uid="\${escapeHtml(u.uid)}" data-email="\${escapeHtml(u.email || '')}" title="Generate Passwordless Sign-In Link">Sign-in Link</button>
               <button class="secondary btn-icon clone-user-btn" data-uid="\${escapeHtml(u.uid)}" title="Clone User to Another Connection">Clone</button>
               <button class="secondary btn-icon mint-token-btn" data-uid="\${escapeHtml(u.uid)}" title="Mint Custom Token (Login As User)">Token</button>
               <button class="secondary btn-icon reset-pwd-btn" data-uid="\${escapeHtml(u.uid)}" data-email="\${escapeHtml(u.email || '')}" title="Generate Password Reset Link">Reset</button>
@@ -379,6 +466,12 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       } else if (btn.classList.contains('delete-user-btn')) {
         const email = btn.getAttribute('data-email');
         vscode.postMessage({ command: 'deleteUser', uid, email });
+      } else if (btn.classList.contains('verify-email-btn')) {
+        const email = btn.getAttribute('data-email');
+        vscode.postMessage({ command: 'generateVerificationLink', uid, email });
+      } else if (btn.classList.contains('signin-link-btn')) {
+        const email = btn.getAttribute('data-email');
+        vscode.postMessage({ command: 'generateSignInLink', uid, email });
       } else if (btn.classList.contains('check-profile-btn')) {
         vscode.postMessage({ command: 'checkProfile', uid });
       }
@@ -415,6 +508,12 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       applySearch();
     });
 
+    if (providerFilter) {
+      providerFilter.addEventListener('change', () => {
+        renderTable();
+      });
+    }
+
     refreshBtn.addEventListener('click', () => {
       vscode.postMessage({ command: 'refresh' });
     });
@@ -426,6 +525,12 @@ export function getAuthUsersTableHtml(connectionId: string): string {
     fetchAllBtn.addEventListener('click', () => {
       vscode.postMessage({ command: 'fetchAll' });
     });
+
+    if (importWizardBtn) {
+      importWizardBtn.addEventListener('click', () => {
+        vscode.postMessage({ command: 'importUsersWizard' });
+      });
+    }
 
     exportBtn.addEventListener('click', () => {
       vscode.postMessage({ command: 'exportJson', users: allUsers });

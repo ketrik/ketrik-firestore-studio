@@ -119,6 +119,56 @@ export function getCollectionTableStyles(): string {
       min-width: 160px;
       flex: 1.5;
     }
+    .vector-search-panel {
+      background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.08));
+      border: 1px solid rgba(138, 43, 226, 0.4);
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 4px 16px rgba(138, 43, 226, 0.08);
+    }
+    .vector-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      font-weight: 600;
+      font-size: 0.95em;
+      color: #bb86fc;
+    }
+    .vector-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 7px;
+      border-radius: 12px;
+      font-size: 0.82em;
+      font-family: var(--mono-font);
+      background: rgba(187, 134, 252, 0.15);
+      border: 1px solid rgba(187, 134, 252, 0.35);
+      color: #d1b3ff;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+    }
+    .vector-chip:hover {
+      background: rgba(187, 134, 252, 0.28);
+      border-color: rgba(187, 134, 252, 0.6);
+      transform: translateY(-1px);
+    }
+    .vector-distance-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.84em;
+      font-weight: 600;
+      font-family: var(--mono-font);
+      background: rgba(0, 200, 83, 0.14);
+      border: 1px solid rgba(0, 200, 83, 0.35);
+      color: #00e676;
+    }
     .batch-toolbar {
       display: flex;
       align-items: center;
@@ -598,11 +648,17 @@ export function getCollectionTableHtml(
           <button id="toggleFilterBtn" class="secondary" title="Build server-side Firestore query filters">
             <span>🔍</span> Filter / Where
           </button>
+          <button id="toggleVectorSearchBtn" class="secondary toggle-btn" title="Run kNN similarity vector search (findNearest) against embeddings">
+            <span>🧠</span> Vector Search (kNN)
+          </button>
           <button id="toggleTimeTravelBtn" class="secondary toggle-btn" title="Simulate time-travel to preview live, scheduled, or expired documents" style="display:none;">
             <span>⏱️</span> Simulate Time
           </button>
           <button id="toggleLiveWatchBtn" class="secondary toggle-btn live-watch-btn" title="Toggle Real-Time Live Watch mode (listens to Firestore onSnapshot with mutation flash)">
             <span class="live-watch-indicator"></span> 📡 Live Watch
+          </button>
+          <button id="toggleSchemaHealthBtn" class="secondary" title="Scan and analyze collection schema drift, type consistency, and orphan keys">
+            <span>🔬</span> Schema Health
           </button>
           <div class="search-wrapper">
             <input id="searchInput" type="text" placeholder="Filter loaded rows..." />
@@ -674,6 +730,45 @@ export function getCollectionTableHtml(
         <div id="clauseList"></div>
       </div>
 
+      <div id="vectorSearchPanel" class="vector-search-panel" style="display:none;">
+        <div class="vector-header">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span>🧠 Firestore Vector Search & Embeddings Explorer (kNN)</span>
+            <span style="font-size:0.82em; opacity:0.8; font-weight:normal;">(findNearest similarity search)</span>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button id="runVectorBtn" style="background: #8a2be2; border-color: #9d4edd; color: #fff;">Execute kNN Search</button>
+            <button id="resetVectorBtn" class="secondary">Reset</button>
+          </div>
+        </div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+          <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-width:180px;">
+            <label style="font-size:0.84em; font-weight:500;">Vector Field Path:</label>
+            <input id="vectorFieldInput" type="text" placeholder="e.g. embedding, text_vector, vec" style="padding:5px 8px; font-size:0.9em; font-family:var(--mono-font);" />
+          </div>
+          <div style="display:flex; flex-direction:column; gap:4px; flex:2.5; min-width:280px;">
+            <label style="font-size:0.84em; font-weight:500;">Query Vector (Numbers comma-separated or JSON [0.1, 0.2, ...]):</label>
+            <input id="vectorQueryInput" type="text" placeholder="[0.024, -0.158, 0.892, ...] or 0.1, 0.2, 0.3" style="padding:5px 8px; font-size:0.9em; font-family:var(--mono-font);" />
+          </div>
+          <div style="display:flex; flex-direction:column; gap:4px; width:130px;">
+            <label style="font-size:0.84em; font-weight:500;">Distance Metric:</label>
+            <select id="vectorMeasureSelect" style="padding:5px 8px; font-size:0.9em;">
+              <option value="COSINE">COSINE</option>
+              <option value="EUCLIDEAN">EUCLIDEAN</option>
+              <option value="DOT_PRODUCT">DOT_PRODUCT</option>
+            </select>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:4px; width:85px;">
+            <label style="font-size:0.84em; font-weight:500;">Limit (Top-K):</label>
+            <input id="vectorLimitInput" type="number" min="1" max="100" value="10" style="padding:5px 8px; font-size:0.9em;" />
+          </div>
+          <div style="display:flex; flex-direction:column; gap:4px; width:130px;">
+            <label style="font-size:0.84em; font-weight:500;">Threshold (Optional):</label>
+            <input id="vectorThresholdInput" type="number" step="any" placeholder="None" style="padding:5px 8px; font-size:0.9em;" />
+          </div>
+        </div>
+      </div>
+
       <div class="info-bar" id="infoBar" style="display:none;">
         <div class="info-text">
           Showing <b id="doc-count">0</b> documents
@@ -686,6 +781,9 @@ export function getCollectionTableHtml(
           </span>
           <span class="search-note" id="query-note" style="display:none; color:var(--vscode-textLink-foreground, #3794ff); font-weight:500;">
             — (Server Query Active)
+          </span>
+          <span class="search-note" id="vector-note" style="display:none; color:#bb86fc; font-weight:500;">
+            — (🧠 Vector Search Active)
           </span>
         </div>
         <div>💡 Click Doc ID to view JSON • Double-click cell to edit</div>
@@ -898,11 +996,24 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           headers.map(h => renderHeaderCell(h)).join('');
       }
 
-      function formatCell(value) {
+      function formatCell(value, fieldName) {
         if (value === null || value === undefined) {
           return '<span style="opacity:0.4; font-style:italic;">null</span>';
         }
+        if (fieldName === '__vector_distance' && typeof value === 'number') {
+          return '<span class="vector-distance-badge" title="kNN Distance: ' + value + '">🎯 ' + value.toFixed(4) + '</span>';
+        }
         if (typeof value === "object") {
+          // VectorValue object: { __type: 'VectorValue', values: [...], dimensions: N }
+          if (value.__type === 'VectorValue' && Array.isArray(value.values)) {
+            const dims = value.dimensions || value.values.length;
+            const vals = value.values;
+            const preview = vals.slice(0, 3).map(n => typeof n === 'number' ? n.toFixed(3) : n).join(', ') + (vals.length > 3 ? '...' : '');
+            let norm = 0;
+            for (let i = 0; i < vals.length; i++) norm += (vals[i] || 0) * (vals[i] || 0);
+            const mag = Math.sqrt(norm).toFixed(3);
+            return '<span class="vector-chip" title="Vector[' + dims + ' dims] | Magnitude: ' + mag + ' | [' + escapeHtml(vals.slice(0, 10).join(', ')) + (vals.length > 10 ? '...' : '') + ']">⚡ Vector[' + dims + 'd] <span style="opacity:0.65; font-size:0.85em;">| ' + mag + '</span></span>';
+          }
           if (value._seconds !== undefined && value._nanoseconds !== undefined) {
             try {
               const date = new Date(value._seconds * 1000);
@@ -989,11 +1100,12 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
             else if (typeof rawVal === "boolean") valType = "boolean";
             else if (typeof rawVal === "number") valType = "number";
             else if (typeof rawVal === "object") {
-              if (rawVal._seconds !== undefined && rawVal._nanoseconds !== undefined) valType = "timestamp";
+              if (rawVal.__type === "VectorValue") valType = "vector";
+              else if (rawVal._seconds !== undefined && rawVal._nanoseconds !== undefined) valType = "timestamp";
               else if (Array.isArray(rawVal)) valType = "array";
               else valType = "map";
             }
-            return '<td' + tdCls + ' data-field="' + escapeHtml(h) + '" data-type="' + valType + '">' + formatCell(rawVal) + '</td>';
+            return '<td' + tdCls + ' data-field="' + escapeHtml(h) + '" data-type="' + valType + '">' + formatCell(rawVal, h) + '</td>';
           }).join('');
 
           return '<tr data-path="' + escapeHtml(doc.__path || '') + '" data-id="' + escapeHtml(docId) + '">' + selectCell + idCell + parentCell + dataCells + '</tr>';
@@ -1489,9 +1601,30 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           document.getElementById('clearSearchBtn').style.display = isServerQueryMode ? '' : 'none';
           document.getElementById('search-note').style.display = 'none';
           document.getElementById('lookup-note').style.display = 'none';
+          const vecNote = document.getElementById('vector-note');
+          if (vecNote) vecNote.style.display = 'none';
           document.getElementById('searchInput').value = '';
           document.getElementById('jumpInput').value = '';
           updateEmptyState(lastDocs.length);
+        }
+
+        if (msg.type === 'vectorSearchResults') {
+          isSearchMode = true;
+          currentHeaders = msg.headers || currentHeaders;
+          lastDocs = msg.docs || [];
+          reRenderCurrentTable();
+          document.getElementById('doc-count').textContent = lastDocs.length;
+          updateLoadMoreVisibility(false);
+          document.getElementById('clearSearchBtn').style.display = '';
+          document.getElementById('search-note').style.display = 'none';
+          document.getElementById('lookup-note').style.display = 'none';
+          document.getElementById('query-note').style.display = 'none';
+          const vecNote = document.getElementById('vector-note');
+          if (vecNote) {
+            vecNote.style.display = '';
+            vecNote.textContent = '— (🧠 Vector Search Active: ' + msg.distanceMeasure + ' top-' + msg.topK + ' on ' + msg.vectorField + ')';
+          }
+          updateEmptyState(lastDocs.length, "No matching documents found in vector neighborhood.");
         }
 
         if (msg.type === 'queryResult') {
@@ -1507,6 +1640,8 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           setLoadMoreButtonsDisabled(false);
           document.getElementById('search-note').style.display = 'none';
           document.getElementById('lookup-note').style.display = 'none';
+          const vecNote = document.getElementById('vector-note');
+          if (vecNote) vecNote.style.display = 'none';
           document.getElementById('query-note').style.display = isServerQueryMode ? '' : 'none';
           document.getElementById('clearSearchBtn').style.display = isServerQueryMode ? '' : 'none';
           updateEmptyState(lastDocs.length, isServerQueryMode ? "No documents match the specified where clauses." : undefined);
@@ -1761,6 +1896,68 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         }
       };
 
+      document.getElementById('toggleVectorSearchBtn').onclick = function() {
+        const panel = document.getElementById('vectorSearchPanel');
+        const isVisible = panel.style.display !== 'none';
+        panel.style.display = isVisible ? 'none' : 'block';
+        this.classList.toggle('active', !isVisible);
+
+        if (!isVisible) {
+          // Pre-populate vector field if detected
+          const fieldInput = document.getElementById('vectorFieldInput');
+          if (!fieldInput.value.trim()) {
+            const detectedVec = currentHeaders.find(h => {
+              const sampleDoc = allLoadedDocs.find(d => d[h] && (d[h].__type === 'VectorValue' || Array.isArray(d[h])));
+              return !!sampleDoc;
+            });
+            if (detectedVec) {
+              fieldInput.value = detectedVec;
+            }
+          }
+        }
+      };
+
+      const schemaHealthBtn = document.getElementById('toggleSchemaHealthBtn');
+      if (schemaHealthBtn) {
+        schemaHealthBtn.onclick = function() {
+          vscode.postMessage({ command: 'openSchemaAnalyzer' });
+        };
+      }
+
+      document.getElementById('runVectorBtn').onclick = function() {
+        const vectorField = document.getElementById('vectorFieldInput').value.trim();
+        const queryVector = document.getElementById('vectorQueryInput').value.trim();
+        const distanceMeasure = document.getElementById('vectorMeasureSelect').value;
+        const limit = Number(document.getElementById('vectorLimitInput').value) || 10;
+        const threshVal = document.getElementById('vectorThresholdInput').value.trim();
+        const distanceThreshold = threshVal !== '' && !isNaN(Number(threshVal)) ? Number(threshVal) : undefined;
+
+        if (!vectorField) {
+          alert('Please enter a vector field path (e.g. embedding).');
+          return;
+        }
+        if (!queryVector) {
+          alert('Please enter query vector numbers (e.g. 0.1, 0.2, 0.3 or [0.1, 0.2, ...]).');
+          return;
+        }
+
+        vscode.postMessage({
+          command: 'runVectorSearch',
+          vectorField,
+          queryVector,
+          distanceMeasure,
+          limit,
+          distanceThreshold,
+        });
+      };
+
+      document.getElementById('resetVectorBtn').onclick = function() {
+        document.getElementById('vectorFieldInput').value = '';
+        document.getElementById('vectorQueryInput').value = '';
+        document.getElementById('vectorThresholdInput').value = '';
+        vscode.postMessage({ command: 'clearSearch' });
+      };
+
       document.getElementById('addClauseBtn').onclick = function() {
         createClauseRow();
       };
@@ -1844,11 +2041,21 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         drawerType = type;
 
         const doc = allLoadedDocs.find(d => d.__path === docPath);
-        drawerCurrentVal = doc && doc[field] !== undefined ? JSON.parse(JSON.stringify(doc[field])) : (type === 'array' ? [] : {});
+        if (type === 'vector') {
+          const rawVec = doc && doc[field] !== undefined ? doc[field] : null;
+          drawerCurrentVal = rawVec && rawVec.__type === 'VectorValue' && Array.isArray(rawVec.values)
+            ? [...rawVec.values]
+            : (Array.isArray(rawVec) ? [...rawVec] : []);
+        } else {
+          drawerCurrentVal = doc && doc[field] !== undefined ? JSON.parse(JSON.stringify(doc[field])) : (type === 'array' ? [] : {});
+        }
+
+        const typeLabel = type === 'vector' ? 'Vector' : type === 'array' ? 'Array' : 'Map';
+        const typeIcon = type === 'vector' ? '⚡' : type === 'array' ? '📑' : '📦';
 
         document.getElementById('drawerDocPath').textContent = docPath + ' → ' + field;
-        document.getElementById('drawerFieldTitle').textContent = field + ' (' + (type === 'array' ? 'Array' : 'Map') + ')';
-        document.getElementById('drawerTypeIcon').textContent = type === 'array' ? '📑' : '📦';
+        document.getElementById('drawerFieldTitle').textContent = field + ' (' + typeLabel + ')';
+        document.getElementById('drawerTypeIcon').textContent = typeIcon;
 
         // Reset to Grid tab
         switchDrawerTab('grid');
@@ -2128,8 +2335,8 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         const tr = td.closest('tr');
         if (!tr || !field) return;
 
-        // Open 2-Column Inspector Drawer for complex types
-        if (type === 'map' || type === 'array') {
+        // Open 2-Column Inspector Drawer for complex types (maps, arrays, vectors)
+        if (type === 'map' || type === 'array' || type === 'vector') {
           openComplexDrawer(tr.getAttribute('data-path'), field, type);
           return;
         }

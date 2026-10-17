@@ -63,3 +63,26 @@ When you know a specific Document ID in a collection containing thousands of doc
 - **Instant Search**: The search input provides instant keyword filtering across all loaded documents and fields.
 - **Export as JSON**: Click **Export JSON** to save the currently visible table rows to a structured JSON file.
 - **Row Click Navigation**: Clicking any table row immediately opens the full document in a VS Code editor tab for instant editing.
+
+---
+
+## 4. Firestore Vector Search & Embeddings Explorer (kNN)
+
+Ketrik Firestore Studio includes full support for vector embeddings (`FieldValue.vector`) and nearest-neighbor search (`findNearest`).
+
+### Vector Cell Visualization
+- Vectors are displayed as interactive chips: `⚡ Vector[1536d] | 1.000` showing dimension count and L2 norm magnitude.
+- Hovering reveals preview coordinates; double-clicking opens the slide-out **Property Inspector Drawer** to view or edit individual coordinates.
+
+### Running a kNN Similarity Query
+1. In the table toolbar, click **`🧠 Vector Search (kNN)`** to expand the query panel.
+2. Enter the **Vector Field Path** (e.g. `embedding`, `text_vector`, `meta.vec`).
+3. Enter the **Query Vector** as a JSON array (`[0.024, -0.158, 0.892]`) or comma-separated numbers (`0.024, -0.158, 0.892`).
+4. Select the **Distance Metric**:
+   - `COSINE`: Cosine distance ($1 - \text{cosine\_similarity}$)
+   - `EUCLIDEAN`: Euclidean / $L_2$ distance
+   - `DOT_PRODUCT`: Dot product
+5. Configure **Limit (Top-K)** (e.g. `10`) and optional **Distance Threshold**.
+6. Click **Execute kNN Search**.
+
+Results are returned sorted by similarity, featuring a dedicated **`🎯 __vector_distance`** badge column showing the exact score. Click **Reset** or **Clear** to return to standard collection browsing. Fully compatible with Cloud Firestore, the Firebase Emulator Suite, and offline Local JSON databases.
