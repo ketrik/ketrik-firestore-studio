@@ -122,18 +122,27 @@ if grep -q "## \[Unreleased\]" CHANGELOG.md; then
   "
 fi
 
-# 5. Verify ROADMAP.md is updated for NEW_VERSION
+# 5. Update README.md version badge
+echo "📝 Updating README.md release badge to ${TAG}..."
+node -e "
+  const fs = require('fs');
+  let readme = fs.readFileSync('./README.md', 'utf8');
+  readme = readme.replace(/badge\/Release-[^-\?]+/g, 'badge/Release-${TAG}');
+  fs.writeFileSync('./README.md', readme);
+"
+
+# 6. Verify ROADMAP.md is updated for NEW_VERSION
 if ! grep -q "v${NEW_VERSION}" ROADMAP.md; then
   echo "⚠️ Warning: ROADMAP.md does not mention v${NEW_VERSION}."
   echo "👉 Remember to update ROADMAP.md with milestone status and plan the next release."
 fi
 
-# 5. Safety check: Run type checks and build package
+# 7. Safety check: Run type checks and build package
 echo "🔍 Running pre-release checks..."
 npm run check-types
 npm run package
 
-# 6. Commit changes
+# 8. Commit changes
 if [[ -n $(git status --porcelain) ]]; then
   echo "📝 Staging changes..."
   git add .
@@ -143,11 +152,11 @@ else
   echo "ℹ️ Working tree is clean. Proceeding with existing commit..."
 fi
 
-# 7. Push branch to remote
+# 9. Push branch to remote
 echo "⬆️ Pushing branch '${BRANCH}' to origin..."
 git push origin "${BRANCH}"
 
-# 8. Create annotated tag and push
+# 10. Create annotated tag and push
 echo "🏷️ Creating tag '${TAG}'..."
 git tag -a "${TAG}" -m "Release ${TAG}"
 
