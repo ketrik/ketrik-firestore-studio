@@ -13,7 +13,90 @@ export function getAuthUsersTableHtml(connectionId: string): string {
 
     .actions-col {
       white-space: nowrap;
-      text-align: right;
+      text-align: center;
+      width: 52px;
+      min-width: 52px;
+    }
+    .user-menu-btn {
+      padding: 2px 8px;
+      font-size: 1.1em;
+      line-height: 1.2;
+      border-radius: 4px;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--vscode-editor-foreground);
+      cursor: pointer;
+      opacity: 0.85;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .user-menu-btn:hover {
+      background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+      border-color: var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
+      opacity: 1;
+    }
+    .user-menu-btn.active {
+      background: var(--vscode-toolbar-activeBackground, rgba(128, 128, 128, 0.3));
+      border-color: var(--vscode-focusBorder, #007acc);
+      opacity: 1;
+    }
+    /* Single-instance floating context menu */
+    .auth-context-menu {
+      position: fixed;
+      display: none;
+      z-index: 1000;
+      min-width: 200px;
+      max-width: 280px;
+      background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+      color: var(--vscode-menu-foreground, var(--vscode-editor-foreground, #cccccc));
+      border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+      border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+      padding: 4px 0;
+      font-size: 0.88em;
+      animation: menuFadeIn 0.12s ease-out;
+    }
+    @keyframes menuFadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .auth-context-menu-header {
+      padding: 6px 12px;
+      font-size: 0.8em;
+      font-weight: 600;
+      color: var(--vscode-descriptionForeground, #888888);
+      border-bottom: 1px solid var(--vscode-menu-separatorBackground, rgba(128, 128, 128, 0.15));
+      margin-bottom: 3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .auth-context-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.08s ease;
+      color: inherit;
+    }
+    .auth-context-menu-item:hover {
+      background: var(--vscode-menu-selectionBackground, #094771);
+      color: var(--vscode-menu-selectionForeground, #ffffff) !important;
+    }
+    .auth-context-menu-item.danger {
+      color: var(--vscode-charts-red, #ff5555);
+    }
+    .auth-context-menu-item.danger:hover {
+      background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+      color: #ffffff !important;
+    }
+    .auth-context-menu-sep {
+      height: 1px;
+      background: var(--vscode-menu-separatorBackground, rgba(128, 128, 128, 0.15));
+      margin: 4px 0;
     }
     .badge-claim {
       background: var(--vscode-badge-background, rgba(128, 128, 128, 0.2));
@@ -416,15 +499,7 @@ export function getAuthUsersTableHtml(connectionId: string): string {
             <td>\${providersHtml}</td>
             <td id="profile-cell-\${escapeHtml(u.uid)}">\${profileHtml}</td>
             <td class="actions-col sticky-actions">
-              <button class="secondary btn-icon claims-btn" data-uid="\${escapeHtml(u.uid)}" title="Edit Custom Claims">Claims</button>
-              <button class="secondary btn-icon profile-btn" data-uid="\${escapeHtml(u.uid)}" title="Open / Create Firestore Profile Doc">Profile</button>
-              <button class="secondary btn-icon verify-email-btn" data-uid="\${escapeHtml(u.uid)}" data-email="\${escapeHtml(u.email || '')}" title="Generate Email Verification Link">Verify Link</button>
-              <button class="secondary btn-icon signin-link-btn" data-uid="\${escapeHtml(u.uid)}" data-email="\${escapeHtml(u.email || '')}" title="Generate Passwordless Sign-In Link">Sign-in Link</button>
-              <button class="secondary btn-icon clone-user-btn" data-uid="\${escapeHtml(u.uid)}" title="Clone User to Another Connection">Clone</button>
-              <button class="secondary btn-icon mint-token-btn" data-uid="\${escapeHtml(u.uid)}" title="Mint Custom Token (Login As User)">Token</button>
-              <button class="secondary btn-icon reset-pwd-btn" data-uid="\${escapeHtml(u.uid)}" data-email="\${escapeHtml(u.email || '')}" title="Generate Password Reset Link">Reset</button>
-              <button class="secondary btn-icon toggle-disable-btn" data-uid="\${escapeHtml(u.uid)}" data-disabled="\${u.disabled}" title="\${u.disabled ? 'Enable User' : 'Disable User'}">\${u.disabled ? 'Enable' : 'Disable'}</button>
-              <button class="secondary btn-icon delete-user-btn" data-uid="\${escapeHtml(u.uid)}" data-email="\${escapeHtml(u.email || u.uid)}" title="Delete Auth User & Profile" style="color:var(--vscode-charts-red, #ff5555);">Delete</button>
+              <button class="user-menu-btn" data-uid="\${escapeHtml(u.uid)}" title="User Actions (Claims, Profile, Token, etc.)">⋯</button>
             </td>
           \`;
           tbody.appendChild(tr);
@@ -444,36 +519,161 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       }
     }
 
-    // Delegated event listener on tbody handles all row actions without per-row listener allocations
+    // --- Floating Single-Instance Context Menu ---
+    const contextMenu = document.createElement('div');
+    contextMenu.className = 'auth-context-menu';
+    contextMenu.id = 'authContextMenu';
+    document.body.appendChild(contextMenu);
+
+    let activeMenuUid = null;
+    let activeMenuBtn = null;
+
+    function closeContextMenu() {
+      if (contextMenu.style.display === 'block') {
+        contextMenu.style.display = 'none';
+        if (activeMenuBtn) {
+          activeMenuBtn.classList.remove('active');
+        }
+        activeMenuUid = null;
+        activeMenuBtn = null;
+      }
+    }
+
+    function openContextMenu(btn, uid) {
+      const user = allUsers.find(u => u.uid === uid);
+      if (!user) return;
+
+      if (activeMenuUid === uid && contextMenu.style.display === 'block') {
+        closeContextMenu();
+        return;
+      }
+
+      closeContextMenu();
+
+      activeMenuUid = uid;
+      activeMenuBtn = btn;
+      btn.classList.add('active');
+
+      const email = user.email || '';
+      const userLabel = email || user.uid;
+      const isDisabled = !!user.disabled;
+
+      contextMenu.innerHTML = \`
+        <div class="auth-context-menu-header" title="\${escapeHtml(userLabel)}">\${escapeHtml(userLabel)}</div>
+        <div class="auth-context-menu-item" data-action="claims">🛡️ Edit Custom Claims...</div>
+        <div class="auth-context-menu-item" data-action="profile">📄 Open / Create Profile Doc</div>
+        <div class="auth-context-menu-item" data-action="mintToken">🔑 Mint Custom Token (Login As)</div>
+        <div class="auth-context-menu-item" data-action="cloneUser">📋 Clone User to Connection...</div>
+        <div class="auth-context-menu-sep"></div>
+        <div class="auth-context-menu-item" data-action="verifyEmail">✉️ Generate Verification Link</div>
+        <div class="auth-context-menu-item" data-action="signinLink">🔗 Passwordless Sign-In Link...</div>
+        <div class="auth-context-menu-item" data-action="resetPassword">🔄 Generate Password Reset Link</div>
+        <div class="auth-context-menu-sep"></div>
+        <div class="auth-context-menu-item" data-action="toggleDisable">
+          \${isDisabled ? '✅ Enable User Account' : '⏸️ Disable User Account'}
+        </div>
+        <div class="auth-context-menu-item danger" data-action="deleteUser">
+          🗑️ Delete User & Profile...
+        </div>
+      \`;
+
+      contextMenu.style.display = 'block';
+
+      // Position near button with viewport boundary protection
+      const rect = btn.getBoundingClientRect();
+      const menuWidth = 230;
+      const menuHeight = contextMenu.offsetHeight || 340;
+
+      let left = rect.left - menuWidth + rect.width;
+      if (left < 10) left = 10;
+      if (left + menuWidth > window.innerWidth - 10) {
+        left = window.innerWidth - menuWidth - 10;
+      }
+
+      let top = rect.bottom + 4;
+      if (top + menuHeight > window.innerHeight - 10) {
+        // Open upwards if overflowing bottom
+        top = Math.max(10, rect.top - menuHeight - 4);
+      }
+
+      contextMenu.style.left = left + 'px';
+      contextMenu.style.top = top + 'px';
+    }
+
+    // Context menu item click handler
+    contextMenu.addEventListener('click', (e) => {
+      const item = e.target.closest('.auth-context-menu-item');
+      if (!item || !activeMenuUid) return;
+
+      const action = item.getAttribute('data-action');
+      const user = allUsers.find(u => u.uid === activeMenuUid);
+      const uid = activeMenuUid;
+      const email = user ? (user.email || '') : '';
+      const isDisabled = user ? !!user.disabled : false;
+
+      closeContextMenu();
+
+      switch (action) {
+        case 'claims':
+          vscode.postMessage({ command: 'editClaims', uid });
+          break;
+        case 'profile':
+          vscode.postMessage({ command: 'openProfile', uid });
+          break;
+        case 'mintToken':
+          vscode.postMessage({ command: 'mintToken', uid });
+          break;
+        case 'cloneUser':
+          vscode.postMessage({ command: 'cloneUser', uid });
+          break;
+        case 'verifyEmail':
+          vscode.postMessage({ command: 'generateVerificationLink', uid, email });
+          break;
+        case 'signinLink':
+          vscode.postMessage({ command: 'generateSignInLink', uid, email });
+          break;
+        case 'resetPassword':
+          vscode.postMessage({ command: 'resetPassword', uid, email });
+          break;
+        case 'toggleDisable':
+          vscode.postMessage({ command: 'toggleDisable', uid, disabled: !isDisabled });
+          break;
+        case 'deleteUser':
+          vscode.postMessage({ command: 'deleteUser', uid, email });
+          break;
+      }
+    });
+
+    // Close menu when clicking outside or scrolling
+    window.addEventListener('click', (e) => {
+      if (!contextMenu.contains(e.target) && !e.target.closest('.user-menu-btn')) {
+        closeContextMenu();
+      }
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeContextMenu();
+      }
+    });
+    document.querySelector('.table-container').addEventListener('scroll', () => {
+      closeContextMenu();
+    }, { passive: true });
+
+    // Delegated event listener on tbody handles menu open and direct cell links
     tbody.addEventListener('click', (e) => {
-      const btn = e.target.closest('button');
-      if (!btn) return;
-      const uid = btn.getAttribute('data-uid');
-      if (btn.classList.contains('claims-btn')) {
-        vscode.postMessage({ command: 'editClaims', uid });
-      } else if (btn.classList.contains('profile-btn')) {
-        vscode.postMessage({ command: 'openProfile', uid });
-      } else if (btn.classList.contains('clone-user-btn')) {
-        vscode.postMessage({ command: 'cloneUser', uid });
-      } else if (btn.classList.contains('mint-token-btn')) {
-        vscode.postMessage({ command: 'mintToken', uid });
-      } else if (btn.classList.contains('reset-pwd-btn')) {
-        const email = btn.getAttribute('data-email');
-        vscode.postMessage({ command: 'resetPassword', uid, email });
-      } else if (btn.classList.contains('toggle-disable-btn')) {
-        const currentDisabled = btn.getAttribute('data-disabled') === 'true';
-        vscode.postMessage({ command: 'toggleDisable', uid, disabled: !currentDisabled });
-      } else if (btn.classList.contains('delete-user-btn')) {
-        const email = btn.getAttribute('data-email');
-        vscode.postMessage({ command: 'deleteUser', uid, email });
-      } else if (btn.classList.contains('verify-email-btn')) {
-        const email = btn.getAttribute('data-email');
-        vscode.postMessage({ command: 'generateVerificationLink', uid, email });
-      } else if (btn.classList.contains('signin-link-btn')) {
-        const email = btn.getAttribute('data-email');
-        vscode.postMessage({ command: 'generateSignInLink', uid, email });
-      } else if (btn.classList.contains('check-profile-btn')) {
+      const menuBtn = e.target.closest('.user-menu-btn');
+      if (menuBtn) {
+        e.stopPropagation();
+        const uid = menuBtn.getAttribute('data-uid');
+        openContextMenu(menuBtn, uid);
+        return;
+      }
+
+      const checkProfileBtn = e.target.closest('.check-profile-btn');
+      if (checkProfileBtn) {
+        const uid = checkProfileBtn.getAttribute('data-uid');
         vscode.postMessage({ command: 'checkProfile', uid });
+        return;
       }
     });
 

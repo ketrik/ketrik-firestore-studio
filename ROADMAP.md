@@ -14,8 +14,9 @@ timeline
         2026-10-14 : v1.10.0 In-Table Editing Suite, 2-Column Inspector Drawer, Storage Media Preview & Filter.or() : v1.11.0 Local JSON Database, Mock Store, Bi-Directional Sync & Timestamp Inlay Hints
         2026-10-15 : v1.12.0 Firestore Indexes Suite, Synthetic Mock Data Generator, Live Watch Mode & 750KB High-Quota Alerts
         2026-10-16 : v1.12.1 Table Loading Fixes & Pre-Flight Cost Estimator : v1.12.2 Cost Simulator, Capacity Modeler & CPU/Memory Optimizations
+        2026-10-17 : v1.13.0 Cloud Storage Explorer, Vector Search, Schema Drift Analyzer & Auth Expansion
     section Planned
-        Q1 2027 : v1.13.0 Cloud Functions Triggers, Storage Explorer & Vector Search
+        Q4 2026 : v1.14.0 Node/Box Graph Canvas, Auth Context Menu & Cloud Functions Triggers
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -43,8 +44,9 @@ timeline
 | **v1.12.0** | Shipped | 2026-10-15 | Firestore Composite Indexes Suite (tree inspector, firestore.indexes.json 2-way sync & auto-fixer), Synthetic Mock Data Generator (schema inference, 400 docs/batch), Real-Time Live Watch Mode (onSnapshot with animated flash feedback), 750KB High-Quota Warning Indicators |
 | **v1.12.1** | Shipped | 2026-10-16 | Collection table loading fixes, Cost & Quota explorer tree item, unified Status Bar Cloud Monitoring metrics, query pre-flight cost estimator |
 | **v1.12.2** | Shipped | 2026-10-16 | Interactive Cost Simulator dashboard, capacity modeling, comprehensive CPU & memory optimizations |
-| **v1.13.0** | Planned | Q1 2027 | Cloud Functions Triggers, Storage Explorer, Vector Search (kNN) & Schema Anomaly Analyzer |
-| **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer, local offline cache & mocking |
+| **v1.13.0** | Shipped | 2026-10-17 | Cloud Storage Explorer, Vector Search (kNN), Collection Schema Drift & Anomaly Analyzer, Firebase Auth Expansion & Document Auto-Reveal |
+| **v1.14.0** | Planned | Q4 2026 | Interactive Box/Node Data Graph Canvas (Hybrid SVG+HTML), Auth Table Single-Instance Context Menu, Cloud Functions Trigger Scanner & Simulator, Admin SDK Query Shell |
+| **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
 ---
 
@@ -346,29 +348,71 @@ timeline
 
 ---
 
-### [v1.13.0] — Storage Explorer, Vector Search & Cloud Functions Triggers (Target: Q1 2027)
+### [v1.13.0] — Storage Explorer, Vector Search & Schema Analyzer (Shipped: 2026-10-17)
 
-*Theme: Cloud Storage bucket exploration, vector similarity search, and comprehensive Firebase triggers.*
+*Theme: Cloud Storage bucket exploration, vector similarity search (kNN), automated schema drift analysis, and Firebase Auth expansion.*
 
-* [x] **Dedicated Cloud Storage Explorer in Sidebar Tree**:
+* **Dedicated Cloud Storage Explorer in Sidebar Tree**:
   * Dedicated **Cloud Storage** branch under each connection (`StorageBucketsBranchItem`): browse buckets, folders, files, MIME types, file sizes, and download URLs.
   * Drag-and-drop file upload into document fields (auto-uploads to bucket and writes resulting URL or `gs://` path).
-  * Signed URL minter (`getSignedUrl`) with customizable expiry (15m, 1h, 24h).
+  * Signed URL minter (`ketrik-firestore-studio.mintSignedUrl` / `getSignedUrl`) with customizable expiry (15m, 1h, 24h).
   * Cascade orphan file cleanup prompt when deleting documents or Auth users.
-* [x] **Firebase Auth Suite Expansion**:
-  * Email verification link (`generateEmailVerificationLink`) and passwordless sign-in link generators.
-  * Bulk Auth user import/export wizard (JSON/CSV with SCRYPT, BCRYPT, PBKDF2 hash support).
+  * File inspection modal, delete file action, and 1-click clipboard copy for `gs://` and HTTPS URLs.
+* **Firebase Auth Suite Expansion**:
+  * Email verification link (`ketrik-firestore-studio.generateEmailVerificationLink`) and passwordless sign-in link (`ketrik-firestore-studio.generateSignInWithEmailLink`) generators.
+  * Bulk Auth user import/export wizard (`ketrik-firestore-studio.importAuthUsersWizard`: JSON/CSV with SCRYPT, BCRYPT, PBKDF2 hash support).
   * Provider identity chips (`Google`, `GitHub`, `Apple`, `Phone`, `Password`, `Anonymous`) and provider-based filtering.
-  * Enrolled Multi-Factor Authentication (MFA) second factors viewer.
-* [x] **Firestore Vector Search & Embeddings Explorer (kNN)**:
+  * Enrolled Multi-Factor Authentication (MFA) second factors viewer (`ketrik-firestore-studio.viewUserMfa`).
+* **Firestore Vector Search & Embeddings Explorer (kNN)**:
   * Dedicated column renderer for `VectorValue` fields showing dimension count and cosine magnitude preview.
   * Similarity search query builder: execute kNN queries (`findNearest`) with vector inputs, distance metric (`COSINE`, `EUCLIDEAN`, `DOT_PRODUCT`), and similarity scores per row (`__vector_distance` badge column).
   * In-place vector inspection drawer and full Local JSON client-side kNN calculation fallback.
   * Quick-picker support for adding and editing `FieldValue.vector` embeddings directly from tree context menus.
-* [x] **Collection Schema Drift & Anomaly Analyzer**:
+* **Collection Schema Drift & Anomaly Analyzer (`ketrik-firestore-studio.analyzeCollectionSchema`)**:
   * Scans collection sample to produce interactive visual health reports: field presence percentages, type consistency matrix, and orphan keys.
   * In-table toolbar launcher (`🔬 Schema Health`) and Tree context menu action (`Analyze Schema Drift & Anomalies...`).
   * Instant filter pills (`Anomalies & Warnings`, `Mixed Types`, `Orphan Keys`, `100% Present`) and 1-click export to Markdown or JSON.
+* **Auto-Reveal Document in Tree View**:
+  * Added setting `ketrik-firestore-studio.autoRevealDocumentInTree` (default: `true`) and toolbar action (`ketrik-firestore-studio.revealActiveDocumentInTree`).
+  * Automatically reveals, expands to, and highlights documents in the Explorer Tree View when opened from collection table views or editor tabs.
+
+---
+
+### [v1.14.0] — Data Graph Canvas, Auth Context Menu & Cloud Functions (Target: Q4 2026)
+
+*Theme: Interactive node-graph data visualization (hybrid SVG+HTML canvas), responsive single-instance Auth context menus, and Cloud Functions developer tooling.*
+
+* **Interactive Box & Node Data Graph Canvas (Hybrid SVG + HTML Architecture)**:
+  * **Dual-Layer Canvas Engine**:
+    * **SVG Relationship Layer**: High-DPI crisp Bézier curves (`<path d="...">`), directional arrow markers (`<marker id="arrow">`), dashed lines for weak references, and animated particle flows for real-time `onSnapshot` mutations.
+    * **HTML Structured Node Layer**: Rich DOM box cards for Collections, Documents, and Subcollections with CSS flexbox layout, type chips, and scalar previews.
+    * **Unified Pan & Zoom Transform**: Synchronized coordinate matrix (`transform: translate(x, y) scale(k)`) supporting infinite canvas exploration (`0.2x` to `3.0x` zoom).
+  * **DocumentReference & Subcollection Link Discovery**:
+    * Automatically traces and draws directed edges for Firestore `DocumentReference` fields (`[Ref: path]`), subcollection parent-child trees, and foreign key path strings.
+    * Expandable/collapsible node ports: click a document's outgoing reference port to expand and fetch referenced documents on demand with single-read quota protection.
+  * **Interactive Node Box Controls**:
+    * Header badges with collection color coding and document ID copy link.
+    * In-box preview of top scalar fields with 1-click jump to open the document in the virtual JSON editor tab or collection table.
+    * Mini-map navigator and auto-layout engine (hierarchical Dagre-style or force-directed graph alignment).
+* **Firebase Auth Table Single-Instance Context Menu (`⋯`)**:
+  * **Ultra-Compact Action Column**: Replaced the sprawling row of 9 horizontal action buttons with a single compact `⋯` icon button per row.
+  * **Zero DOM Explosion**: Single floating context dialog element rendered once on `<body>` and positioned on click via `getBoundingClientRect()`, eliminating thousands of redundant button allocations on large 1,000-user tables.
+  * **Responsive & Small-Screen Resilient**: Eliminates button overflow, text clipping, and inaccessible actions on narrow windows or split-screen editor panes.
+  * Dynamic action availability reflecting user state (e.g. *Disable User* vs. *Enable User*, *Verify Email Link*, *Passwordless Sign-In*, *Mint Token*, *Clone User*, *Edit Claims*, *Delete Profile*).
+* **Cloud Functions Trigger AST Scanner & In-Tree Badges (⚡)**:
+  * Automatically scan workspace `functions/` directory for declared Firestore triggers (`onDocumentCreated`, `onDocumentUpdated`, `onDocumentDeleted`, `onDocumentWritten` in v2, and `onCreate`, `onUpdate`, etc. in v1).
+  * Display an animated **Trigger Badge ⚡** on collection and document nodes with 1-click jump to function TypeScript source code.
+* **Simulate Cloud Function Triggers on Document**:
+  * Right-click any document $\rightarrow$ **"Simulate Cloud Function Trigger..."** (`onCreate`, `onUpdate`, `onDelete`).
+  * Packages document snapshot into standard `CloudEvent` / `Change<DocumentSnapshot>` format and dispatches directly to local Firebase Functions Emulator (`http://localhost:5001`).
+* **Live Cloud Function Execution Logs Filter**:
+  * Right-click collection or document $\rightarrow$ stream GCP Cloud Logging or emulator logs filtered by target document or collection.
+* **Interactive JS/TS Admin SDK Query Shell (`.firestore.ts`)**:
+  * Scaffold a virtual scratchpad file with authenticated `db`, `auth`, `admin`, and `FieldValue` in scope.
+  * Run ad-hoc migrations or queries with `Cmd+Enter` and output streaming to an in-editor terminal panel.
+* **Local Offline SQLite Cache & Mocking Mode (Zero-Quota Development)**:
+  * Snapshot working sets to a local SQLite database for zero-cost offline development without needing the Java Firebase Local Emulator.
+  * Visual sync manager upon reconnecting with conflict resolution (Keep Remote, Overwrite, Merge).
 
 ---
 
