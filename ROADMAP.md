@@ -15,8 +15,9 @@ timeline
         2026-10-15 : v1.12.0 Firestore Indexes Suite, Synthetic Mock Data Generator, Live Watch Mode & 750KB High-Quota Alerts
         2026-10-16 : v1.12.1 Table Loading Fixes & Pre-Flight Cost Estimator : v1.12.2 Cost Simulator, Capacity Modeler & CPU/Memory Optimizations
         2026-10-17 : v1.13.0 Cloud Storage Explorer, Vector Search, Schema Drift Analyzer & Auth Expansion
+        2026-10-19 : v1.14.0 Box & Node Data Graph Canvas, Auth Table Floating Menu, Tree Field Actions & Cost UX
     section Planned
-        Q4 2026 : v1.14.0 Node/Box Graph Canvas, Auth Context Menu & Cloud Functions Triggers
+        Q4 2026 : v1.15.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -45,7 +46,8 @@ timeline
 | **v1.12.1** | Shipped | 2026-10-16 | Collection table loading fixes, Cost & Quota explorer tree item, unified Status Bar Cloud Monitoring metrics, query pre-flight cost estimator |
 | **v1.12.2** | Shipped | 2026-10-16 | Interactive Cost Simulator dashboard, capacity modeling, comprehensive CPU & memory optimizations |
 | **v1.13.0** | Shipped | 2026-10-17 | Cloud Storage Explorer, Vector Search (kNN), Collection Schema Drift & Anomaly Analyzer, Firebase Auth Expansion & Document Auto-Reveal |
-| **v1.14.0** | Planned | Q4 2026 | Interactive Box/Node Data Graph Canvas (Hybrid SVG+HTML), Auth Table Single-Instance Context Menu, Cloud Functions Trigger Scanner & Simulator, Admin SDK Query Shell |
+| **v1.14.0** | Shipped | 2026-10-19 | Interactive Box & Node Data Graph Canvas, Auth Table Floating Menu (`⋯`), Document Tree Inline Field Actions, Responsive Cost & Quota UX |
+| **v1.15.0** | Planned | Q4 2026 | Cloud Functions Trigger Scanner & Simulator, In-Tree Badges (⚡), Live Functions Logs & Admin SDK Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
 ---
@@ -378,13 +380,13 @@ timeline
 
 ---
 
-### [v1.14.0] — Data Graph Canvas, Auth Context Menu & Cloud Functions (Target: Q4 2026)
+### [v1.14.0] — Data Graph Canvas, Auth Context Menu & Tree Field Actions (Shipped: 2026-10-19)
 
-*Theme: Interactive node-graph data visualization (hybrid SVG+HTML canvas), responsive single-instance Auth context menus, and Cloud Functions developer tooling.*
+*Theme: Interactive node-graph data visualization (hybrid SVG+HTML canvas), responsive single-instance Auth context menus, document tree field actions, and responsive cost/quota views.*
 
 * **Interactive Box & Node Data Graph Canvas (Hybrid SVG + HTML Architecture)**:
   * **Dual-Layer Canvas Engine**:
-    * **SVG Relationship Layer**: High-DPI crisp Bézier curves (`<path d="...">`), directional arrow markers (`<marker id="arrow">`), dashed lines for weak references, and animated particle flows for real-time `onSnapshot` mutations.
+    * **SVG Relationship Layer**: High-DPI crisp Bézier curves (`<path d="...">`), directional arrow markers (`<marker id="arrow">`), dashed lines for weak references, and animated particle flows for real-time mutations.
     * **HTML Structured Node Layer**: Rich DOM box cards for Collections, Documents, and Subcollections with CSS flexbox layout, type chips, and scalar previews.
     * **Unified Pan & Zoom Transform**: Synchronized coordinate matrix (`transform: translate(x, y) scale(k)`) supporting infinite canvas exploration (`0.2x` to `3.0x` zoom).
   * **DocumentReference & Subcollection Link Discovery**:
@@ -398,7 +400,22 @@ timeline
   * **Ultra-Compact Action Column**: Replaced the sprawling row of 9 horizontal action buttons with a single compact `⋯` icon button per row.
   * **Zero DOM Explosion**: Single floating context dialog element rendered once on `<body>` and positioned on click via `getBoundingClientRect()`, eliminating thousands of redundant button allocations on large 1,000-user tables.
   * **Responsive & Small-Screen Resilient**: Eliminates button overflow, text clipping, and inaccessible actions on narrow windows or split-screen editor panes.
-  * Dynamic action availability reflecting user state (e.g. *Disable User* vs. *Enable User*, *Verify Email Link*, *Passwordless Sign-In*, *Mint Token*, *Clone User*, *Edit Claims*, *Delete Profile*).
+  * Dynamic action availability reflecting user state (*Disable/Enable User*, *Verify Email Link*, *Passwordless Sign-In*, *Mint Token*, *Clone User*, *Edit Claims*, *Delete Profile*).
+* **Explorer Tree Document Interaction & Granular Refresh**:
+  * Added inline `+` button directly on document nodes in the tree to quickly add fields without opening the full context menu.
+  * Two-phase click: single-click expands fields; clicking an already expanded document opens the virtual JSON editor tab.
+  * Fixed field deletion tree refresh to locate and reload the parent document node immediately.
+* **Cost & Quota Simulator Visual Enhancements**:
+  * Distinct amber styling for **Active Session Accounting** and green styling for **Live Cloud Monitoring**.
+  * Discrete warning notice banner with exact error reasons when Cloud Monitoring is unreachable, plus inline **"Try Again"** button.
+  * Responsive layout for narrow screens and split panes with horizontal tab scrolling and button grid wrapping.
+
+---
+
+### [v1.15.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q4 2026)
+
+*Theme: Deep Cloud Functions developer tooling, Firestore trigger simulation, live logging, and in-editor Admin SDK scratchpads.*
+
 * **Cloud Functions Trigger AST Scanner & In-Tree Badges (⚡)**:
   * Automatically scan workspace `functions/` directory for declared Firestore triggers (`onDocumentCreated`, `onDocumentUpdated`, `onDocumentDeleted`, `onDocumentWritten` in v2, and `onCreate`, `onUpdate`, etc. in v1).
   * Display an animated **Trigger Badge ⚡** on collection and document nodes with 1-click jump to function TypeScript source code.

@@ -54,6 +54,86 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   }
 
   /**
+   * Notify VS Code that a document was deleted, emitting a FileChangeType.Deleted event
+   * and optionally closing any open tabs targeting this document.
+   */
+  public invalidateAndNotifyDocumentDeleted(connectionId: string, docPath: string): void {
+    const key = `${connectionId}:${docPath}`;
+    this._snapshotCache.delete(key);
+    this._snapshotInFlight.delete(key);
+
+    const docUri = vscode.Uri.from({
+      scheme,
+      authority: connectionId,
+      path: `/${docPath}.json`,
+    });
+    this._emitter.fire([{ type: vscode.FileChangeType.Deleted, uri: docUri }]);
+    this.closeTabsMatchingUri(docUri);
+  }
+
+  /**
+   * Invalidate a document snapshot when a field is deleted, emit Deleted event
+   * for the specific field's virtual file URI, close any open tabs for that field,
+   * and emit Changed for the parent document JSON so full document tabs update immediately.
+   */
+  public invalidateAndNotifyFieldDeleted(connectionId: string, docPath: string, fieldNames: string | string[]): void {
+    const key = `${connectionId}:${docPath}`;
+    this._snapshotCache.delete(key);
+    this._snapshotInFlight.delete(key);
+
+    const names = Array.isArray(fieldNames) ? fieldNames : [fieldNames];
+    const events: vscode.FileChangeEvent[] = [];
+
+    // Notify that the parent document changed
+    const parentDocUri = vscode.Uri.from({
+      scheme,
+      authority: connectionId,
+      path: `/${docPath}.json`,
+    });
+    events.push({ type: vscode.FileChangeType.Changed, uri: parentDocUri });
+
+    // Notify that each field virtual file was deleted and close its open tabs
+    for (const name of names) {
+      const fieldUri = vscode.Uri.from({
+        scheme,
+        authority: connectionId,
+        path: `/${docPath}/${encodeURIComponent(name)}.json`,
+      });
+      events.push({ type: vscode.FileChangeType.Deleted, uri: fieldUri });
+      this.closeTabsMatchingUri(fieldUri);
+    }
+
+    this._emitter.fire(events);
+  }
+
+  /**
+   * Close any editor tabs matching a specific virtual URI.
+   */
+  private closeTabsMatchingUri(targetUri: vscode.Uri): void {
+    try {
+      const tabGroups = vscode.window.tabGroups;
+      if (!tabGroups || !tabGroups.all) return;
+
+      const tabsToClose: vscode.Tab[] = [];
+      const targetStr = targetUri.toString();
+
+      for (const group of tabGroups.all) {
+        for (const tab of group.tabs) {
+          if (tab.input instanceof vscode.TabInputText) {
+            if (tab.input.uri.toString() === targetStr) {
+              tabsToClose.push(tab);
+            }
+          }
+        }
+      }
+
+      if (tabsToClose.length > 0) {
+        tabGroups.close(tabsToClose).then(undefined, () => {});
+      }
+    } catch {}
+  }
+
+  /**
    * Invalidate multiple document snapshots in a single batch file change event,
    * preventing redundant event dispatching on batch updates or deletes.
    */

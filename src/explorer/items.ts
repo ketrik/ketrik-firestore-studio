@@ -58,14 +58,17 @@ export class DocumentItem extends Item {
     public documentId: string,
     public reference: DocumentReference,
     public connectionId: string,
-    docData?: any
+    docData?: any,
+    isExpanded: boolean = false
   ) {
-    super(documentId, vscode.TreeItemCollapsibleState.Collapsed);
-    this.command = {
-      command: "ketrik-firestore-studio.openPath",
-      title: "Open",
-      arguments: [reference.path, connectionId],
-    };
+    super(documentId, isExpanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+    if (isExpanded) {
+      this.command = {
+        command: "ketrik-firestore-studio.openPath",
+        title: "Open",
+        arguments: [reference.path, connectionId],
+      };
+    }
 
     this.id = `${connectionId}:${reference.path}`;
     this.contextValue = "document";

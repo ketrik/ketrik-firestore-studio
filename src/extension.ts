@@ -30,6 +30,7 @@ import {
   openCollectionAsTableCommand,
   queryCollectionGroupCommand,
   addCollectionCommand,
+  openDataGraphCommand,
 } from "./commands/collectionCommands";
 import {
   explodeFieldCommand,
@@ -363,6 +364,10 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.analyzeCollectionSchema",
       (item?: any) => openSchemaAnalyzer(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openDataGraph",
+      (item?: any) => openDataGraphCommand(item)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.exportCollection",

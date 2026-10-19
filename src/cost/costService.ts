@@ -48,6 +48,7 @@ export interface DailyUsageSnapshot {
   deletes: number;
   storageBytes?: number;
   egressBytes?: number;
+  monitoringError?: string;
 }
 
 export interface HistoricalUsagePoint {
@@ -331,21 +332,25 @@ export class CostService {
       }
     }
 
+    let monitoringError: string | undefined;
+
     try {
       const app = await ConnectionManager.getInstance().getApp(connectionId);
       const credential = app.options.credential;
       if (!credential || typeof (credential as any).getAccessToken !== "function") {
-        throw new Error("No OAuth2 credential access available");
+        throw new Error("Active credential does not provide OAuth2 access token for Monitoring API");
       }
       const tokenObj = await (credential as any).getAccessToken();
       const accessToken = tokenObj?.access_token;
       if (!accessToken) {
-        throw new Error("Unable to retrieve OAuth2 access token");
+        throw new Error("Unable to retrieve OAuth2 access token from credential");
       }
 
       const projectId = conn.projectId;
       const startTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const endTime = now.toISOString();
+
+      let lastApiError: string | undefined;
 
       // Cloud Monitoring metric queries:
       // firestore.googleapis.com/document/read_count
@@ -365,7 +370,15 @@ export class CostService {
         });
 
         if (!res.ok) {
-          throw new Error(`Monitoring API error ${res.status}: ${res.statusText}`);
+          let errDetail = `${res.status} ${res.statusText}`;
+          try {
+            const errJson: any = await res.json();
+            if (errJson?.error?.message) {
+              errDetail = errJson.error.message;
+            }
+          } catch {}
+          lastApiError = errDetail;
+          throw new Error(`Monitoring API error: ${errDetail}`);
         }
 
         const data: any = await res.json();
@@ -398,9 +411,11 @@ export class CostService {
         };
         this._monitoringDailyCache.set(connectionId, { timestamp: Date.now(), snapshot: snap });
         return snap;
+      } else if (lastApiError) {
+        monitoringError = lastApiError;
       }
-    } catch {
-      // Fallback silently to session accounting
+    } catch (err: any) {
+      monitoringError = err?.message || String(err);
     }
 
     const session = this.getSessionCounts(connectionId);
@@ -410,6 +425,7 @@ export class CostService {
       reads: session.reads,
       writes: session.writes,
       deletes: session.deletes,
+      monitoringError: monitoringError || "Could not reach Google Cloud Monitoring API",
     };
     this._monitoringDailyCache.set(connectionId, { timestamp: Date.now(), snapshot: fallbackSnap });
     return fallbackSnap;

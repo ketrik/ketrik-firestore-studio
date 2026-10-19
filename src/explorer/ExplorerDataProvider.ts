@@ -70,11 +70,36 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   private _pendingInvalidations = new Set<string>();
 
   private _treeView: vscode.TreeView<Item> | undefined;
+  private _treeViewDisposables: vscode.Disposable[] = [];
+  private _expandedDocIds = new Set<string>();
   private _revealingDoc: { connectionId: string; docPath: string; docId: string } | null = null;
   private _revealDebounceTimer: NodeJS.Timeout | undefined;
 
   public setTreeView(treeView: vscode.TreeView<Item>): void {
+    for (const d of this._treeViewDisposables) {
+      d.dispose();
+    }
+    this._treeViewDisposables = [];
     this._treeView = treeView;
+
+    this._treeViewDisposables.push(
+      treeView.onDidExpandElement((e) => {
+        if (e.element instanceof DocumentItem) {
+          const docKey = `${e.element.connectionId}:${e.element.reference.path}`;
+          this._expandedDocIds.add(docKey);
+          // Refresh item so its click command becomes ketrik-firestore-studio.openPath
+          this._onDidChangeTreeData.fire(e.element);
+        }
+      }),
+      treeView.onDidCollapseElement((e) => {
+        if (e.element instanceof DocumentItem) {
+          const docKey = `${e.element.connectionId}:${e.element.reference.path}`;
+          this._expandedDocIds.delete(docKey);
+          // Refresh item so single-click expands it instead of opening JSON
+          this._onDidChangeTreeData.fire(e.element);
+        }
+      })
+    );
   }
 
   readonly onDidChangeTreeData: vscode.Event<Item | undefined> =
@@ -105,6 +130,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       clearTimeout(this._revealDebounceTimer);
       this._revealDebounceTimer = undefined;
     }
+    for (const d of this._treeViewDisposables) {
+      d.dispose();
+    }
+    this._treeViewDisposables = [];
+    this._expandedDocIds.clear();
     this._pendingInvalidations.clear();
     this._connectionListener.dispose();
     this._rulesListener.dispose();
@@ -121,6 +151,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       this._paging.clear();
       this._authUsersPaging.clear();
       this._orderBy.clear();
+      this._expandedDocIds.clear();
     }
     this._onDidChangeTreeData.fire(undefined);
   }
@@ -163,6 +194,8 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   private _flushPendingInvalidations(): void {
     if (this._pendingInvalidations.size === 0) return;
 
+    const invalidatedDocs: Array<{ connectionId: string; docPath: string }> = [];
+
     for (const key of this._pendingInvalidations) {
       const sep = key.indexOf(":");
       if (sep === -1) continue;
@@ -171,6 +204,8 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
       // Invalidate the document node cache
       this._treeCache.delete(`doc:${connectionId}:${docPath}`);
+
+      invalidatedDocs.push({ connectionId, docPath });
 
       // Invalidate the parent collection node cache
       const parentCollPath = docPath.includes("/") ? docPath.substring(0, docPath.lastIndexOf("/")) : "";
@@ -185,7 +220,38 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     }
 
     this._pendingInvalidations.clear();
-    this._onDidChangeTreeData.fire(undefined);
+
+    // Granular refresh: If only a few documents were invalidated, refresh just those doc nodes
+    // using the exact cached DocumentItem instance, or fall back to tree refresh.
+    if (invalidatedDocs.length > 0 && invalidatedDocs.length <= 5) {
+      let anyDocRefreshed = false;
+      for (const { connectionId, docPath } of invalidatedDocs) {
+        const targetDocId = `${connectionId}:${docPath}`;
+        let matchedDoc: DocumentItem | undefined;
+        for (const [k, v] of this._treeCache.entries()) {
+          if (k.startsWith(`col:${connectionId}:`)) {
+            const match = v.items.find(
+              (it) => it instanceof DocumentItem && it.id === targetDocId
+            ) as DocumentItem | undefined;
+            if (match) {
+              matchedDoc = match;
+              break;
+            }
+          }
+        }
+
+        if (matchedDoc) {
+          this._onDidChangeTreeData.fire(matchedDoc);
+          anyDocRefreshed = true;
+        }
+      }
+
+      if (!anyDocRefreshed) {
+        this._onDidChangeTreeData.fire(undefined);
+      }
+    } else {
+      this._onDidChangeTreeData.fire(undefined);
+    }
   }
 
   /**
@@ -200,10 +266,42 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
     if (element instanceof DocumentItem) {
       this._treeCache.delete(`doc:${element.connectionId}:${element.reference.path}`);
-      this._onDidChangeTreeData.fire(undefined);
+      this._onDidChangeTreeData.fire(element);
     } else if (element instanceof DocumentFieldItem) {
       this._treeCache.delete(`doc:${element.connectionId}:${element.parentDocRef.path}`);
-      this._onDidChangeTreeData.fire(undefined);
+      
+      // Look up the existing DocumentItem instance in cached collection results
+      let targetDocItem: DocumentItem | undefined;
+      const targetDocId = `${element.connectionId}:${element.parentDocRef.path}`;
+      for (const [k, v] of this._treeCache.entries()) {
+        if (k.startsWith(`col:${element.connectionId}:`)) {
+          const match = v.items.find(
+            (it) => it instanceof DocumentItem && it.id === targetDocId
+          ) as DocumentItem | undefined;
+          if (match) {
+            targetDocItem = match;
+            break;
+          }
+        }
+      }
+
+      if (targetDocItem) {
+        this._onDidChangeTreeData.fire(targetDocItem);
+      } else {
+        // Fallback: If document item instance isn't in cache, refresh parent collection or root
+        const parentCollPath = element.parentDocRef.path.includes("/")
+          ? element.parentDocRef.path.substring(0, element.parentDocRef.path.lastIndexOf("/"))
+          : "";
+        if (parentCollPath) {
+          const prefix = `col:${element.connectionId}:${parentCollPath}:`;
+          for (const k of this._treeCache.keys()) {
+            if (k.startsWith(prefix)) {
+              this._treeCache.delete(k);
+            }
+          }
+        }
+        this._onDidChangeTreeData.fire(undefined);
+      }
     } else if (element instanceof CollectionItem) {
       const prefix = `col:${element.connectionId}:${element.reference.path}:`;
       for (const k of this._treeCache.keys()) {
@@ -262,6 +360,21 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   }
 
   getTreeItem(element: Item): vscode.TreeItem {
+    if (element instanceof DocumentItem) {
+      const docKey = `${element.connectionId}:${element.reference.path}`;
+      const isExpanded = this._expandedDocIds.has(docKey);
+      if (isExpanded) {
+        element.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
+        element.command = {
+          command: "ketrik-firestore-studio.openPath",
+          title: "Open in Editor",
+          arguments: [element.reference.path, element.connectionId],
+        };
+      } else {
+        element.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
+        element.command = undefined;
+      }
+    }
     return element;
   }
 

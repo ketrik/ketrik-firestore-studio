@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.13.0",
+  "version": "1.14.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -780,6 +780,12 @@
         "category": "Firestore Studio",
         "title": "Copy Download URL",
         "icon": "$(link)"
+      },
+      {
+        "command": "ketrik-firestore-studio.openDataGraph",
+        "category": "Firestore Studio",
+        "title": "Visualize Data Graph (Boxes & Nodes)...",
+        "icon": "$(type-hierarchy)"
       }
     ],
     "menus": {
@@ -1154,6 +1160,11 @@
           "group": "2_filter@4a"
         },
         {
+          "command": "ketrik-firestore-studio.openDataGraph",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@4b"
+        },
+        {
           "command": "ketrik-firestore-studio.exportCollection",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
           "group": "2_filter@5"
@@ -1191,6 +1202,11 @@
         {
           "command": "ketrik-firestore-studio.addField",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "inline@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.addField",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "1_actions@1"
         },
         {
@@ -1212,6 +1228,11 @@
           "command": "ketrik-firestore-studio.generateSchema",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "1_actions@5"
+        },
+        {
+          "command": "ketrik-firestore-studio.openDataGraph",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_actions@5a"
         },
         {
           "command": "ketrik-firestore-studio.convertDashboardFormat",

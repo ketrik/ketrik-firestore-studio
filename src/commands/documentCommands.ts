@@ -243,7 +243,7 @@ export async function deleteDocumentCommand(
         try {
           const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
           await firestore.recursiveDelete(item.reference);
-          DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.reference.path);
+          DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(item.connectionId, item.reference.path);
           vscode.window.showInformationMessage(`Deleted document "${item.label}" and all nested subcollections.`);
           const parentItem = new CollectionItem(item.reference.parent.id, item.reference.parent, item.connectionId);
           explorerDataProvider.refreshNode(parentItem);
@@ -263,7 +263,7 @@ export async function deleteDocumentCommand(
     try {
       await item.reference.delete();
       CostService.getInstance().recordOperation(item.connectionId, "delete", 1);
-      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.reference.path);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(item.connectionId, item.reference.path);
       vscode.window.showInformationMessage("Document deleted!");
       const parentItem = new CollectionItem(item.reference.parent.id, item.reference.parent, item.connectionId);
       explorerDataProvider.refreshNode(parentItem);

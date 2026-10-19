@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import { CollectionItem, ConnectionTreeItem, DocumentItem } from "../explorer/items";
 import openPath from "./openPath";
-import { openCollectionAsTable } from "../webview/openCollectionAsTable";
+import { openCollectionAsTable } from "../webview/openCollectionAsTable.js";
+import { openGraphCanvas } from "../webview/openGraphCanvas.js";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
@@ -227,4 +228,11 @@ export async function addCollectionCommand(
   } catch (err: any) {
     vscode.window.showErrorMessage("Failed to create collection: " + err.message);
   }
+}
+
+/**
+ * Open interactive Data Graph Canvas for a collection or document.
+ */
+export async function openDataGraphCommand(item?: any) {
+  await openGraphCanvas(item);
 }

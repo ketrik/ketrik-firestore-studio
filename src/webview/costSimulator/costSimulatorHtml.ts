@@ -53,29 +53,191 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
       margin-bottom: 24px;
       border-bottom: 1px solid var(--card-border);
       padding-bottom: 16px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .header-info {
+      flex: 1 1 360px;
+      min-width: 0;
     }
 
     .header-title {
-      font-size: 1.5rem;
+      font-size: 1.4rem;
       font-weight: 600;
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 10px;
+      line-height: 1.3;
     }
 
     .badge-source {
       font-size: 0.75rem;
-      padding: 2px 8px;
+      padding: 3px 10px;
       border-radius: 12px;
-      background: rgba(55, 148, 255, 0.15);
-      color: var(--accent);
-      border: 1px solid rgba(55, 148, 255, 0.3);
-      font-weight: 500;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+
+    .badge-live {
+      background: rgba(78, 201, 176, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(78, 201, 176, 0.4);
+    }
+
+    .badge-session {
+      background: rgba(204, 167, 0, 0.15);
+      color: var(--warning);
+      border: 1px solid rgba(204, 167, 0, 0.45);
+    }
+
+    .monitoring-notice-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: rgba(204, 167, 0, 0.08);
+      border: 1px solid rgba(204, 167, 0, 0.3);
+      font-size: 0.82rem;
+      color: var(--text-color);
+      flex-wrap: wrap;
+    }
+
+    .monitoring-notice-banner.visible {
+      display: flex;
+    }
+
+    .monitoring-notice-content {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      flex: 1 1 280px;
+      min-width: 0;
+    }
+
+    .monitoring-notice-error {
+      color: var(--muted);
+      font-family: monospace;
+      font-size: 0.78rem;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 2px 6px;
+      border-radius: 3px;
+      word-break: break-word;
+    }
+
+    .btn-inline-retry {
+      background: transparent;
+      color: var(--warning);
+      border: 1px solid rgba(204, 167, 0, 0.5);
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+    }
+
+    .btn-inline-retry:hover {
+      background: rgba(204, 167, 0, 0.2);
     }
 
     .header-actions {
       display: flex;
       gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      align-self: flex-start;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 14px;
+      }
+
+      .header-container {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 14px;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+      }
+
+      .header-info {
+        flex: 1 1 100%;
+      }
+
+      .header-title {
+        font-size: 1.15rem;
+        gap: 8px;
+      }
+
+      .header-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+
+      .header-actions button {
+        width: 100%;
+        justify-content: center;
+        padding: 7px 10px;
+        font-size: 0.8rem;
+      }
+
+      .tabs {
+        overflow-x: auto;
+        white-space: nowrap;
+        scrollbar-width: thin;
+        gap: 2px;
+        margin-bottom: 14px;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .tab-btn {
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        flex-shrink: 0;
+      }
+
+      .trend-toolbar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .time-selector {
+        width: 100%;
+        display: flex;
+      }
+
+      .time-selector .time-btn {
+        flex: 1;
+        text-align: center;
+      }
+
+      .chart-title {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .header-actions {
+        grid-template-columns: 1fr;
+      }
     }
 
     button {
@@ -429,13 +591,15 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
 </head>
 <body>
   <div class="header-container">
-    <div>
+    <div class="header-info">
       <div class="header-title">
         <span>💰 Firestore Cost Simulator & Free Quota Usage</span>
-        <span class="badge-source" id="sourceBadge">${
+        <span class="badge-source ${
+          data.usageSnapshot.source === "cloud-monitoring" ? "badge-live" : "badge-session"
+        }" id="sourceBadge">${
           data.usageSnapshot.source === "cloud-monitoring"
-            ? "Live Cloud Monitoring"
-            : "Active Session Accounting"
+            ? "🟢 Live Cloud Monitoring"
+            : "🟡 Active Session Accounting"
         }</span>
       </div>
       <div style="font-size: 0.85rem; color: var(--muted); margin-top: 4px;">
@@ -444,6 +608,17 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
   } &bull; Target: ${
     data.isEmulator ? "Local Emulator" : data.isLocalJson ? "Local JSON" : "Cloud Firestore"
   }
+      </div>
+      <div id="monitoringNoticeBanner" class="monitoring-notice-banner ${
+        data.usageSnapshot.source === "session-accounting" && !data.isEmulator && !data.isLocalJson ? "visible" : ""
+      }">
+        <div class="monitoring-notice-content">
+          <span>⚠️ <strong>Live Cloud Monitoring Unavailable</strong> &mdash; displaying operations recorded in this local VS Code session.</span>
+          <span class="monitoring-notice-error" id="monitoringErrorText">${
+            data.usageSnapshot.monitoringError ? `Reason: ${data.usageSnapshot.monitoringError}` : "Could not reach Google Cloud Monitoring API"
+          }</span>
+        </div>
+        <button id="bannerRetryBtn" class="btn-inline-retry" title="Retry connecting to Google Cloud Monitoring API">🔄 Try Again</button>
       </div>
     </div>
     <div class="header-actions">
@@ -527,10 +702,12 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
     <div class="trend-toolbar">
       <div style="font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; gap: 8px;">
         <span>Daily Firestore Operations Trend</span>
-        <span class="badge-source" id="historySourceBadge">${
+        <span class="badge-source ${
+          data.historicalUsage?.source === "cloud-monitoring" ? "badge-live" : "badge-session"
+        }" id="historySourceBadge">${
           data.historicalUsage?.source === "cloud-monitoring"
-            ? "Cloud Monitoring Metrics"
-            : "Simulated Historical Baseline"
+            ? "🟢 Cloud Monitoring Metrics"
+            : "🟡 Simulated Historical Baseline"
         }</span>
       </div>
       <div class="time-selector">
@@ -988,6 +1165,15 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
       vscode.postMessage({ command: 'refresh', days });
     };
 
+    const bannerRetryBtn = document.getElementById('bannerRetryBtn');
+    if (bannerRetryBtn) {
+      bannerRetryBtn.onclick = () => {
+        const activeTimeBtn = document.querySelector('.time-btn.active');
+        const days = activeTimeBtn ? parseInt(activeTimeBtn.getAttribute('data-days')) : 7;
+        vscode.postMessage({ command: 'refresh', days });
+      };
+    }
+
     document.getElementById('resetSessionBtn').onclick = () => {
       vscode.postMessage({ command: 'resetSession' });
     };
@@ -1005,15 +1191,37 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
       const msg = event.data;
       if (msg.type === 'usageUpdate') {
         usageData = msg.usageSnapshot;
-        document.getElementById('sourceBadge').textContent =
-          usageData.source === 'cloud-monitoring' ? 'Live Cloud Monitoring' : 'Active Session Accounting';
+        const isLive = usageData.source === 'cloud-monitoring';
+        const sourceBadge = document.getElementById('sourceBadge');
+        if (sourceBadge) {
+          sourceBadge.textContent = isLive ? '🟢 Live Cloud Monitoring' : '🟡 Active Session Accounting';
+          sourceBadge.className = 'badge-source ' + (isLive ? 'badge-live' : 'badge-session');
+        }
+
+        const banner = document.getElementById('monitoringNoticeBanner');
+        const errorText = document.getElementById('monitoringErrorText');
+        if (banner) {
+          if (!isLive && !${data.isEmulator} && !${data.isLocalJson}) {
+            banner.classList.add('visible');
+            if (errorText) {
+              errorText.textContent = usageData.monitoringError ? ('Reason: ' + usageData.monitoringError) : 'Could not reach Google Cloud Monitoring API';
+            }
+          } else {
+            banner.classList.remove('visible');
+          }
+        }
+
         updateMeters();
       }
 
       if (msg.type === 'historicalUpdate') {
         historyData = msg.historicalUsage;
-        document.getElementById('historySourceBadge').textContent =
-          historyData.source === 'cloud-monitoring' ? 'Cloud Monitoring Metrics' : 'Simulated Historical Baseline';
+        const isLive = historyData.source === 'cloud-monitoring';
+        const histBadge = document.getElementById('historySourceBadge');
+        if (histBadge) {
+          histBadge.textContent = isLive ? '🟢 Cloud Monitoring Metrics' : '🟡 Simulated Historical Baseline';
+          histBadge.className = 'badge-source ' + (isLive ? 'badge-live' : 'badge-session');
+        }
         renderHistoricalChart();
       }
     });

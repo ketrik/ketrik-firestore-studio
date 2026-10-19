@@ -660,6 +660,9 @@ export function getCollectionTableHtml(
           <button id="toggleSchemaHealthBtn" class="secondary" title="Scan and analyze collection schema drift, type consistency, and orphan keys">
             <span>🔬</span> Schema Health
           </button>
+          <button id="openDataGraphBtn" class="secondary" title="Visualize collection documents & references on an interactive graph canvas">
+            <span>🕸️</span> Data Graph
+          </button>
           <div class="search-wrapper">
             <input id="searchInput" type="text" placeholder="Filter loaded rows..." />
           </div>
@@ -1921,6 +1924,13 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
       if (schemaHealthBtn) {
         schemaHealthBtn.onclick = function() {
           vscode.postMessage({ command: 'openSchemaAnalyzer' });
+        };
+      }
+
+      const openDataGraphBtn = document.getElementById('openDataGraphBtn');
+      if (openDataGraphBtn) {
+        openDataGraphBtn.onclick = function() {
+          vscode.postMessage({ command: 'openDataGraph' });
         };
       }
 

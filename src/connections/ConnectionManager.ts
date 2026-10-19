@@ -208,6 +208,13 @@ export class ConnectionManager implements vscode.Disposable {
   }
 
   /**
+   * Synchronously return an already-initialized Firestore instance if available.
+   */
+  public getCachedFirestore(connectionId: string): Firestore | undefined {
+    return this.firestoreInstances.get(connectionId);
+  }
+
+  /**
    * Get the underlying initialized Firebase App for a connection.
    */
   public async getApp(connectionId?: string): Promise<App> {

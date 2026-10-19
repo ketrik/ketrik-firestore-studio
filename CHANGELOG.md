@@ -2,7 +2,27 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
-## [1.12.2] - 2026-10-16
+## [1.14.0] - 2026-10-19
+
+### Added & Improved
+- **Interactive Box & Node Data Graph Canvas (`ketrik-firestore-studio.openDataGraph`)**:
+  * **Dual-Layer Canvas Engine**: High-DPI SVG Bézier curves with arrow markers and particle flows alongside rich HTML DOM box cards for Collections, Documents, and Subcollections.
+  * **Unified Pan & Zoom**: Synchronized transform matrix (`0.2x` to `3.0x`) with minimap navigator and auto-layout engine.
+  * **DocumentReference & Subcollection Tracing**: Automatically discovers and draws directed link edges for Firestore `DocumentReference` fields (`[Ref: path]`), with on-demand quota-safe node expansion.
+  * Context menu action on both Collection and Document items in the Explorer Tree.
+- **Firebase Auth Users Table Single-Instance Context Menu (`⋯`)**:
+  * Replaced sprawling row of 9 action buttons with a single compact `⋯` icon button per row.
+  * Single floating dialog mounted on `<body>` and positioned via `getBoundingClientRect()`, eliminating thousands of button DOM allocations.
+  * Fully responsive and resilient on narrow or split-screen views.
+- **Document Tree Interaction & Granular Refresh**:
+  * Added inline `+` button directly on document nodes in the tree to quickly add fields without opening the full context menu.
+  * Two-phase click: single-click expands fields; clicking an already expanded document opens the virtual JSON editor tab.
+  * Fixed field deletion tree refresh to locate and reload the parent document node immediately.
+- **Cost & Quota Simulator Enhancements**:
+  * Differentiates Active Session Accounting (amber warning indicator) vs. Live Cloud Monitoring (green indicator).
+  * Discrete warning notice banner with exact error reasons when Cloud Monitoring is unreachable, plus inline **"Try Again"** button.
+  * Responsive layout for narrow screens and split panes with horizontal tab scrolling and button grid wrapping.
+
 
 ### Added & Improved
 - **Interactive Firestore Cost Simulator & Capacity Modeler (`ketrik-firestore-studio.openCostSimulator`)**:

@@ -1205,6 +1205,11 @@ export async function openCollectionAsTable(
     if (message.command === "openSchemaAnalyzer") {
       openSchemaAnalyzer({ connectionId, collectionPath });
     }
+
+    if (message.command === "openDataGraph") {
+      const { openGraphCanvas } = await import("./openGraphCanvas.js");
+      openGraphCanvas({ connectionId, rootPath: collectionPath });
+    }
   });
 
   // ── Live Watch Mode (Real-Time onSnapshot & Inactivity Watchdog) ─────────

@@ -537,7 +537,7 @@ export async function deleteFieldCommand(
       const conn = ConnectionManager.getInstance().getConnection(targetItem.connectionId);
       if (conn?.isLocalJson) {
         LocalJsonService.getInstance().updateField(conn, targetItem.parentDocRef.path, targetItem.fieldName, undefined, true);
-        documentFileSystemProvider.invalidateAndNotify(targetItem.connectionId, targetItem.parentDocRef.path);
+        documentFileSystemProvider.invalidateAndNotifyFieldDeleted(targetItem.connectionId, targetItem.parentDocRef.path, targetItem.fieldName);
         vscode.window.showInformationMessage(`Field "${targetItem.fieldName}" deleted!`);
         explorerDataProvider.refreshNode(targetItem);
         return;
@@ -545,7 +545,7 @@ export async function deleteFieldCommand(
 
       await targetItem.parentDocRef.update(new FieldPath(targetItem.fieldName), FieldValue.delete());
       CostService.getInstance().recordOperation(targetItem.connectionId, "write", 1);
-      documentFileSystemProvider.invalidateAndNotify(targetItem.connectionId, targetItem.parentDocRef.path);
+      documentFileSystemProvider.invalidateAndNotifyFieldDeleted(targetItem.connectionId, targetItem.parentDocRef.path, targetItem.fieldName);
       vscode.window.showInformationMessage(`Field "${targetItem.fieldName}" deleted!`);
       explorerDataProvider.refreshNode(targetItem);
     } catch (err: any) {
@@ -701,7 +701,7 @@ export async function deleteMultipleFieldsCommand(
       for (const key of selectedKeys) {
         LocalJsonService.getInstance().updateField(conn, docRef.path, key, undefined, true);
       }
-      documentFileSystemProvider.invalidateAndNotify(connectionId, docRef.path);
+      documentFileSystemProvider.invalidateAndNotifyFieldDeleted(connectionId, docRef.path, selectedKeys);
       vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} field(s) from "${docRef.id}".`);
 
       if (refreshTarget) {
@@ -724,7 +724,7 @@ export async function deleteMultipleFieldsCommand(
     }
 
     CostService.getInstance().recordOperation(connectionId, "write", 1);
-    documentFileSystemProvider.invalidateAndNotify(connectionId, docRef.path);
+    documentFileSystemProvider.invalidateAndNotifyFieldDeleted(connectionId, docRef.path, selectedKeys);
     vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} field(s) from "${docRef.id}".`);
 
     if (refreshTarget) {
