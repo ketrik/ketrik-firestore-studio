@@ -314,7 +314,9 @@ export class CostService {
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
 
-    if (!conn || conn.isLocalJson || conn.isEmulator || !conn.projectId) {
+    const effectiveProjectId = ConnectionManager.getInstance().getEffectiveProjectId(conn);
+
+    if (!conn || conn.isLocalJson || conn.isEmulator || !effectiveProjectId) {
       const session = this.getSessionCounts(connectionId);
       return {
         date: dateStr,
@@ -346,7 +348,7 @@ export class CostService {
         throw new Error("Unable to retrieve OAuth2 access token from credential");
       }
 
-      const projectId = conn.projectId;
+      const projectId = effectiveProjectId;
       const startTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const endTime = now.toISOString();
 
@@ -357,42 +359,49 @@ export class CostService {
       // firestore.googleapis.com/document/write_count
       // firestore.googleapis.com/document/delete_count
       const fetchMetric = async (metricType: string): Promise<number> => {
-        const filter = `metric.type="firestore.googleapis.com/document/${metricType}"`;
-        const url = `https://monitoring.googleapis.com/v3/projects/${projectId}/timeSeries?filter=${encodeURIComponent(
-          filter
-        )}&interval.startTime=${startTime}&interval.endTime=${endTime}&aggregation.alignmentPeriod=86400s&aggregation.perSeriesAligner=ALIGN_SUM`;
+        try {
+          const filter = `metric.type="firestore.googleapis.com/document/${metricType}"`;
+          const url = `https://monitoring.googleapis.com/v3/projects/${projectId}/timeSeries?filter=${encodeURIComponent(
+            filter
+          )}&interval.startTime=${startTime}&interval.endTime=${endTime}&aggregation.alignmentPeriod=86400s&aggregation.perSeriesAligner=ALIGN_SUM`;
 
-        const res = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: "application/json",
-          },
-        });
+          const res = await fetch(url, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: "application/json",
+            },
+          });
 
-        if (!res.ok) {
-          let errDetail = `${res.status} ${res.statusText}`;
-          try {
-            const errJson: any = await res.json();
-            if (errJson?.error?.message) {
-              errDetail = errJson.error.message;
-            }
-          } catch {}
-          lastApiError = errDetail;
-          throw new Error(`Monitoring API error: ${errDetail}`);
-        }
+          if (!res.ok) {
+            let errDetail = `${res.status} ${res.statusText}`;
+            try {
+              const errJson: any = await res.json();
+              if (errJson?.error?.message) {
+                errDetail = errJson.error.message;
+              }
+            } catch {}
+            lastApiError = errDetail;
+            throw new Error(`Monitoring API error: ${errDetail}`);
+          }
 
-        const data: any = await res.json();
-        let total = 0;
-        if (Array.isArray(data.timeSeries)) {
-          for (const ts of data.timeSeries) {
-            if (Array.isArray(ts.points)) {
-              for (const pt of ts.points) {
-                total += Number(pt.value?.int64Value || pt.value?.doubleValue || 0);
+          const data: any = await res.json();
+          let total = 0;
+          if (Array.isArray(data.timeSeries)) {
+            for (const ts of data.timeSeries) {
+              if (Array.isArray(ts.points)) {
+                for (const pt of ts.points) {
+                  total += Number(pt.value?.int64Value || pt.value?.doubleValue || 0);
+                }
               }
             }
           }
+          return total;
+        } catch (err: any) {
+          if (!lastApiError) {
+            lastApiError = err?.message || String(err);
+          }
+          throw err;
         }
-        return total;
       };
 
       const [reads, writes, deletes] = await Promise.all([
@@ -458,7 +467,9 @@ export class CostService {
       dateLabels.push(new Date(now - i * oneDayMs).toISOString().slice(0, 10));
     }
 
-    if (conn && !conn.isLocalJson && !conn.isEmulator && conn.projectId) {
+    const effectiveProjectId = ConnectionManager.getInstance().getEffectiveProjectId(conn);
+
+    if (conn && !conn.isLocalJson && !conn.isEmulator && effectiveProjectId) {
       try {
         const app = await ConnectionManager.getInstance().getApp(connectionId);
         const credential = app.options.credential;
@@ -466,7 +477,7 @@ export class CostService {
           const tokenObj = await (credential as any).getAccessToken();
           const accessToken = tokenObj?.access_token;
           if (accessToken) {
-            const projectId = conn.projectId;
+            const projectId = effectiveProjectId;
             const startTime = new Date(now - days * oneDayMs).toISOString();
             const endTime = new Date(now).toISOString();
 

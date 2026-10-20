@@ -97,10 +97,19 @@ export class ConnectionManager implements vscode.Disposable {
     const legacyPath = config.get<string>("serviceAccountKeyPath");
 
     if (connections.length === 0 && legacyPath && legacyPath.trim() !== "") {
+      let projectId: string | undefined;
+      try {
+        if (fs.existsSync(legacyPath.trim())) {
+          const sa = JSON.parse(fs.readFileSync(legacyPath.trim(), "utf8"));
+          projectId = sa.project_id;
+        }
+      } catch {}
+
       const defaultConnection: FirestoreConnectionConfig = {
         id: "default",
         name: "Default Connection",
         serviceAccountKeyPath: legacyPath.trim(),
+        projectId,
       };
       await config.update("connections", [defaultConnection], vscode.ConfigurationTarget.Global);
       this._cachedConnections = null;
@@ -108,12 +117,47 @@ export class ConnectionManager implements vscode.Disposable {
     }
   }
 
+  /**
+   * Resolve effective Project ID: explicit conn.projectId > serviceAccountKey.project_id > "demo-project" (emulator).
+   */
+  public getEffectiveProjectId(conn?: FirestoreConnectionConfig): string | undefined {
+    if (!conn) {
+      return undefined;
+    }
+    if (conn.projectId && conn.projectId.trim() !== "") {
+      return conn.projectId.trim();
+    }
+    if (conn.isEmulator) {
+      return "demo-project";
+    }
+    if (conn.serviceAccountKeyPath && fs.existsSync(conn.serviceAccountKeyPath)) {
+      try {
+        const raw = fs.readFileSync(conn.serviceAccountKeyPath, "utf8");
+        const parsed = JSON.parse(raw);
+        if (parsed.project_id) {
+          conn.projectId = parsed.project_id;
+          return parsed.project_id;
+        }
+      } catch {}
+    }
+    return undefined;
+  }
+
   public getConnections(): FirestoreConnectionConfig[] {
     if (this._cachedConnections !== null) {
       return this._cachedConnections;
     }
     const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
-    this._cachedConnections = config.get<FirestoreConnectionConfig[]>("connections") || [];
+    const rawConns = config.get<FirestoreConnectionConfig[]>("connections") || [];
+    this._cachedConnections = rawConns.map((conn) => {
+      if (!conn.projectId && conn.serviceAccountKeyPath) {
+        const pid = this.getEffectiveProjectId(conn);
+        if (pid) {
+          return { ...conn, projectId: pid };
+        }
+      }
+      return conn;
+    });
     return this._cachedConnections;
   }
 

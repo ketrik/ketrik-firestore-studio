@@ -304,6 +304,7 @@ export async function editConnectionCommand(item?: ConnectionTreeItem): Promise<
   } else {
     actions.push(
       { label: "$(key) Change Key File Path", action: "keyPath" },
+      { label: "$(symbol-constant) Change Project ID", action: "projectId" },
       { label: "$(database) Change Database ID", action: "databaseId" }
     );
   }
@@ -350,9 +351,10 @@ export async function editConnectionCommand(item?: ConnectionTreeItem): Promise<
       vscode.window.showInformationMessage("Auth emulator host updated!");
     }
   } else if (action.action === "projectId") {
+    const currentPid = connectionManager.getEffectiveProjectId(conn) || "demo-project";
     const newPid = await vscode.window.showInputBox({
       prompt: "Project ID",
-      value: conn.projectId || "demo-project",
+      value: currentPid,
     });
     if (newPid) {
       conn.projectId = newPid.trim();

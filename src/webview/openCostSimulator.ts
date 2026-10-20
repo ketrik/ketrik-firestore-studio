@@ -73,10 +73,12 @@ export async function openCostSimulator(target?: { connectionId?: string } | str
   );
   activeCostPanels.set(conn.id, panel);
 
+  const effectiveProjectId = ConnectionManager.getInstance().getEffectiveProjectId(conn);
+
   panel.webview.html = getCostSimulatorHtml({
     connectionId: conn.id,
     connectionName: conn.name,
-    projectId: conn.projectId,
+    projectId: effectiveProjectId,
     isEmulator: !!conn.isEmulator,
     isLocalJson: !!conn.isLocalJson,
     usageSnapshot: initialSnapshot,
@@ -168,10 +170,11 @@ ${scenario.results.savings ? `- **Estimated Caching Savings:** ${scenario.result
 `;
       }
 
+      const effectivePid = ConnectionManager.getInstance().getEffectiveProjectId(conn);
       const md = `# Firestore Cost & Quota Report: ${conn.name}
 **Date:** ${snap.date}  
 **Source:** ${snap.source}  
-**Project ID:** ${conn.projectId || "N/A"}  
+**Project ID:** ${effectivePid || "N/A"}  
 
 ## Daily Allowance Consumption
 - **Reads:** ${snap.reads.toLocaleString()} / ${SPARK_FREE_QUOTA.readsPerDay.toLocaleString()} (${Math.round((snap.reads / SPARK_FREE_QUOTA.readsPerDay) * 100)}%)
@@ -199,11 +202,12 @@ ${scenarioSection}
     if (message.command === "exportJson") {
       const snap = await costService.fetchDailyUsage(conn.id);
       const history = await costService.fetchHistoricalUsage(conn.id, 7);
+      const effectivePid = ConnectionManager.getInstance().getEffectiveProjectId(conn);
       const report = {
         connection: {
           id: conn.id,
           name: conn.name,
-          projectId: conn.projectId,
+          projectId: effectivePid,
         },
         date: snap.date,
         source: snap.source,
