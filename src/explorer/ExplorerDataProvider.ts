@@ -31,6 +31,7 @@ import { IndexesService } from "../indexes/indexesService";
 import { StorageService } from "../storage/storageService";
 import { parseHostPort, probePort } from "../emulator/portUtils";
 import { LocalJsonService } from "../services/LocalJsonService";
+import { isTimestampLike } from "../utils/timestampUtils";
 
 
 /** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
@@ -72,6 +73,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   private _treeView: vscode.TreeView<Item> | undefined;
   private _treeViewDisposables: vscode.Disposable[] = [];
   private _expandedDocIds = new Set<string>();
+  private _expandedFieldIds = new Set<string>();
   private _revealingDoc: { connectionId: string; docPath: string; docId: string } | null = null;
   private _revealDebounceTimer: NodeJS.Timeout | undefined;
 
@@ -89,6 +91,9 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           this._expandedDocIds.add(docKey);
           // Refresh item so its click command becomes ketrik-firestore-studio.openPath
           this._onDidChangeTreeData.fire(e.element);
+        } else if (e.element instanceof DocumentFieldItem && e.element.id) {
+          this._expandedFieldIds.add(e.element.id);
+          this._onDidChangeTreeData.fire(e.element);
         }
       }),
       treeView.onDidCollapseElement((e) => {
@@ -96,6 +101,9 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           const docKey = `${e.element.connectionId}:${e.element.reference.path}`;
           this._expandedDocIds.delete(docKey);
           // Refresh item so single-click expands it instead of opening JSON
+          this._onDidChangeTreeData.fire(e.element);
+        } else if (e.element instanceof DocumentFieldItem && e.element.id) {
+          this._expandedFieldIds.delete(e.element.id);
           this._onDidChangeTreeData.fire(e.element);
         }
       })
@@ -135,6 +143,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     }
     this._treeViewDisposables = [];
     this._expandedDocIds.clear();
+    this._expandedFieldIds.clear();
     this._pendingInvalidations.clear();
     this._connectionListener.dispose();
     this._rulesListener.dispose();
@@ -152,6 +161,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       this._authUsersPaging.clear();
       this._orderBy.clear();
       this._expandedDocIds.clear();
+      this._expandedFieldIds.clear();
     }
     this._onDidChangeTreeData.fire(undefined);
   }
@@ -374,6 +384,23 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         element.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
         element.command = undefined;
       }
+    } else if (element instanceof DocumentFieldItem) {
+      const isMap = element.contextValue === "documentFieldMap";
+      const keyCount = isMap && element.value && typeof element.value === "object" ? Object.keys(element.value).length : 0;
+      if (isMap && keyCount > 0) {
+        const isExpanded = !!(element.id && this._expandedFieldIds.has(element.id));
+        if (isExpanded) {
+          element.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
+          element.command = {
+            command: "ketrik-firestore-studio.openFieldInEditor",
+            title: "Open in Editor",
+            arguments: [element],
+          };
+        } else {
+          element.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
+          element.command = undefined;
+        }
+      }
     }
     return element;
   }
@@ -417,6 +444,9 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       const conn = this._connectionManager.getConnection(element.connectionId);
       return conn ? new ConnectionTreeItem(conn) : undefined;
     } else if (element instanceof DocumentFieldItem) {
+      if (element.parentFieldItem) {
+        return element.parentFieldItem;
+      }
       return new DocumentItem(
         element.parentDocRef.id,
         element.parentDocRef,
@@ -699,9 +729,19 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         if (conn?.isLocalJson) {
           const docData = LocalJsonService.getInstance().getDocument(conn, element.reference.path) || {};
           const fieldKeys = Object.keys(docData).sort((a, b) => a.localeCompare(b));
-          const items: Item[] = fieldKeys.map(
-            (key) => new DocumentFieldItem(key, docData[key], element.reference, element.connectionId)
-          );
+          const items: Item[] = fieldKeys.map((key) => {
+            const fieldId = `${element.connectionId}:${element.reference.path}#${key}`;
+            const isExpanded = this._expandedFieldIds.has(fieldId);
+            return new DocumentFieldItem(
+              key,
+              docData[key],
+              element.reference,
+              element.connectionId,
+              [key],
+              undefined,
+              isExpanded
+            );
+          });
           return storeAndReturn(items);
         }
 
@@ -736,12 +776,17 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
             return a.localeCompare(b);
           });
           for (const key of fieldKeys) {
+            const fieldId = `${element.connectionId}:${element.reference.path}#${key}`;
+            const isExpanded = this._expandedFieldIds.has(fieldId);
             items.push(
               new DocumentFieldItem(
                 key,
                 data[key],
                 element.reference,
-                element.connectionId
+                element.connectionId,
+                [key],
+                undefined,
+                isExpanded
               )
             );
           }
@@ -754,6 +799,56 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         );
         return [];
       }
+    } else if (element instanceof DocumentFieldItem) {
+      if (
+        element.value &&
+        typeof element.value === "object" &&
+        !Array.isArray(element.value) &&
+        !isTimestampLike(element.value)
+      ) {
+        const isVector =
+          element.value.constructor?.name === "VectorValue" ||
+          (Array.isArray(element.value._values) && typeof element.value.isEqual === "function") ||
+          (element.value.__type === "VectorValue" && Array.isArray(element.value.values));
+
+        if (!isVector) {
+          const data = element.value;
+          const fieldKeys = Object.keys(data).sort((a, b) => {
+            const isProtoA = a.startsWith("__");
+            const isProtoB = b.startsWith("__");
+            if (isProtoA && !isProtoB) return -1;
+            if (!isProtoA && isProtoB) return 1;
+
+            const isEnvA = a.startsWith("_");
+            const isEnvB = b.startsWith("_");
+            if (isEnvA && !isEnvB) return -1;
+            if (!isEnvA && isEnvB) return 1;
+
+            return a.localeCompare(b);
+          });
+
+          const currentSegments =
+            element.pathSegments && element.pathSegments.length > 0
+              ? element.pathSegments
+              : [element.fieldName];
+          const items: Item[] = fieldKeys.map((key) => {
+            const childSegments = [...currentSegments, key];
+            const childId = `${element.connectionId}:${element.parentDocRef.path}#${childSegments.join(".")}`;
+            const isExpanded = this._expandedFieldIds.has(childId);
+            return new DocumentFieldItem(
+              key,
+              data[key],
+              element.parentDocRef,
+              element.connectionId,
+              childSegments,
+              element,
+              isExpanded
+            );
+          });
+          return items;
+        }
+      }
+      return [];
     } else if (element instanceof CollectionItem) {
       try {
         const conn = this._connectionManager.getConnection(element.connectionId);

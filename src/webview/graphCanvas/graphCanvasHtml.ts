@@ -412,6 +412,13 @@ export function getGraphCanvasHtml(graphData: GraphData): string {
     const nodePositions = new Map(); // id -> { x, y, width, height }
     let selectedNodeId = null;
 
+    // Viewport panning & node dragging state
+    let isPanning = false;
+    let panStartX = 0;
+    let panStartY = 0;
+    let draggingNode = null;
+    let animFrameId = null;
+
     function updateTransform() {
       canvasLayer.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + zoom + ')';
       updateMiniMap();
@@ -529,38 +536,21 @@ export function getGraphCanvasHtml(graphData: GraphData): string {
           <div class="node-port port-right"></div>
         \`;
 
-        // Node drag handling
-        let isNodeDragging = false;
-        let startNodeMouseX = 0;
-        let startNodeMouseY = 0;
-        let startPosX = pos.x;
-        let startPosY = pos.y;
+        card.setAttribute('data-node-id', node.id);
 
         card.addEventListener('mousedown', (e) => {
           if (e.target.closest('.node-action-link') || e.target.closest('.is-ref')) return;
           e.stopPropagation();
-          isNodeDragging = true;
-          startNodeMouseX = e.clientX;
-          startNodeMouseY = e.clientY;
-          startPosX = pos.x;
-          startPosY = pos.y;
+          const currentPos = nodePositions.get(node.id) || pos;
+          draggingNode = {
+            id: node.id,
+            card,
+            startMouseX: e.clientX,
+            startMouseY: e.clientY,
+            startPosX: currentPos.x,
+            startPosY: currentPos.y,
+          };
           selectNode(node.id);
-        });
-
-        window.addEventListener('mousemove', (e) => {
-          if (!isNodeDragging) return;
-          const dx = (e.clientX - startNodeMouseX) / zoom;
-          const dy = (e.clientY - startNodeMouseY) / zoom;
-          pos.x = startPosX + dx;
-          pos.y = startPosY + dy;
-          card.style.left = pos.x + 'px';
-          card.style.top = pos.y + 'px';
-          renderEdges();
-          updateMiniMap();
-        });
-
-        window.addEventListener('mouseup', () => {
-          isNodeDragging = false;
         });
 
         nodesContainer.appendChild(card);
@@ -677,10 +667,6 @@ export function getGraphCanvasHtml(graphData: GraphData): string {
     }
 
     // Canvas panning and zooming
-    let isPanning = false;
-    let panStartX = 0;
-    let panStartY = 0;
-
     viewport.addEventListener('mousedown', (e) => {
       if (e.target.closest('.graph-node') || e.target.closest('.graph-toolbar') || e.target.closest('.mini-map-box')) return;
       isPanning = true;
@@ -690,15 +676,46 @@ export function getGraphCanvasHtml(graphData: GraphData): string {
     });
 
     window.addEventListener('mousemove', (e) => {
-      if (!isPanning) return;
-      panX = e.clientX - panStartX;
-      panY = e.clientY - panStartY;
-      updateTransform();
+      if (isPanning) {
+        panX = e.clientX - panStartX;
+        panY = e.clientY - panStartY;
+        if (!animFrameId) {
+          animFrameId = requestAnimationFrame(() => {
+            updateTransform();
+            animFrameId = null;
+          });
+        }
+      } else if (draggingNode) {
+        const dx = (e.clientX - draggingNode.startMouseX) / zoom;
+        const dy = (e.clientY - draggingNode.startMouseY) / zoom;
+        const pos = nodePositions.get(draggingNode.id);
+        if (pos) {
+          pos.x = draggingNode.startPosX + dx;
+          pos.y = draggingNode.startPosY + dy;
+          draggingNode.card.style.left = pos.x + 'px';
+          draggingNode.card.style.top = pos.y + 'px';
+          if (!animFrameId) {
+            animFrameId = requestAnimationFrame(() => {
+              renderEdges();
+              updateMiniMap();
+              animFrameId = null;
+            });
+          }
+        }
+      }
     });
 
     window.addEventListener('mouseup', () => {
-      isPanning = false;
-      viewport.classList.remove('dragging');
+      if (isPanning) {
+        isPanning = false;
+        viewport.classList.remove('dragging');
+        updateTransform();
+      }
+      if (draggingNode) {
+        draggingNode = null;
+        renderEdges();
+        updateMiniMap();
+      }
     });
 
     viewport.addEventListener('wheel', (e) => {
@@ -780,7 +797,9 @@ export function getGraphCanvasHtml(graphData: GraphData): string {
               updateTransform();
             }
           } else {
-            vscode.postMessage({ command: 'expandReference', refPath });
+            const parentCard = refVal.closest('.graph-node');
+            const sourcePath = parentCard ? parentCard.getAttribute('data-node-id') : null;
+            vscode.postMessage({ command: 'expandReference', refPath, sourcePath });
           }
         }
       }

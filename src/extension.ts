@@ -25,6 +25,8 @@ import {
   deleteFieldCommand,
   deleteMultipleFieldsCommand,
   addFieldCommand,
+  addNestedPropertyCommand,
+  copyFieldJsonCommand,
 } from "./commands/fieldCommands";
 import {
   openCollectionAsTableCommand,
@@ -503,6 +505,16 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.addField",
       (item: DocumentItem | DocumentFieldItem) =>
         addFieldCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.addNestedProperty",
+      (item: DocumentFieldItem) =>
+        addNestedPropertyCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.copyFieldJson",
+      (item: DocumentFieldItem) =>
+        copyFieldJsonCommand(item)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.explodeField",

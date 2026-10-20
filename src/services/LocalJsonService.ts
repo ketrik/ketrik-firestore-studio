@@ -340,10 +340,27 @@ export class LocalJsonService {
     isDelete = false
   ): void {
     const current = this.getDocument(config, docPath) || {};
-    if (isDelete) {
-      delete current[fieldPath];
+    if (fieldPath.includes(".")) {
+      const parts = fieldPath.split(".");
+      let target = current;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!target[parts[i]] || typeof target[parts[i]] !== "object") {
+          target[parts[i]] = {};
+        }
+        target = target[parts[i]];
+      }
+      const lastKey = parts[parts.length - 1];
+      if (isDelete) {
+        delete target[lastKey];
+      } else {
+        target[lastKey] = value;
+      }
     } else {
-      current[fieldPath] = value;
+      if (isDelete) {
+        delete current[fieldPath];
+      } else {
+        current[fieldPath] = value;
+      }
     }
     this.setDocument(config, docPath, current);
   }

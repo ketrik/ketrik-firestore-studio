@@ -6,7 +6,7 @@ import { AuthUserItem, ConnectionTreeItem, DocumentFieldItem, Item } from "../ex
  */
 export default async function copyPath(item: Item) {
   if (item instanceof DocumentFieldItem) {
-    const fullPath = `${item.reference.path}/${item.fieldName}`;
+    const fullPath = `${item.reference.path}/${item.fullFieldPath || item.fieldName}`;
     await vscode.env.clipboard.writeText(fullPath);
     vscode.window.showInformationMessage(`Copied field path: ${fullPath}`);
     return;

@@ -2,6 +2,29 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.15.0] - 2026-10-20
+
+### Added & Improved
+- **Recursive Expandable Map Field Nodes in Explorer Tree**:
+  * First-class collapsible tree items (`vscode.TreeItemCollapsibleState.Collapsed`) for Map fields with properties (`{ n keys }`).
+  * Zero-quota reads: expanding Map fields browses child properties recursively in memory from the cached document snapshot without extra Firestore read billing.
+  * Two-phase interaction: single-click expands the map branch; clicking an already expanded map opens the virtual JSON editor tab.
+  * Parent hierarchy navigation and tree reveal support back to parent maps or documents.
+- **Context-Aware "Add Nested Property..." on Map Fields (`ketrik-firestore-studio.addNestedProperty`)**:
+  * Dedicated nested property creation command and inline `$(add)` quick action icon on Map tree rows.
+  * Prompts for new property name with input validation and full type picker (String, Number, Boolean, Timestamp, GeoPoint, Map, Array, Custom JSON).
+  * Atomic Firestore writes via `docRef.update(new FieldPath(...segments), value)` without touching sibling map keys.
+- **Scoped "Delete Multiple Properties..." for Maps (`ketrik-firestore-studio.deleteMultipleFields`)**:
+  * Scoped QuickPick checklist displaying only the properties inside the selected map.
+  * Safe Mode warning and modal confirmation when system envelope (`_`) or protocol (`__`) keys are selected.
+  * Atomic multi-key deletions using `FieldValue.delete()` across all selected nested paths.
+- **Field Clipboard Parity ("Copy as JSON" & Nested Dotted Paths)**:
+  * Added **"Copy as JSON"** (`ketrik-firestore-studio.copyFieldJson`) to copy clean formatted JSON for any field value.
+  * Enhanced **"Copy Path"** (`ketrik-firestore-studio.copyPath`) to copy complete dot-delimited paths for nested fields (e.g. `users/123/address.street`) and enabled across all field item types.
+- **Arbitrary Dot-Delimited Path Support in Virtual File System & Local JSON**:
+  * Enhanced `DocumentFileSystemProvider` (`getNestedFieldValue`): `stat`, `readFile`, baseline hash conflict detection, and `writeFile` now resolve and mutate arbitrarily nested property paths via `new FieldPath(...segments)`.
+  * Enhanced `LocalJsonService` to support deep dotted path traversal and atomic mutations for offline JSON connections.
+
 ## [1.14.0] - 2026-10-19
 
 ### Added & Improved

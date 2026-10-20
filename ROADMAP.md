@@ -16,8 +16,9 @@ timeline
         2026-10-16 : v1.12.1 Table Loading Fixes & Pre-Flight Cost Estimator : v1.12.2 Cost Simulator, Capacity Modeler & CPU/Memory Optimizations
         2026-10-17 : v1.13.0 Cloud Storage Explorer, Vector Search, Schema Drift Analyzer & Auth Expansion
         2026-10-19 : v1.14.0 Box & Node Data Graph Canvas, Auth Table Floating Menu, Tree Field Actions & Cost UX
+        2026-10-20 : v1.15.0 Expandable Map Fields, Nested Property Mutations & Substrate Parity
     section Planned
-        Q4 2026 : v1.15.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
+        Q4 2026 : v1.16.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -47,7 +48,8 @@ timeline
 | **v1.12.2** | Shipped | 2026-10-16 | Interactive Cost Simulator dashboard, capacity modeling, comprehensive CPU & memory optimizations |
 | **v1.13.0** | Shipped | 2026-10-17 | Cloud Storage Explorer, Vector Search (kNN), Collection Schema Drift & Anomaly Analyzer, Firebase Auth Expansion & Document Auto-Reveal |
 | **v1.14.0** | Shipped | 2026-10-19 | Interactive Box & Node Data Graph Canvas, Auth Table Floating Menu (`⋯`), Document Tree Inline Field Actions, Responsive Cost & Quota UX |
-| **v1.15.0** | Planned | Q4 2026 | Cloud Functions Trigger Scanner & Simulator, In-Tree Badges (⚡), Live Functions Logs & Admin SDK Query Shell |
+| **v1.15.0** | Shipped | 2026-10-20 | Recursive expandable Map field nodes in Explorer Tree, context-aware nested property mutations, scoped multi-property deletions, field clipboard parity (Copy as JSON, nested dotted paths), arbitrary dot-delimited paths in virtual filesystem & Local JSON |
+| **v1.16.0** | Planned | Q4 2026 | Cloud Functions Trigger Scanner & Simulator, In-Tree Badges (⚡), Live Functions Logs & Admin SDK Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
 ---
@@ -412,7 +414,34 @@ timeline
 
 ---
 
-### [v1.15.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q4 2026)
+### [v1.15.0] — Expandable Map Fields, Nested Property Mutations & Clipboard Parity (Shipped: 2026-10-20)
+
+*Theme: Recursive Map field tree hierarchy, context-aware nested property mutations, scoped batch property deletion, full JSON clipboard parity, and dot-path virtual filesystem resolution.*
+
+* **Recursive Expandable Map Field Nodes in Explorer Tree**:
+  * Complex Map fields (`{ n keys }`) with `keyCount > 0` are now first-class collapsible tree items (`vscode.TreeItemCollapsibleState.Collapsed`). Empty objects (`{}`) remain non-collapsible (`None`).
+  * **Zero-Quota Browsing**: Expanding a Map field yields child `DocumentFieldItem` instances recursively without consuming any extra Firestore document reads (data is resolved in memory from the parent document snapshot).
+  * **Two-Phase Click Behavior**: When collapsed, clicking expands the branch; once expanded, single-clicking opens the field in the virtual JSON editor tab (`ketrik-firestore-studio://.../docPath.json?field=address`).
+  * **Parent Hierarchy Navigation**: Seamless tree reveal and `getParent` resolution back to the parent map or document node.
+* **Context-Aware "Add Nested Property..." on Map Fields**:
+  * Dedicated nested property creation command (`ketrik-firestore-studio.addNestedProperty`) targeting Map fields directly.
+  * Inline `$(add)` quick action button on Map field tree rows and context menu action.
+  * Prompts for new property name with input validation and full type picker (String, Number, Boolean, Timestamp, GeoPoint, Map, Array, Custom JSON).
+  * Atomic Firestore writes via `docRef.update(new FieldPath(...targetSegments), value)` without touching sibling map keys.
+* **Scoped "Delete Multiple Properties..." for Maps**:
+  * Context-aware batch property deletion (`ketrik-firestore-studio.deleteMultipleFields`): when invoked on a Map field, scopes the QuickPick checklist strictly to the properties inside that specific map.
+  * Safe Mode warnings and confirmation modal when system envelope (`_`) or protocol (`__`) keys are selected.
+  * Multi-key atomic Firestore deletion using `FieldValue.delete()` across all selected nested paths in a single write operation.
+* **Field Clipboard Parity ("Copy as JSON" & Nested Dotted Paths)**:
+  * Dedicated **"Copy as JSON"** command (`ketrik-firestore-studio.copyFieldJson`) on all field context menus, copying clean formatted JSON representation of field values to the clipboard.
+  * Enhanced **"Copy Path"** command (`ketrik-firestore-studio.copyPath`) to copy complete dot-delimited paths for nested fields (e.g. `users/123/address.street`) and enabled for all field types.
+* **Arbitrary Dot-Delimited Path Support in Virtual File System & Local JSON**:
+  * Enhanced `DocumentFileSystemProvider` (`getNestedFieldValue`): `stat`, `readFile`, baseline hash conflict detection, and `writeFile` now cleanly resolve and mutate arbitrarily nested property paths via `new FieldPath(...segments)`.
+  * Enhanced `LocalJsonService` to support deep dotted path traversal and atomic mutations for offline JSON connections.
+
+---
+
+### [v1.16.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q4 2026)
 
 *Theme: Deep Cloud Functions developer tooling, Firestore trigger simulation, live logging, and in-editor Admin SDK scratchpads.*
 

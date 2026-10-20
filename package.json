@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.14.0",
+  "version": "1.15.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -614,6 +614,18 @@
         "icon": "$(add)"
       },
       {
+        "command": "ketrik-firestore-studio.addNestedProperty",
+        "category": "Firestore Studio",
+        "title": "Add Nested Property...",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ketrik-firestore-studio.copyFieldJson",
+        "category": "Firestore Studio",
+        "title": "Copy as JSON",
+        "icon": "$(copy)"
+      },
+      {
         "command": "ketrik-firestore-studio.addCollection",
         "category": "Firestore Studio",
         "title": "Add Collection",
@@ -1196,7 +1208,7 @@
         },
         {
           "command": "ketrik-firestore-studio.copyPath",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'document' || viewItem == 'documentField')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'document' || viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "3_utility@1"
         },
         {
@@ -1275,9 +1287,14 @@
           "group": "inline@1"
         },
         {
+          "command": "ketrik-firestore-studio.addNestedProperty",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'documentFieldMap'",
+          "group": "inline@2"
+        },
+        {
           "command": "ketrik-firestore-studio.deleteField",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
-          "group": "inline@2"
+          "group": "inline@3"
         },
         {
           "command": "ketrik-firestore-studio.openFieldAsTable",
@@ -1296,8 +1313,18 @@
         },
         {
           "command": "ketrik-firestore-studio.addField",
-          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "1_actions@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.addNestedProperty",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'documentFieldMap'",
+          "group": "1_actions@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.copyFieldJson",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
+          "group": "1_actions@4a"
         },
         {
           "command": "ketrik-firestore-studio.pasteDocument",
@@ -1357,6 +1384,14 @@
         },
         {
           "command": "ketrik-firestore-studio.addField",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.addNestedProperty",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.copyFieldJson",
           "when": "false"
         },
         {

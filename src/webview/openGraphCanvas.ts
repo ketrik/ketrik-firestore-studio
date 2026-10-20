@@ -96,8 +96,11 @@ export async function openGraphCanvas(
   );
   activeGraphPanels.set(panelKey, panel);
 
+  let messageSub: vscode.Disposable | undefined;
+
   panel.onDidDispose(() => {
     activeGraphPanels.delete(panelKey);
+    messageSub?.dispose();
   });
 
   await vscode.window.withProgress(
@@ -121,7 +124,7 @@ export async function openGraphCanvas(
     }
   );
 
-  panel.webview.onDidReceiveMessage(async (msg) => {
+  messageSub = panel.webview.onDidReceiveMessage(async (msg) => {
     switch (msg.command) {
       case "openDocument":
         if (msg.path) {
@@ -151,7 +154,7 @@ export async function openGraphCanvas(
                 type: "nodeAdded",
                 node: result.node,
                 edges: result.edges,
-                sourcePath: rootPath,
+                sourcePath: msg.sourcePath || rootPath,
               });
             } else {
               vscode.window.showWarningMessage(`Referenced document '${msg.refPath}' not found.`);

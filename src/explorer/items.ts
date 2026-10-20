@@ -119,21 +119,54 @@ export class DocumentItem extends Item {
  */
 export class DocumentFieldItem extends Item {
   reference: DocumentReference;
+  public pathSegments: string[];
+  public parentFieldItem?: DocumentFieldItem;
+
+  get fullFieldPath(): string {
+    return this.pathSegments.join(".");
+  }
 
   constructor(
     public fieldName: string,
     public value: any,
     public parentDocRef: DocumentReference,
-    public connectionId: string
+    public connectionId: string,
+    pathSegments?: string[],
+    parentFieldItem?: DocumentFieldItem,
+    isExpanded: boolean = false
   ) {
-    super(fieldName, vscode.TreeItemCollapsibleState.None);
-    this.reference = parentDocRef;
+    const segments = pathSegments && pathSegments.length > 0 ? pathSegments : [fieldName];
+    const isTimestamp = value !== null && typeof value === "object" && isTimestampLike(value);
+    const isVector =
+      value &&
+      (value.constructor?.name === "VectorValue" ||
+        (Array.isArray(value._values) && typeof value.isEqual === "function") ||
+        (value.__type === "VectorValue" && Array.isArray(value.values)));
 
     const valType = Array.isArray(value)
       ? "array"
+      : isVector
+      ? "vector"
       : value === null
       ? "null"
       : typeof value;
+
+    const isMap = valType === "object" && !isTimestamp && !isVector;
+    const keyCount = isMap ? Object.keys(value || {}).length : 0;
+    const isCollapsible = isMap && keyCount > 0;
+
+    super(
+      fieldName,
+      isCollapsible
+        ? isExpanded
+          ? vscode.TreeItemCollapsibleState.Expanded
+          : vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None
+    );
+
+    this.reference = parentDocRef;
+    this.pathSegments = segments;
+    this.parentFieldItem = parentFieldItem;
 
     let icon = "symbol-variable";
     let iconColor: vscode.ThemeColor | undefined;
@@ -142,7 +175,6 @@ export class DocumentFieldItem extends Item {
     const isProtocol = fieldName.startsWith("__");
     const isEnvelope = fieldName.startsWith("_") && !isProtocol;
 
-    const isTimestamp = valType === "object" && isTimestampLike(value);
     const timestampDate = isTimestamp ? timestampToDate(value) : undefined;
 
     if (isTimestamp && timestampDate) {
@@ -153,6 +185,18 @@ export class DocumentFieldItem extends Item {
         ? new vscode.ThemeColor("charts.purple")
         : new vscode.ThemeColor("charts.blue");
       this.description = `${formatDateTime(timestampDate)} (${formatRelativeTime(timestampDate)})`;
+    } else if (isVector) {
+      icon = isProtocol ? "shield" : isEnvelope ? "tag" : "zap";
+      iconColor = isProtocol
+        ? new vscode.ThemeColor("charts.red")
+        : isEnvelope
+        ? new vscode.ThemeColor("charts.purple")
+        : new vscode.ThemeColor("charts.orange");
+      const dims =
+        typeof value.toArray === "function"
+          ? value.toArray().length
+          : value.values?.length || value._values?.length || 0;
+      this.description = `[Vector: ${dims} dims]`;
     } else if (valType === "object") {
       if (isProtocol) {
         icon = "shield";
@@ -164,7 +208,6 @@ export class DocumentFieldItem extends Item {
         icon = "symbol-namespace";
         iconColor = new vscode.ThemeColor("symbolIcon.namespaceForeground");
       }
-      const keyCount = Object.keys(value || {}).length;
       this.description = `{${keyCount} keys}`;
     } else if (valType === "array") {
       icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-array";
@@ -208,9 +251,11 @@ export class DocumentFieldItem extends Item {
       this.description = String(value);
     }
 
-    this.id = `${connectionId}:${parentDocRef.path}#${fieldName}`;
+    this.id = `${connectionId}:${parentDocRef.path}#${this.fullFieldPath}`;
     this.contextValue = isTimestamp
       ? "documentFieldTimestamp"
+      : isVector
+      ? "documentFieldVector"
       : valType === "object"
       ? "documentFieldMap"
       : valType === "array"
@@ -225,17 +270,29 @@ export class DocumentFieldItem extends Item {
     const typeLabel = isTimestamp ? "timestamp" : valType;
     if (isTimestamp && timestampDate) {
       const epochSec = Math.floor(timestampDate.getTime() / 1000);
-      this.tooltip = `Field: ${fieldName} (timestamp)${tierLabel}\nDate: ${timestampDate.toISOString()}\nLocal: ${formatDateTime(timestampDate)}\nEpoch Seconds: ${epochSec}\nDoc: ${parentDocRef.path}`;
+      this.tooltip = `Field: ${this.fullFieldPath} (timestamp)${tierLabel}\nDate: ${timestampDate.toISOString()}\nLocal: ${formatDateTime(timestampDate)}\nEpoch Seconds: ${epochSec}\nDoc: ${parentDocRef.path}`;
     } else {
-      this.tooltip = `Field: ${fieldName} (${typeLabel})${tierLabel}\nDoc: ${parentDocRef.path}`;
+      this.tooltip = `Field: ${this.fullFieldPath} (${typeLabel})${tierLabel}\nDoc: ${parentDocRef.path}`;
     }
     this.iconPath = new vscode.ThemeIcon(icon, iconColor);
 
-    this.command = {
-      command: "ketrik-firestore-studio.openField",
-      title: "Open Field",
-      arguments: [this],
-    };
+    if (isCollapsible) {
+      if (isExpanded) {
+        this.command = {
+          command: "ketrik-firestore-studio.openFieldInEditor",
+          title: "Open in Editor",
+          arguments: [this],
+        };
+      } else {
+        this.command = undefined;
+      }
+    } else {
+      this.command = {
+        command: "ketrik-firestore-studio.openField",
+        title: "Open Field",
+        arguments: [this],
+      };
+    }
   }
 }
 

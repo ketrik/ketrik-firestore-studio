@@ -284,6 +284,31 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   }
 
   /**
+   * Helper to retrieve value at a dot-delimited field path from an object data hierarchy.
+   */
+  private getNestedFieldValue(data: any, fieldPath: string): { found: boolean; value: any } {
+    if (!data || typeof data !== "object") {
+      return { found: false, value: undefined };
+    }
+    if (fieldPath in data) {
+      return { found: true, value: data[fieldPath] };
+    }
+    if (fieldPath.includes(".")) {
+      const parts = fieldPath.split(".");
+      let cur = data;
+      for (const p of parts) {
+        if (cur && typeof cur === "object" && p in cur) {
+          cur = cur[p];
+        } else {
+          return { found: false, value: undefined };
+        }
+      }
+      return { found: true, value: cur };
+    }
+    return { found: false, value: undefined };
+  }
+
+  /**
    * Return document (or field) metadata. Confirms whether the document/field exists.
    */
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
@@ -307,7 +332,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       if (!localDoc) {
         throw vscode.FileSystemError.FileNotFound(uri);
       }
-      if (fieldPath !== undefined && !(fieldPath in localDoc)) {
+      if (fieldPath !== undefined && !this.getNestedFieldValue(localDoc, fieldPath).found) {
         throw vscode.FileSystemError.FileNotFound(uri);
       }
       return {
@@ -326,7 +351,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
 
     if (fieldPath !== undefined) {
       const data = doc.data();
-      if (!data || !(fieldPath in data)) {
+      if (!data || !this.getNestedFieldValue(data, fieldPath).found) {
         throw vscode.FileSystemError.FileNotFound(uri);
       }
     }
@@ -364,9 +389,13 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       if (!localDoc) {
         throw vscode.FileSystemError.FileNotFound(uri);
       }
-      const data = fieldPath !== undefined ? localDoc[fieldPath] : localDoc;
-      if (fieldPath !== undefined && !(fieldPath in localDoc)) {
-        throw vscode.FileSystemError.FileNotFound(uri);
+      let data = localDoc;
+      if (fieldPath !== undefined) {
+        const nested = this.getNestedFieldValue(localDoc, fieldPath);
+        if (!nested.found) {
+          throw vscode.FileSystemError.FileNotFound(uri);
+        }
+        data = nested.value;
       }
       const bytes = this.serializeDoc(data);
       this.rememberBaseline(uri, undefined, bytes);
@@ -381,10 +410,11 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
 
     const data = doc.data() ?? {};
     if (fieldPath !== undefined) {
-      if (!(fieldPath in data)) {
+      const nested = this.getNestedFieldValue(data, fieldPath);
+      if (!nested.found) {
         throw vscode.FileSystemError.FileNotFound(uri);
       }
-      const bytes = this.serializeDoc(data[fieldPath]);
+      const bytes = this.serializeDoc(nested.value);
       this.rememberBaseline(uri, doc.updateTime, bytes);
       return bytes;
     }
@@ -438,10 +468,10 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     if (fresh.exists && fieldPath !== undefined) {
       // Field-level edit: ignore changes to other fields.
       const data = fresh.data() ?? {};
-      const freshHash =
-        fieldPath in data
-          ? createHash("sha1").update(this.serializeDoc(data[fieldPath])).digest("hex")
-          : "";
+      const nested = this.getNestedFieldValue(data, fieldPath);
+      const freshHash = nested.found
+        ? createHash("sha1").update(this.serializeDoc(nested.value)).digest("hex")
+        : "";
       if (freshHash === baseline.hash) {
         return;
       }
@@ -533,8 +563,9 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     try {
       let writeTime: import("firebase-admin/firestore").Timestamp;
       if (fieldPath !== undefined) {
-        // Atomic partial update: only update the targeted root field using FieldPath to handle dots safely
-        writeTime = (await firestore.doc(docPath).update(new FieldPath(fieldPath), json)).writeTime;
+        // Atomic partial update: only update the targeted field using FieldPath segments to handle nested paths safely
+        const segments = fieldPath.includes(".") ? fieldPath.split(".") : [fieldPath];
+        writeTime = (await firestore.doc(docPath).update(new FieldPath(...segments), json)).writeTime;
       } else {
         writeTime = (await firestore.doc(docPath).set(json)).writeTime;
       }
