@@ -1113,3 +1113,79 @@ export async function copyFieldJsonCommand(item: DocumentFieldItem) {
   await vscode.env.clipboard.writeText(text);
   vscode.window.showInformationMessage(`Copied JSON for '${item.fullFieldPath || item.fieldName}' to clipboard!`);
 }
+
+/**
+ * Duplicate a field or nested property under a new name.
+ */
+export async function duplicateFieldCommand(
+  item: DocumentFieldItem,
+  explorerDataProvider: ExplorerDataProvider
+) {
+  if (!item?.parentDocRef || !item?.fieldName) {
+    return;
+  }
+
+  const currentSegments =
+    item.pathSegments && item.pathSegments.length > 0
+      ? item.pathSegments
+      : [item.fieldName];
+  const parentSegments = currentSegments.slice(0, -1);
+  const oldPathStr = currentSegments.join(".");
+
+  const defaultNewName = `${item.fieldName}_copy`;
+  const newName = await vscode.window.showInputBox({
+    prompt: `Duplicate field '${oldPathStr}' as`,
+    value: defaultNewName,
+    validateInput: (v) => {
+      const trimmed = v.trim();
+      if (!trimmed) {
+        return "Field name cannot be empty";
+      }
+      if (trimmed === item.fieldName) {
+        return "New field name must be different from original";
+      }
+      if (trimmed.includes("/")) {
+        return "Field name cannot contain '/'";
+      }
+      return undefined;
+    },
+  });
+
+  if (!newName || newName.trim() === item.fieldName) {
+    return;
+  }
+
+  const targetName = newName.trim();
+  const targetSegments = [...parentSegments, targetName];
+  const newPathStr = targetSegments.join(".");
+
+  try {
+    const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+    let valToClone = item.value;
+    if (valToClone !== null && typeof valToClone === "object" && !isTimestampLike(valToClone)) {
+      try {
+        valToClone = JSON.parse(JSON.stringify(valToClone));
+      } catch {}
+    }
+
+    if (conn?.isLocalJson) {
+      LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, newPathStr, valToClone);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+      vscode.window.showInformationMessage(`Duplicated '${oldPathStr}' to '${newPathStr}'!`);
+      const refreshTarget = item.parentFieldItem || item;
+      explorerDataProvider.refreshNode(refreshTarget);
+      return;
+    }
+
+    await item.parentDocRef.update(new FieldPath(...targetSegments), valToClone);
+    if (item.connectionId) {
+      CostService.getInstance().recordOperation(item.connectionId, "write", 1);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+    }
+    vscode.window.showInformationMessage(`Duplicated '${oldPathStr}' to '${newPathStr}'!`);
+    const refreshTarget = item.parentFieldItem || item;
+    explorerDataProvider.refreshNode(refreshTarget);
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to duplicate field: ${err.message}`);
+  }
+}

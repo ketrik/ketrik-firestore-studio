@@ -393,5 +393,47 @@ export function getSharedTableStyles(): string {
       margin: 0;
       font-size: 0.9em;
     }
+    .cell-input {
+      width: 100%;
+      padding: 3px 6px;
+      font-size: 0.9em;
+      font-family: inherit;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-focusBorder);
+      outline: none;
+      border-radius: 2px;
+    }
+    td.editing {
+      padding: 2px 4px !important;
+      background: var(--vscode-editor-background) !important;
+    }
+    td.selected {
+      outline: 2px solid var(--vscode-focusBorder);
+      outline-offset: -2px;
+    }
+    .row-action-btn {
+      opacity: 0.7;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 3px 6px;
+      border-radius: 3px;
+      color: var(--vscode-editor-foreground);
+      font-size: 1.05em;
+      transition: opacity 0.15s ease, background 0.15s ease;
+    }
+    .row-action-btn:hover {
+      opacity: 1;
+      background: rgba(231, 76, 60, 0.2);
+      color: #e74c3c;
+    }
+    .flash-update {
+      animation: cellFlash 1.2s ease-out;
+    }
+    @keyframes cellFlash {
+      0% { background-color: rgba(46, 204, 113, 0.4); }
+      100% { background-color: transparent; }
+    }
   `;
 }

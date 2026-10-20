@@ -16,7 +16,7 @@ timeline
         2026-10-16 : v1.12.1 Table Loading Fixes & Pre-Flight Cost Estimator : v1.12.2 Cost Simulator, Capacity Modeler & CPU/Memory Optimizations
         2026-10-17 : v1.13.0 Cloud Storage Explorer, Vector Search, Schema Drift Analyzer & Auth Expansion
         2026-10-19 : v1.14.0 Box & Node Data Graph Canvas, Auth Table Floating Menu, Tree Field Actions & Cost UX
-        2026-10-20 : v1.15.0 Expandable Map Fields, Nested Property Mutations & Substrate Parity
+        2026-10-20 : v1.15.0 Expandable Map Fields, Nested Property Mutations & Substrate Parity : v1.15.1 Field Table In-Place Editing, Row Mutations & Duplicate Field
     section Planned
         Q4 2026 : v1.16.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
@@ -49,6 +49,7 @@ timeline
 | **v1.13.0** | Shipped | 2026-10-17 | Cloud Storage Explorer, Vector Search (kNN), Collection Schema Drift & Anomaly Analyzer, Firebase Auth Expansion & Document Auto-Reveal |
 | **v1.14.0** | Shipped | 2026-10-19 | Interactive Box & Node Data Graph Canvas, Auth Table Floating Menu (`⋯`), Document Tree Inline Field Actions, Responsive Cost & Quota UX |
 | **v1.15.0** | Shipped | 2026-10-20 | Recursive expandable Map field nodes in Explorer Tree, context-aware nested property mutations, scoped multi-property deletions, field clipboard parity (Copy as JSON, nested dotted paths), arbitrary dot-delimited paths in virtual filesystem & Local JSON |
+| **v1.15.1** | Shipped | 2026-10-20 | Field Table in-place spreadsheet cell editing, row entry addition & deletion, Duplicate Field command (`ketrik-firestore-studio.duplicateField`), and shared webview table styles |
 | **v1.16.0** | Planned | Q4 2026 | Cloud Functions Trigger Scanner & Simulator, In-Tree Badges (⚡), Live Functions Logs & Admin SDK Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
@@ -438,6 +439,26 @@ timeline
 * **Arbitrary Dot-Delimited Path Support in Virtual File System & Local JSON**:
   * Enhanced `DocumentFileSystemProvider` (`getNestedFieldValue`): `stat`, `readFile`, baseline hash conflict detection, and `writeFile` now cleanly resolve and mutate arbitrarily nested property paths via `new FieldPath(...segments)`.
   * Enhanced `LocalJsonService` to support deep dotted path traversal and atomic mutations for offline JSON connections.
+
+---
+
+### [v1.15.1] — Field Table In-Place Editing, Row Mutations & Duplicate Field (Shipped: 2026-10-20)
+
+*Theme: Spreadsheet in-place editing for Map/Array tables, row entry additions/deletions, and field duplication.*
+
+* **Field Table In-Place Spreadsheet Editing**:
+  * Double-click or Enter/F2 on scalar cells (strings, numbers, booleans, timestamps, nulls) in `openFieldAsTable` to edit values directly in place.
+  * Type-safe inputs with boolean dropdowns, number validation, and optimistic `.flash-update` animation.
+  * Atomic Firestore partial writes via `FieldPath(...segments, rowId, field)` for Maps and in-memory element replacement for Arrays with live `invalidateAndNotify` cache syncing.
+* **Field Table Entry Addition (`➕ Add Entry`)**:
+  * Dedicated toolbar action in Field Table to add new keyed properties to Maps or append elements to Arrays.
+  * Interactive type picker (String, Number, Boolean, Timestamp, Object, Array, Custom JSON) with input validation.
+* **Field Table Row Deletion (`🗑️ Delete Entry`)**:
+  * Per-row action button (`🗑️`) with confirmation dialog.
+  * Atomically deletes Map keys via `FieldValue.delete()` or splices Array elements by index.
+* **Duplicate Field Command (`ketrik-firestore-studio.duplicateField`)**:
+  * Right-click any field or nested property in the Explorer Tree to clone it under a new key.
+  * Automatic collision checking, custom name prompt, and atomic write-back.
 
 ---
 

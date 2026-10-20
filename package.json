@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.15.0",
+  "version": "1.15.1",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -624,6 +624,12 @@
         "category": "Firestore Studio",
         "title": "Copy as JSON",
         "icon": "$(copy)"
+      },
+      {
+        "command": "ketrik-firestore-studio.duplicateField",
+        "category": "Firestore Studio",
+        "title": "Duplicate Field...",
+        "icon": "$(repo-forked)"
       },
       {
         "command": "ketrik-firestore-studio.addCollection",
@@ -1312,6 +1318,11 @@
           "group": "1_actions@3"
         },
         {
+          "command": "ketrik-firestore-studio.duplicateField",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
+          "group": "1_actions@3a"
+        },
+        {
           "command": "ketrik-firestore-studio.addField",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "1_actions@4"
@@ -1392,6 +1403,10 @@
         },
         {
           "command": "ketrik-firestore-studio.copyFieldJson",
+          "when": "false"
+        },
+        {
+          "command": "ketrik-firestore-studio.duplicateField",
           "when": "false"
         },
         {

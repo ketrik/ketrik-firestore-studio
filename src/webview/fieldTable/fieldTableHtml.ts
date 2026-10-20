@@ -34,6 +34,9 @@ export function getFieldTableHtml(params: {
           <span class="badge" title="Connection ID">${connectionId}</span>
         </div>
         <div class="toolbar-actions" id="toolbarActions">
+          <button id="addEntryBtn" class="primary toggle-btn" title="Add a new entry to this field">
+            <span>➕</span> Add Entry
+          </button>
           <button id="toggleProtoBtn" class="secondary toggle-btn" title="Toggle visibility of Operational Protocol (__) columns" style="display:none;">
             <span>🛡️</span> __ Protocol
           </button>
@@ -89,7 +92,7 @@ export function getFieldTableHtml(params: {
             — (Filtered)
           </span>
         </div>
-        <div>Click any row or 'Edit JSON' to edit in VS Code</div>
+        <div>Double-click any cell to edit | Click row ID to open in VS Code</div>
       </div>
       <div class="table-container">
         <table>
@@ -197,12 +200,25 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
 
       function renderHeaderRow(headers) {
         return '<th class="id-header">${rowIdHeader}</th>' +
-          headers.map(h => renderHeaderCell(h)).join('');
+          headers.map(h => renderHeaderCell(h)).join('') +
+          '<th class="sticky-actions" style="width: 70px; text-align: center;">Actions</th>';
       }
 
       function reRenderCurrentTable() {
         document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
         document.getElementById('table-body').innerHTML = renderRows(currentRows, currentHeaders);
+      }
+
+      function getValType(val) {
+        if (val === null || val === undefined) return 'null';
+        if (typeof val === 'boolean') return 'boolean';
+        if (typeof val === 'number') return 'number';
+        if (typeof val === 'object') {
+          if (val._seconds !== undefined && val._nanoseconds !== undefined) return 'timestamp';
+          if (Array.isArray(val)) return 'array';
+          return 'object';
+        }
+        return 'string';
       }
 
       function formatCell(value) {
@@ -227,6 +243,7 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
       function renderRows(rows, headers) {
         return rows.map(row => {
           const rowId = row.__id || '';
+          const rowIndex = row.__index !== undefined ? row.__index : '';
           const lc = computeLifecycleStatus(row, simulatedTime);
           const pillHtml = lc
             ? '<span class="lifecycle-pill ' + lc.cls + '" title="Virtual Status: ' + lc.label + '">' + lc.icon + ' ' + lc.label + '</span>'
@@ -239,11 +256,17 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
           const dataCells = headers.map(h => {
             const isProto = h.startsWith('__');
             const isEnv = h.startsWith('_') && !isProto;
-            const tdCls = isProto ? ' class="col-proto"' : isEnv ? ' class="col-env"' : '';
-            return '<td' + tdCls + '>' + formatCell(row[h]) + '</td>';
+            const tdCls = isProto ? 'col-proto' : isEnv ? 'col-env' : '';
+            const val = row[h];
+            const type = getValType(val);
+            return '<td class="' + tdCls + ' editable-cell" data-field="' + escapeHtml(h) + '" data-type="' + type + '" data-row-id="' + escapeHtml(rowId) + '" data-index="' + rowIndex + '" title="Double-click to edit">' + formatCell(val) + '</td>';
           }).join('');
 
-          return '<tr data-id="' + escapeHtml(rowId) + '">' + idCell + dataCells + '</tr>';
+          const actionsCell = '<td class="sticky-actions" style="text-align: center;">' +
+            '<button class="row-action-btn delete-btn" title="Delete entry \'' + escapeHtml(rowId) + '\'" data-row-id="' + escapeHtml(rowId) + '" data-index="' + rowIndex + '">🗑️</button>' +
+            '</td>';
+
+          return '<tr data-id="' + escapeHtml(rowId) + '" data-index="' + rowIndex + '">' + idCell + dataCells + actionsCell + '</tr>';
         }).join('');
       }
 
@@ -386,6 +409,29 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
           document.getElementById('searchInput').value = '';
           updateEmptyState(allRows.length);
         }
+
+        if (msg.type === 'fieldEntryUpdated') {
+          const { rowId, field, value } = msg;
+          const target = allRows.find(r => String(r.__id) === String(rowId));
+          if (target) {
+            target[field] = value;
+          }
+          const tr = document.querySelector('tr[data-id="' + CSS.escape(String(rowId)) + '"]');
+          if (tr) {
+            const td = tr.querySelector('td[data-field="' + CSS.escape(String(field)) + '"]');
+            if (td) {
+              td.innerHTML = formatCell(value);
+              td.classList.add('flash-update');
+              setTimeout(() => td.classList.remove('flash-update'), 1500);
+            }
+          }
+        }
+
+        if (msg.type === 'fieldEntryDeleted') {
+          const { rowId } = msg;
+          allRows = allRows.filter(r => String(r.__id) !== String(rowId));
+          filterCurrentRows();
+        }
       });
 
       const tableEl = document.querySelector('table');
@@ -481,9 +527,189 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         vscode.postMessage({ command: 'openParentDoc' });
       };
 
+      let selectedCell = null;
+      let activeEditingCell = null;
+
+      function clearSelectedCell() {
+        if (selectedCell) {
+          selectedCell.classList.remove('selected');
+          selectedCell = null;
+        }
+      }
+
+      function startCellEdit(td) {
+        if (!td || activeEditingCell) return;
+        const field = td.getAttribute('data-field');
+        const type = td.getAttribute('data-type');
+        const rowId = td.getAttribute('data-row-id');
+        const rowIndex = td.getAttribute('data-index');
+        if (!field || !rowId) return;
+
+        if (type === 'object' || type === 'array') {
+          vscode.postMessage({ command: 'openFieldInEditor' });
+          return;
+        }
+
+        const row = allRows.find(r => String(r.__id) === String(rowId));
+        const originalVal = row ? row[field] : undefined;
+
+        activeEditingCell = td;
+        td.classList.add('editing');
+
+        if (type === 'boolean') {
+          const currentBool = originalVal === true;
+          const select = document.createElement('select');
+          select.className = 'cell-input';
+          const optTrue = document.createElement('option');
+          optTrue.value = 'true';
+          optTrue.textContent = 'true';
+          optTrue.selected = currentBool;
+          const optFalse = document.createElement('option');
+          optFalse.value = 'false';
+          optFalse.textContent = 'false';
+          optFalse.selected = !currentBool;
+          select.appendChild(optTrue);
+          select.appendChild(optFalse);
+
+          td.innerHTML = '';
+          td.appendChild(select);
+          select.focus();
+
+          function commitBool() {
+            const newVal = select.value === 'true';
+            finishEdit(newVal);
+          }
+          select.onchange = commitBool;
+          select.onblur = commitBool;
+          select.onkeydown = function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); commitBool(); }
+            if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+          };
+          return;
+        }
+
+        const input = document.createElement('input');
+        input.type = type === 'number' ? 'number' : 'text';
+        if (type === 'number') input.step = 'any';
+        input.className = 'cell-input';
+        input.value = originalVal !== null && originalVal !== undefined ? String(originalVal) : '';
+
+        td.innerHTML = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+
+        let isDone = false;
+        function finishEdit(forcedVal) {
+          if (isDone) return;
+          isDone = true;
+          activeEditingCell = null;
+          td.classList.remove('editing');
+
+          let newVal;
+          if (forcedVal !== undefined) {
+            newVal = forcedVal;
+          } else {
+            const raw = input.value.trim();
+            if (raw === '' && type !== 'string') {
+              newVal = null;
+            } else if (raw === 'null') {
+              newVal = null;
+            } else if (raw === 'true') {
+              newVal = true;
+            } else if (raw === 'false') {
+              newVal = false;
+            } else if (type === 'number' || (!isNaN(Number(raw)) && raw !== '' && (type !== 'string' || !isNaN(Number(raw))))) {
+              newVal = Number(raw);
+            } else {
+              newVal = input.value;
+            }
+          }
+
+          if (newVal === originalVal) {
+            td.innerHTML = formatCell(originalVal);
+            return;
+          }
+
+          td.innerHTML = formatCell(newVal);
+          vscode.postMessage({
+            command: 'updateFieldEntry',
+            rowId,
+            field,
+            value: newVal,
+            index: rowIndex !== '' ? Number(rowIndex) : undefined
+          });
+        }
+
+        function cancelEdit() {
+          if (isDone) return;
+          isDone = true;
+          activeEditingCell = null;
+          td.classList.remove('editing');
+          td.innerHTML = formatCell(originalVal);
+        }
+
+        input.onblur = function() { finishEdit(); };
+        input.onkeydown = function(e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            finishEdit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelEdit();
+          }
+        };
+      }
+
       document.getElementById('table-body').addEventListener('click', function(event) {
-        vscode.postMessage({ command: 'openFieldInEditor' });
+        const delBtn = event.target.closest('.delete-btn');
+        if (delBtn) {
+          event.stopPropagation();
+          const rowId = delBtn.getAttribute('data-row-id');
+          const idxStr = delBtn.getAttribute('data-index');
+          vscode.postMessage({
+            command: 'deleteFieldEntry',
+            rowId,
+            index: idxStr !== '' ? Number(idxStr) : undefined
+          });
+          return;
+        }
+
+        const td = event.target.closest('.editable-cell');
+        if (td) {
+          clearSelectedCell();
+          selectedCell = td;
+          td.classList.add('selected');
+          return;
+        }
+
+        const rowIdCell = event.target.closest('.row-id-cell');
+        if (rowIdCell) {
+          vscode.postMessage({ command: 'openFieldInEditor' });
+        }
       });
+
+      document.getElementById('table-body').addEventListener('dblclick', function(event) {
+        const td = event.target.closest('.editable-cell');
+        if (td) {
+          startCellEdit(td);
+        }
+      });
+
+      document.addEventListener('keydown', function(event) {
+        if (!selectedCell || activeEditingCell) return;
+        if (event.key === 'Enter' || event.key === 'F2') {
+          event.preventDefault();
+          startCellEdit(selectedCell);
+        }
+      });
+
+      const addEntryBtn = document.getElementById('addEntryBtn');
+      if (addEntryBtn) {
+        addEntryBtn.onclick = function() {
+          vscode.postMessage({ command: 'addFieldEntry' });
+        };
+      }
 
       document.getElementById('searchInput').addEventListener('keydown', function(event) {
         if (event.key === 'Enter') {

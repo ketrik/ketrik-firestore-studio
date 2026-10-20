@@ -106,3 +106,40 @@ export function filterObjects(items: any[], searchTerm: string, excludedKeys: st
   });
 }
 
+/**
+ * Recursively sanitize Firestore values for JSON serialization in table webviews.
+ */
+export function sanitizeFirestoreValue(val: any): any {
+  if (val === null || val === undefined) return val;
+  if (typeof val !== "object") return val;
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val._seconds === "number" && typeof val._nanoseconds === "number") {
+    return { _seconds: val._seconds, _nanoseconds: val._nanoseconds };
+  }
+  if (typeof val._latitude === "number" && typeof val._longitude === "number") {
+    return { _latitude: val._latitude, _longitude: val._longitude };
+  }
+  if (typeof val.path === "string" && (val._firestore || val.constructor?.name === "DocumentReference")) {
+    return `[Ref: ${val.path}]`;
+  }
+  if (Buffer.isBuffer(val) || val instanceof Uint8Array) {
+    return `[Blob: ${val.length} bytes]`;
+  }
+  if (val.constructor?.name === "VectorValue" || (Array.isArray(val._values) && typeof val.isEqual === "function")) {
+    const arr = typeof val.toArray === "function" ? val.toArray() : val._values;
+    return {
+      __type: "VectorValue",
+      values: arr,
+      dimensions: arr.length,
+    };
+  }
+  if (Array.isArray(val)) {
+    return val.map(sanitizeFirestoreValue);
+  }
+  const result: Record<string, any> = {};
+  for (const k of Object.keys(val)) {
+    result[k] = sanitizeFirestoreValue(val[k]);
+  }
+  return result;
+}
+

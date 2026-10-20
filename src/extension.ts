@@ -27,6 +27,7 @@ import {
   addFieldCommand,
   addNestedPropertyCommand,
   copyFieldJsonCommand,
+  duplicateFieldCommand,
 } from "./commands/fieldCommands";
 import {
   openCollectionAsTableCommand,
@@ -515,6 +516,11 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.copyFieldJson",
       (item: DocumentFieldItem) =>
         copyFieldJsonCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.duplicateField",
+      (item: DocumentFieldItem) =>
+        duplicateFieldCommand(item, explorerDataProvider)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.explodeField",

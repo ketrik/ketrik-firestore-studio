@@ -2,6 +2,23 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.15.1] - 2026-10-20
+
+### Added & Improved
+- **Field Table In-Place Spreadsheet Cell Editing (`openFieldAsTable`)**:
+  * Double-click or press `Enter`/`F2` on any scalar cell (string, number, boolean, timestamp, null) in Map and Array tables to edit in place.
+  * Type-safe inputs with boolean dropdowns, numeric validation, and optimistic `.flash-update` styling.
+  * Atomic Firestore writes via `FieldPath(...segments, rowId, field)` for Maps and in-memory element updates for Arrays with live `invalidateAndNotify` cache syncing.
+- **Field Table Entry Addition (`➕ Add Entry`)**:
+  * Dedicated toolbar action in Map and Array table views to add new properties or elements.
+  * Full interactive type picker (String, Number, Boolean, Timestamp, Object, Array, Custom JSON) with validation.
+- **Field Table Row Deletion (`🗑️ Delete Entry`)**:
+  * Per-row action button (`🗑️`) with confirmation dialog.
+  * Atomically deletes Map keys via `FieldValue.delete()` or splices Array elements by index.
+- **Duplicate Field Command (`ketrik-firestore-studio.duplicateField`)**:
+  * Clone any document field or nested property directly from the Explorer Tree context menu.
+  * Key collision checks, custom name prompt, and atomic write-back via `new FieldPath(...targetSegments)`.
+
 ## [1.15.0] - 2026-10-20
 
 ### Added & Improved

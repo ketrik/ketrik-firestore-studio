@@ -1,7 +1,7 @@
 # Ketrik Firestore Studio
 
 [![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Code-Extension-007acc?style=flat-square&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=ketrik.ketrik-firestore-studio)
-[![Version](https://img.shields.io/badge/Release-v1.15.0-2ecc71?style=flat-square)](ROADMAP.md)
+[![Version](https://img.shields.io/badge/Release-v1.15.1-2ecc71?style=flat-square)](ROADMAP.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 The definitive, enterprise-grade Visual Studio Code extension for exploring, querying, mutating, and managing **Google Cloud Firestore**, **Firebase Authentication**, **Security Rules**, and **Local Emulators** directly inside your IDE.
