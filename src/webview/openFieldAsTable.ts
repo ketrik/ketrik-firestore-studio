@@ -49,6 +49,44 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
   activeFieldPanels.set(panelKey, panel);
 
   let rawData = item.value;
+  // If item.value is undefined or needs fresh data from parent doc, fetch snapshot
+  if (rawData === undefined && item.parentDocRef) {
+    try {
+      const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+      if (conn?.isLocalJson) {
+        const localDoc = LocalJsonService.getInstance().getDocument(conn, item.parentDocRef.path);
+        if (localDoc) {
+          let cur: any = localDoc;
+          for (const seg of fieldSegments) {
+            if (cur && typeof cur === "object" && seg in cur) {
+              cur = cur[seg];
+            } else {
+              cur = undefined;
+              break;
+            }
+          }
+          rawData = cur;
+        }
+      } else {
+        const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
+        const docSnap = await firestore.doc(item.parentDocRef.path).get();
+        if (docSnap.exists) {
+          const docData = docSnap.data() || {};
+          let cur: any = docData;
+          for (const seg of fieldSegments) {
+            if (cur && typeof cur === "object" && seg in cur) {
+              cur = cur[seg];
+            } else {
+              cur = undefined;
+              break;
+            }
+          }
+          rawData = cur;
+        }
+      }
+    } catch {}
+  }
+
   let rows: any[] = [];
   let headers: string[] = [];
 
@@ -112,6 +150,11 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
       });
     }
 
+    // Fallback: If rows exist but no properties were found (e.g. array of empty objects [{}]), add a placeholder header
+    if (parsedRows.length > 0 && headerSet.size === 0) {
+      headerSet.add("value");
+    }
+
     return {
       rows: parsedRows,
       headers: sortHeaders(Array.from(headerSet)),
@@ -121,14 +164,6 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
   const parsed = parseRows(rawData);
   rows = parsed.rows;
   headers = parsed.headers;
-
-  panel.webview.html = getFieldTableHtml({
-    panelTitle,
-    fieldName: targetFieldPath,
-    connectionId: item.connectionId,
-    docPath: item.parentDocRef.path,
-    isArray,
-  });
 
   const messageSubscription = panel.webview.onDidReceiveMessage(async (message) => {
     if (message.command === "ready" || message.command === "clearSearch") {
@@ -473,6 +508,21 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
       }
       return;
     }
+  });
+
+  panel.webview.html = getFieldTableHtml({
+    panelTitle,
+    fieldName: targetFieldPath,
+    connectionId: item.connectionId,
+    docPath: item.parentDocRef.path,
+    isArray,
+  });
+
+  // Immediate postMessage fallback in case client is already active
+  panel.webview.postMessage({
+    type: "init",
+    headers,
+    rows,
   });
 
   panel.onDidDispose(() => {

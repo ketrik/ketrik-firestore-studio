@@ -18,7 +18,7 @@ timeline
         2026-10-19 : v1.14.0 Box & Node Data Graph Canvas, Auth Table Floating Menu, Tree Field Actions & Cost UX
         2026-10-20 : v1.15.0 Expandable Map Fields, Nested Property Mutations & Substrate Parity : v1.15.1 Field Table In-Place Editing, Row Mutations & Duplicate Field
     section Planned
-        Q4 2026 : v1.16.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
+        Q4 2026 : v1.16.0 Studio Overview Dashboard & Traffic Analytics Suite : v1.17.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -50,7 +50,8 @@ timeline
 | **v1.14.0** | Shipped | 2026-10-19 | Interactive Box & Node Data Graph Canvas, Auth Table Floating Menu (`⋯`), Document Tree Inline Field Actions, Responsive Cost & Quota UX |
 | **v1.15.0** | Shipped | 2026-10-20 | Recursive expandable Map field nodes in Explorer Tree, context-aware nested property mutations, scoped multi-property deletions, field clipboard parity (Copy as JSON, nested dotted paths), arbitrary dot-delimited paths in virtual filesystem & Local JSON |
 | **v1.15.1** | Shipped | 2026-10-20 | Field Table in-place spreadsheet cell editing, row entry addition & deletion, Duplicate Field command (`ketrik-firestore-studio.duplicateField`), and shared webview table styles |
-| **v1.16.0** | Planned | Q4 2026 | Cloud Functions Trigger Scanner & Simulator, In-Tree Badges (⚡), Live Functions Logs & Admin SDK Query Shell |
+| **v1.16.0** | Planned | Q4 2026 | Unified Studio Overview Dashboard, Database & User Insights, Network & Traffic Analytics Suite |
+| **v1.17.0** | Planned | Q4 2026 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
 ---
@@ -462,7 +463,29 @@ timeline
 
 ---
 
-### [v1.16.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q4 2026)
+### [v1.16.0] — Studio Overview Dashboard & Traffic Analytics Suite (Target: Q4 2026)
+
+*Theme: Unified database & user insights, network traffic & throughput monitoring, and operational dashboards.*
+
+* **Unified Studio Overview & Insights Dashboard (`ketrik-firestore-studio.openOverviewDashboard`)**:
+  * **Database & Collection Breakdown**:
+    * Total collection count, document counts via server-side `count()` aggregations, and estimated dataset storage volume.
+    * Top 5 largest collections by document volume with 1-click jump to Table View.
+  * **Network & Traffic Analytics Suite**:
+    * **Throughput & Operations**: Interactive time-series charts showing hourly and 7-day/30-day reads, writes, and deletes.
+    * **Bandwidth & Payload Size**: Sent bytes (egress) vs. received bytes (ingress) over time to spot oversized documents or query payload spikes (`firestore.googleapis.com/network/sent_bytes_count`).
+    * **Real-Time Client Connections**: Active real-time listeners (`onSnapshot`) tracking client load (`firestore.googleapis.com/listen/realtime_connections_count`).
+    * **Security Rule Traffic**: Allowed vs. Denied rule evaluation traffic ratio (`firestore.googleapis.com/rules/evaluation_count`).
+    * **Multi-Source Fallback**: Automatically pulls from Google Cloud Monitoring API, Local Emulator telemetry ports, or active Studio session accounting with zero disruption.
+  * **Firebase Auth & Growth Insights**:
+    * Total registered users, 7-day sign-in frequency, and unverified vs. verified accounts.
+    * Provider distribution breakdown (Email/Password, Google, Apple, Anonymous, Phone).
+  * **Storage & Quota Gauges**:
+    * Visual sparklines comparing current daily burn rate against Spark (Free) allowances and Blaze thresholds.
+
+---
+
+### [v1.17.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q4 2026)
 
 *Theme: Deep Cloud Functions developer tooling, Firestore trigger simulation, live logging, and in-editor Admin SDK scratchpads.*
 
