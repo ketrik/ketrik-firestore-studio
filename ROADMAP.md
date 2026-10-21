@@ -17,8 +17,9 @@ timeline
         2026-10-17 : v1.13.0 Cloud Storage Explorer, Vector Search, Schema Drift Analyzer & Auth Expansion
         2026-10-19 : v1.14.0 Box & Node Data Graph Canvas, Auth Table Floating Menu, Tree Field Actions & Cost UX
         2026-10-20 : v1.15.0 Expandable Map Fields, Nested Property Mutations & Substrate Parity : v1.15.1 Field Table In-Place Editing, Row Mutations & Duplicate Field
+        2026-10-22 : v1.16.0 Studio Overview Dashboard & Traffic Analytics Suite
     section Planned
-        Q4 2026 : v1.16.0 Studio Overview Dashboard & Traffic Analytics Suite : v1.17.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
+        Q4 2026 : v1.17.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -50,7 +51,7 @@ timeline
 | **v1.14.0** | Shipped | 2026-10-19 | Interactive Box & Node Data Graph Canvas, Auth Table Floating Menu (`⋯`), Document Tree Inline Field Actions, Responsive Cost & Quota UX |
 | **v1.15.0** | Shipped | 2026-10-20 | Recursive expandable Map field nodes in Explorer Tree, context-aware nested property mutations, scoped multi-property deletions, field clipboard parity (Copy as JSON, nested dotted paths), arbitrary dot-delimited paths in virtual filesystem & Local JSON |
 | **v1.15.1** | Shipped | 2026-10-20 | Field Table in-place spreadsheet cell editing, row entry addition & deletion, Duplicate Field command (`ketrik-firestore-studio.duplicateField`), and shared webview table styles |
-| **v1.16.0** | Planned | Q4 2026 | Unified Studio Overview Dashboard, Database & User Insights, Network & Traffic Analytics Suite |
+| **v1.16.0** | Shipped | 2026-10-22 | Unified Studio Overview Dashboard, Database & User Insights, Network & Traffic Analytics Suite, Storage Footprint & Quota Burn Rate Gauges |
 | **v1.17.0** | Planned | Q4 2026 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
@@ -463,7 +464,7 @@ timeline
 
 ---
 
-### [v1.16.0] — Studio Overview Dashboard & Traffic Analytics Suite (Target: Q4 2026)
+### [v1.16.0] — Studio Overview Dashboard & Traffic Analytics Suite (Shipped: 2026-10-22)
 
 *Theme: Unified database & user insights, network traffic & throughput monitoring, and operational dashboards.*
 

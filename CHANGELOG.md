@@ -2,6 +2,29 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.16.0] - 2026-10-22
+
+### Added & Improved
+- **Unified Studio Overview & Insights Dashboard (`ketrik-firestore-studio.openOverviewDashboard`)**:
+  * **Summary KPI Cards**: Top-level overview displaying Root Collections count, sampled documents, today's total operation volume, and Auth user statistics.
+  * **Database & Collection Breakdown**:
+    * Low-cost server-side `count()` aggregations across root collections (1 read per 1,000 index entries) with in-memory caching (60s TTL).
+    * Top 5 largest collections by document volume with 1-click **"↗ Open Table"** jump to `openCollectionAsTable`.
+    * **Storage Footprint Gauge**: Projected database storage size calculated from UTF-8 byte serialization rules with percentage of 1.0 GiB Spark Free Tier allowance.
+    * **Daily Quota Burn Rate**: Real-time progress meters for Document Reads (vs. 50k), Document Writes (vs. 20k), and Document Deletes (vs. 20k) with dynamic green, amber, and red warning threshold styling.
+  * **Network & Traffic Analytics Suite**:
+    * **Throughput & Operations**: Interactive SVG multi-line time series charts showing 7-day reads, writes, and deletes with delegated hover tooltips.
+    * **Bandwidth & Payload Size**: Sent bytes (egress) vs. received bytes (ingress) area charts tracking payload trends over time.
+    * **Real-Time Client Connections**: Live tracker of active `onSnapshot` client streams (`firestore.googleapis.com/listen/realtime_connections_count`).
+    * **Security Rule Traffic**: Visual ratio of allowed vs. denied security rules evaluations (`firestore.googleapis.com/rules/evaluation_count`).
+    * **Multi-Tier Fallback**: Automatically pulls from Google Cloud Monitoring API, Local Firebase Emulator telemetry, or active Studio session accounting with zero disruption.
+  * **Firebase Auth & Growth Insights**:
+    * Account breakdown meters: Active vs. disabled users, verified email percentage, and 7-day active sign-in velocity.
+    * Provider distribution breakdown (Email/Password, Google, Apple, Anonymous, Phone).
+  * **Export & Sharing**:
+    * 1-click export of complete overview and traffic audit to formatted **Markdown** or raw **JSON**.
+  * **Offline Local JSON Support**: Full database metric compatibility inspecting local collections, document counts, and projected byte sizes without requiring cloud credentials.
+
 ## [1.15.1] - 2026-10-20
 
 ### Added & Improved

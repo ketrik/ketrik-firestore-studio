@@ -219,6 +219,7 @@ export class CostStatusBarController implements vscode.Disposable {
       clearTimeout(this._updateTimer);
       this._updateTimer = undefined;
     }
+    this._alertedKeys.clear();
     this._disposables.forEach((d) => d.dispose());
   }
 }

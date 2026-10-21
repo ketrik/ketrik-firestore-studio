@@ -101,6 +101,7 @@ import { TemplateService } from "./services/TemplateService";
 import { TimestampInlayHintsProvider, TimestampHoverProvider } from "./editor/TimestampEditorDecorations";
 import { DocumentSizeStatusBarController } from "./editor/DocumentSizeStatusBarController";
 import { openCostSimulator } from "./webview/openCostSimulator";
+import { openOverviewDashboard } from "./webview/openOverviewDashboard";
 import { CostStatusBarController } from "./cost/CostStatusBarController";
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -581,6 +582,13 @@ export async function activate(context: vscode.ExtensionContext) {
       (item?: any) => {
         const connectionId = item?.config?.id || item?.connectionId || (typeof item === "string" ? item : undefined);
         return openCostSimulator(connectionId ? { connectionId } : undefined);
+      }
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openOverviewDashboard",
+      (item?: any) => {
+        const connectionId = item?.config?.id || item?.connectionId || (typeof item === "string" ? item : undefined);
+        return openOverviewDashboard(connectionId ? { connectionId } : undefined);
       }
     )
   );

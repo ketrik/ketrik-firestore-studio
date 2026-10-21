@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.15.2",
+  "version": "1.16.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -758,6 +758,12 @@
         "icon": "$(graph)"
       },
       {
+        "command": "ketrik-firestore-studio.openOverviewDashboard",
+        "category": "Firestore Studio",
+        "title": "Open Studio Overview & Traffic Analytics",
+        "icon": "$(dashboard)"
+      },
+      {
         "command": "ketrik-firestore-studio.refreshStorage",
         "category": "Firestore Studio",
         "title": "Refresh Cloud Storage",
@@ -844,6 +850,11 @@
           "command": "ketrik-firestore-studio.openCostSimulator",
           "when": "view == ketrik-firestore-studio-view",
           "group": "navigation@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.openOverviewDashboard",
+          "when": "view == ketrik-firestore-studio-view",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -868,39 +879,44 @@
           "group": "1_manage@1"
         },
         {
-          "command": "ketrik-firestore-studio.openSecurityRules",
+          "command": "ketrik-firestore-studio.openOverviewDashboard",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_manage@2"
         },
         {
-          "command": "ketrik-firestore-studio.diffSecurityRules",
+          "command": "ketrik-firestore-studio.openSecurityRules",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_manage@3"
         },
         {
-          "command": "ketrik-firestore-studio.deploySecurityRules",
+          "command": "ketrik-firestore-studio.diffSecurityRules",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_manage@4"
         },
         {
-          "command": "ketrik-firestore-studio.manageAuthUsers",
+          "command": "ketrik-firestore-studio.deploySecurityRules",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_manage@5"
         },
         {
-          "command": "ketrik-firestore-studio.openAuthUsersAsTable",
+          "command": "ketrik-firestore-studio.manageAuthUsers",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_manage@6"
         },
         {
-          "command": "ketrik-firestore-studio.openCostSimulator",
+          "command": "ketrik-firestore-studio.openAuthUsersAsTable",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_manage@7"
         },
         {
-          "command": "ketrik-firestore-studio.deleteConnection",
+          "command": "ketrik-firestore-studio.openCostSimulator",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_manage@8"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteConnection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_manage@9"
         },
         {
           "command": "ketrik-firestore-studio.openAuthUsersAsTable",
