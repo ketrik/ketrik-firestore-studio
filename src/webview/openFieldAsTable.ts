@@ -20,11 +20,14 @@ import { FieldPath } from "firebase-admin/firestore";
 const activeFieldPanels = new Map<string, vscode.WebviewPanel>();
 
 export async function openFieldAsTable(item: DocumentFieldItem) {
-  const targetFieldPath = item.fullFieldPath || item.fieldName;
   const fieldSegments =
     item.pathSegments && item.pathSegments.length > 0
       ? item.pathSegments
       : [item.fieldName];
+  const targetFieldPath =
+    (typeof item.fullFieldPath === "string" && item.fullFieldPath)
+      ? item.fullFieldPath
+      : fieldSegments.join(".");
 
   const panelKey = `${item.connectionId}:${item.parentDocRef.path}:${targetFieldPath}`;
   const existingPanel = activeFieldPanels.get(panelKey);

@@ -3,7 +3,9 @@ import { DocumentFieldItem, CollectionItem } from "../explorer/items";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import { ConnectionManager } from "../connections/ConnectionManager";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldPath, FieldValue } from "firebase-admin/firestore";
+import { LocalJsonService } from "../services/LocalJsonService";
+import { CostService } from "../cost/costService";
 import openPath from "./openPath";
 
 export interface ExplodeFieldOptions {
@@ -194,12 +196,19 @@ export async function explodeFieldCommand(
 
         // 6. Delete source field if requested
         if (deleteSource.value) {
-          await item.parentDocRef.update({
-            [item.fieldName]: FieldValue.delete(),
-          });
-          documentFileSystemProvider.invalidateAndNotify(
+          const segments = item.pathSegments && item.pathSegments.length > 0 ? item.pathSegments : [item.fieldName];
+          const fullFieldPath = item.fullFieldPath || segments.join(".");
+          const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+          if (conn?.isLocalJson) {
+            LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, fullFieldPath, undefined, true);
+          } else {
+            await item.parentDocRef.update(new FieldPath(...segments), FieldValue.delete());
+            CostService.getInstance().recordOperation(item.connectionId, "write", 1);
+          }
+          documentFileSystemProvider.invalidateAndNotifyFieldDeleted(
             item.connectionId,
-            item.parentDocRef.path
+            item.parentDocRef.path,
+            [fullFieldPath, item.fieldName]
           );
         }
 

@@ -18,8 +18,9 @@ timeline
         2026-10-19 : v1.14.0 Box & Node Data Graph Canvas, Auth Table Floating Menu, Tree Field Actions & Cost UX
         2026-10-20 : v1.15.0 Expandable Map Fields, Nested Property Mutations & Substrate Parity : v1.15.1 Field Table In-Place Editing, Row Mutations & Duplicate Field
         2026-10-22 : v1.16.0 Studio Overview Dashboard & Traffic Analytics Suite
+        2026-10-23 : v1.17.0 Multi-Collection Batch Replication Suite, Nested Field Editor & Performance Polish
     section Planned
-        Q4 2026 : v1.17.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
+        Q1 2027 : v1.18.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -52,7 +53,8 @@ timeline
 | **v1.15.0** | Shipped | 2026-10-20 | Recursive expandable Map field nodes in Explorer Tree, context-aware nested property mutations, scoped multi-property deletions, field clipboard parity (Copy as JSON, nested dotted paths), arbitrary dot-delimited paths in virtual filesystem & Local JSON |
 | **v1.15.1** | Shipped | 2026-10-20 | Field Table in-place spreadsheet cell editing, row entry addition & deletion, Duplicate Field command (`ketrik-firestore-studio.duplicateField`), and shared webview table styles |
 | **v1.16.0** | Shipped | 2026-10-22 | Unified Studio Overview Dashboard, Database & User Insights, Network & Traffic Analytics Suite, Storage Footprint & Quota Burn Rate Gauges |
-| **v1.17.0** | Planned | Q4 2026 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
+| **v1.17.0** | Shipped | 2026-10-23 | Multi-Collection Batch Replication Suite, Bulk Collection Deletion, Nested Field Virtual Editor, Tree Hierarchical Reveal, Overview Memory Optimization |
+| **v1.18.0** | Planned | Q1 2027 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
 ---
@@ -486,7 +488,50 @@ timeline
 
 ---
 
-### [v1.17.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q4 2026)
+### [v1.17.0] — Multi-Collection Batch Replication Suite & Nested Field Polish (Shipped: 2026-10-23)
+
+*Theme: Bulk multi-collection replication, selective migration wizard, deep subcollection hierarchy copying, nested document field virtual editor resolution, hierarchical tree reveal, and studio overview memory optimization.*
+
+* **Multi-Collection Batch Replication Wizard (`ketrik-firestore-studio.copyMultipleCollections`)**:
+  * Launch directly from any Connection or Collection context menu (`$(copy) Copy Multiple Collections to Instance...`) or Command Palette.
+  * Interactive QuickPick checklist (`canPickMany: true`) with collection badges and individual checkboxes to selectively choose target collections.
+  * Support for cross-instance migration (Production $\leftrightarrow$ Staging $\leftrightarrow$ Local Emulator $\leftrightarrow$ Local JSON) and intra-instance collection duplication.
+* **Smart Naming & Prefix / Suffix Strategy**:
+  * **Keep Identical Names**: Preserves collection names when replicating across distinct databases or emulators.
+  * **Prefix / Suffix Rules**: Apply batch transformation patterns (e.g., `staging_`, `_backup`, `v2_`) or custom date stamps.
+  * **Collision Protection**: Automatically enforces name mutations when duplicating within the same database to prevent self-overwrites.
+* **Deep Recursive Subcollection Hierarchy Cloning**:
+  * Choice between **Root Documents Only** (fast, quota-conscious) and **Deep Recursive Copy** (recursively walking and replicating nested subcollection trees).
+  * Seamless cross-substrate translation across Firestore gRPC, Local Emulators, and Local JSON stores.
+* **Type Fidelity & Chunked WriteBatch Safety**:
+  * Preserves native Firestore types: `Timestamp`, `GeoPoint`, `DocumentReference`, byte arrays, and nested Map/Array objects.
+  * Commits in safety chunks of 400 documents per `WriteBatch` (well below the 500-operation ceiling).
+  * Live multi-collection progress reporting (`[2/5] Copying 'orders' (320/800 docs)... Overall: 42%`) with clean cancellation support at batch boundaries.
+* **Automatic Cache Invalidation & Live Tree Sync**:
+  * Emits `FileChangeType.Changed` via `DocumentFileSystemProvider.getInstance().invalidateAndNotify()` for all target collections, ensuring open virtual editors reload live without stale buffers.
+  * Granular refresh of target explorer tree nodes.
+* **Collection & Multi-Collection Permanent Deletion (`deleteCollection` & `deleteMultipleCollections`)**:
+  * Right-click any collection $\rightarrow$ **`Delete Collection...`** (`$(trash)`).
+  * Right-click any connection or collection $\rightarrow$ **`Delete Multiple Collections...`** to selectively delete multiple collections with checkboxes.
+  * Recursive deletion across Cloud Firestore (`firestore.recursiveDelete`), Local Emulators, and Local JSON stores (`LocalJsonService.deleteCollection`).
+  * Safety modal confirmation with explicit warnings preventing accidental data loss.
+* **Nested Document Field Virtual File System & Editor (`ketrik-firestore-studio.openFieldInEditor`)**:
+  * Fixed virtual file URI resolution for nested Map properties (`sidebar_finance.options`): now maps to `ketrik-firestore-studio://<conn>/<docPath>/<fieldPath>.json` instead of wrongly truncating to the leaf field name.
+  * `DocumentFileSystemProvider` parses dot-delimited field paths and resolves nested object hierarchies in both live Firestore and Local JSON modes without throwing `FileNotFound`.
+  * Auto-dispatches `FileChangeType.Changed` events to open sub-field virtual JSON editor tabs when the parent document changes, ensuring open field tabs live-reload immediately.
+  * Added URI fragment (`#fieldPath`) parsing support in virtual file system provider.
+* **Hierarchical Tree Reveal for Nested Fields (`ExplorerDataProvider.revealDocument`)**:
+  * Dot-notation path splitting (`targetSegments`) and iterative recursive traversal down nested Map structures.
+  * Automatically expands and registers parent branches (`_expandedFieldIds`) so selecting or switching to nested field tabs expands and highlights the targeted field directly in the Explorer Tree.
+* **Atomic Field Mutations Across All Contexts**:
+  * Updated `tombstoneCommands`, `migrationCommands` (`explodeField`), and `documentCommands` (`pasteDocument`) to use `new FieldPath(...segments)` and `LocalJsonService` dot paths, ensuring safe atomic operations on deeply nested fields without key collisions.
+* **Studio Overview & Analytics CPU/Memory Optimization**:
+  * Added bounded LRU caching to `OverviewService` and `TrafficMetricsProvider` to eliminate memory retention during continuous polling.
+  * Correct unref and disposal of background interval timers upon dashboard webview closure.
+
+---
+
+### [v1.18.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q1 2027)
 
 *Theme: Deep Cloud Functions developer tooling, Firestore trigger simulation, live logging, and in-editor Admin SDK scratchpads.*
 

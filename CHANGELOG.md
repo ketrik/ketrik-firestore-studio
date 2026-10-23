@@ -2,6 +2,34 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.17.0] - 2026-10-23
+
+### Added
+- **Multi-Collection Batch Replication Suite (`ketrik-firestore-studio.copyMultipleCollections`)**:
+  * Checkbox multi-select checklist (`canPickMany: true`) to replicate multiple collections simultaneously across Firestore connections or local JSON instances.
+  * Deep recursive subcollection copying with clean cross-substrate translation across Cloud Firestore, Local Emulators, and Local JSON stores.
+  * Smart naming rules (Keep Identical, Prefix, Suffix) with collision prevention to guard against accidental self-overwrites.
+  * Safety-chunked `WriteBatch` operations (400 docs/batch) with live progress reporting and cancellation handling.
+- **Bulk & Single Collection Permanent Deletion (`deleteMultipleCollections` & `deleteCollection`)**:
+  * Checkbox multi-select to delete multiple collections atomically with explicit warning modals.
+  * Single-collection deep delete (`$(trash)`) available from Explorer Tree context menus.
+  * Automatic cache invalidation (`invalidateAndNotifyCollectionDeleted`) and targeted tree node refresh.
+
+### Fixed & Improved
+- **Nested Document Field Virtual File System & Editor (`ketrik-firestore-studio.openFieldInEditor`)**:
+  * Fixed virtual file URI resolution for nested Map properties (e.g. `sidebar_finance.options`): now correctly maps to `ketrik-firestore-studio://<conn>/<docPath>/<fieldPath>.json` instead of wrongly truncating to the leaf field name.
+  * `DocumentFileSystemProvider` now properly parses dot-delimited field paths and resolves nested object hierarchies in both live Firestore and Local JSON modes without throwing `FileNotFound`.
+  * Auto-dispatches `FileChangeType.Changed` events to open sub-field virtual JSON editor tabs when the parent document changes, ensuring open field tabs live-reload immediately.
+  * Added URI fragment (`#fieldPath`) parsing support in virtual file system provider.
+- **Hierarchical Tree Reveal for Nested Fields (`ExplorerDataProvider.revealDocument`)**:
+  * Dot-notation path splitting (`targetSegments`) and iterative recursive traversal down nested Map structures.
+  * Automatically expands and registers parent branches (`_expandedFieldIds`) so selecting or switching to nested field tabs expands and highlights the targeted field directly in the Explorer Tree.
+- **Atomic Field Mutations Across All Contexts**:
+  * Updated `tombstoneCommands`, `migrationCommands` (`explodeField`), and `documentCommands` (`pasteDocument`) to use `new FieldPath(...segments)` and `LocalJsonService` dot paths, ensuring safe atomic operations on deeply nested fields without key collisions.
+- **Studio Overview & Analytics CPU/Memory Optimization**:
+  * Added bounded LRU caching to `OverviewService` and `TrafficMetricsProvider` to eliminate memory retention during continuous polling.
+  * Correct unref and disposal of background interval timers upon dashboard webview closure.
+
 ## [1.16.0] - 2026-10-22
 
 ### Added & Improved

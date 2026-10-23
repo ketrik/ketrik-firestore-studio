@@ -430,20 +430,27 @@ export async function pasteDocumentCommand(
       return; // cancelled
     }
 
+    const segments = item.pathSegments && item.pathSegments.length > 0 ? item.pathSegments : [item.fieldName];
+    const fullFieldPath = item.fullFieldPath || segments.join(".");
+
     const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
     if (conn?.isLocalJson) {
       const key = entryKey?.trim() || clipboard.sourceDocId;
       const currentDoc = LocalJsonService.getInstance().getDocument(conn, item.parentDocRef.path) || {};
+      let cur = currentDoc;
+      for (const p of segments) {
+        cur = cur?.[p];
+      }
       if (isArray) {
-        const arr = Array.isArray(currentDoc[item.fieldName]) ? currentDoc[item.fieldName] : [];
+        const arr = Array.isArray(cur) ? cur : [];
         arr.push(clipboard.data);
-        LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, item.fieldName, arr);
-        vscode.window.showInformationMessage(`Appended document to local Array "${item.fieldName}"!`);
+        LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, fullFieldPath, arr);
+        vscode.window.showInformationMessage(`Appended document to local Array "${fullFieldPath}"!`);
       } else {
-        const map = currentDoc[item.fieldName] && typeof currentDoc[item.fieldName] === "object" ? currentDoc[item.fieldName] : {};
+        const map = cur && typeof cur === "object" ? cur : {};
         map[key] = clipboard.data;
-        LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, item.fieldName, map);
-        vscode.window.showInformationMessage(`Pasted document as key "${key}" into local Map "${item.fieldName}"!`);
+        LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, fullFieldPath, map);
+        vscode.window.showInformationMessage(`Pasted document as key "${key}" into local Map "${fullFieldPath}"!`);
       }
       documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
       explorerDataProvider.refreshNode(item);
@@ -454,19 +461,19 @@ export async function pasteDocumentCommand(
       const key = entryKey?.trim() || clipboard.sourceDocId;
       if (isArray) {
         await item.parentDocRef.update(
-          new FieldPath(item.fieldName),
+          new FieldPath(...segments),
           FieldValue.arrayUnion(clipboard.data)
         );
         vscode.window.showInformationMessage(
-          `Appended document to Array "${item.fieldName}"!`
+          `Appended document to Array "${fullFieldPath}"!`
         );
       } else {
         await item.parentDocRef.update(
-          new FieldPath(item.fieldName, key),
+          new FieldPath(...segments, key),
           clipboard.data
         );
         vscode.window.showInformationMessage(
-          `Pasted document as key "${key}" into Map "${item.fieldName}"!`
+          `Pasted document as key "${key}" into Map "${fullFieldPath}"!`
         );
       }
 

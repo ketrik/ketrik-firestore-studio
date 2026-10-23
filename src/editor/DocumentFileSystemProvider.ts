@@ -72,6 +72,55 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   }
 
   /**
+   * Invalidate all document snapshot caches under a collection and close any open
+   * editor tabs targeting documents in that collection.
+   */
+  public invalidateAndNotifyCollectionDeleted(connectionId: string, collPath: string): void {
+    const prefix = `${connectionId}:${collPath}/`;
+    for (const key of this._snapshotCache.keys()) {
+      if (key.startsWith(prefix) || key === `${connectionId}:${collPath}`) {
+        this._snapshotCache.delete(key);
+      }
+    }
+    for (const key of this._snapshotInFlight.keys()) {
+      if (key.startsWith(prefix) || key === `${connectionId}:${collPath}`) {
+        this._snapshotInFlight.delete(key);
+      }
+    }
+
+    try {
+      const tabGroups = vscode.window.tabGroups;
+      if (!tabGroups || !tabGroups.all) return;
+
+      const tabsToClose: vscode.Tab[] = [];
+      const uriPrefix = `${scheme}://${connectionId}/${collPath}/`;
+      const exactUri = `${scheme}://${connectionId}/${collPath}.json`;
+
+      for (const group of tabGroups.all) {
+        for (const tab of group.tabs) {
+          if (tab.input instanceof vscode.TabInputText) {
+            const tabUriStr = tab.input.uri.toString();
+            if (tabUriStr.startsWith(uriPrefix) || tabUriStr === exactUri) {
+              tabsToClose.push(tab);
+            }
+          }
+        }
+      }
+
+      if (tabsToClose.length > 0) {
+        tabGroups.close(tabsToClose).then(undefined, () => {});
+      }
+    } catch {}
+
+    const collUri = vscode.Uri.from({
+      scheme,
+      authority: connectionId,
+      path: `/${collPath}.json`,
+    });
+    this._emitter.fire([{ type: vscode.FileChangeType.Deleted, uri: collUri }]);
+  }
+
+  /**
    * Invalidate a document snapshot when a field is deleted, emit Deleted event
    * for the specific field's virtual file URI, close any open tabs for that field,
    * and emit Changed for the parent document JSON so full document tabs update immediately.
@@ -151,6 +200,29 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
         path: `/${docPath}.json`,
       });
       events.push({ type: vscode.FileChangeType.Changed, uri: docUri });
+
+      // Also notify any open field editor tabs under this document
+      try {
+        const tabGroups = vscode.window.tabGroups;
+        if (tabGroups && tabGroups.all) {
+          const prefix = `/${docPath}/`;
+          for (const group of tabGroups.all) {
+            for (const tab of group.tabs) {
+              if (tab.input instanceof vscode.TabInputText) {
+                const u = tab.input.uri;
+                if (
+                  u.scheme === scheme &&
+                  u.authority === connectionId &&
+                  u.path.startsWith(prefix) &&
+                  u.path.endsWith(".json")
+                ) {
+                  events.push({ type: vscode.FileChangeType.Changed, uri: u });
+                }
+              }
+            }
+          }
+        }
+      } catch {}
     }
     this._emitter.fire(events);
   }
@@ -268,6 +340,11 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     }
 
     const segments = pathStr.split("/").filter(Boolean);
+
+    if (uri.fragment) {
+      return { connectionId, docPath: segments.join("/"), fieldPath: decodeURIComponent(uri.fragment) };
+    }
+
     // Firestore doc paths always have an even number of segments (coll/doc or coll/doc/subcoll/subdoc).
     // If the path has an odd number >= 3, the trailing segment is a targeted fieldPath!
     if (segments.length % 2 === 1 && segments.length >= 3) {

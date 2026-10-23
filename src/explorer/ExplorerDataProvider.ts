@@ -1071,12 +1071,32 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
             cachedChildren = (await this.getChildren(docItem)) || [];
           }
 
-          const fieldItem = cachedChildren.find(
-            (it) => it instanceof DocumentFieldItem && it.fieldName === targetField
-          );
+          const targetSegments = targetField.split(".");
+          let currentChildren = cachedChildren;
+          let currentFieldItem: DocumentFieldItem | undefined;
 
-          if (fieldItem) {
-            await this._treeView?.reveal(fieldItem, options);
+          for (let i = 0; i < targetSegments.length; i++) {
+            const seg = targetSegments[i];
+            const match = currentChildren.find(
+              (it) => it instanceof DocumentFieldItem && it.fieldName === seg
+            ) as DocumentFieldItem | undefined;
+
+            if (!match) {
+              currentFieldItem = undefined;
+              break;
+            }
+
+            currentFieldItem = match;
+            if (i < targetSegments.length - 1) {
+              if (match.id) {
+                this._expandedFieldIds.add(match.id);
+              }
+              currentChildren = (await this.getChildren(match)) || [];
+            }
+          }
+
+          if (currentFieldItem) {
+            await this._treeView?.reveal(currentFieldItem, options);
             return;
           }
 
@@ -1084,17 +1104,25 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           let fieldValue: any;
           if (conn?.isLocalJson) {
             const docData = LocalJsonService.getInstance().getDocument(conn, fullDocPath) || {};
-            fieldValue = docData[targetField];
+            fieldValue = targetSegments.reduce(
+              (acc, part) => (acc && typeof acc === "object" ? acc[part] : undefined),
+              docData
+            );
           } else {
             const snap = await docRef.get();
-            fieldValue = snap.exists ? (snap.data() || {})[targetField] : undefined;
+            const docData = snap.exists ? snap.data() || {} : {};
+            fieldValue = targetSegments.reduce(
+              (acc, part) => (acc && typeof acc === "object" ? acc[part] : undefined),
+              docData
+            );
           }
 
           const fallbackFieldItem = new DocumentFieldItem(
-            targetField,
+            targetSegments[targetSegments.length - 1],
             fieldValue,
             docRef,
-            connectionId
+            connectionId,
+            targetSegments
           );
           await this._treeView?.reveal(fallbackFieldItem, options);
           return;

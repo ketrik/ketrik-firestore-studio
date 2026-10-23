@@ -271,6 +271,31 @@ export class LocalJsonService {
   }
 
   /**
+   * Delete an entire collection.
+   */
+  public deleteCollection(config: FirestoreConnectionConfig, collectionId: string): void {
+    if (!config.localJsonPath || !fs.existsSync(config.localJsonPath)) {
+      return;
+    }
+
+    if (this.isDirectoryMode(config)) {
+      const filePath = path.join(config.localJsonPath, `${collectionId}.json`);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        this._fileCache.delete(filePath);
+      }
+      return;
+    }
+
+    // Single JSON file
+    const parsed = this._readJsonFile(config.localJsonPath);
+    if (parsed && typeof parsed === "object" && parsed[collectionId]) {
+      delete parsed[collectionId];
+      this._writeJsonFile(config.localJsonPath, parsed);
+    }
+  }
+
+  /**
    * Delete a document by docPath.
    */
   public deleteDocument(config: FirestoreConnectionConfig, docPath: string): void {

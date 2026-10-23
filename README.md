@@ -1,7 +1,7 @@
 # Ketrik Firestore Studio
 
 [![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Code-Extension-007acc?style=flat-square&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=ketrik.ketrik-firestore-studio)
-[![Version](https://img.shields.io/badge/Release-v1.16.0-2ecc71?style=flat-square)](ROADMAP.md)
+[![Version](https://img.shields.io/badge/Release-v1.17.0-2ecc71?style=flat-square)](ROADMAP.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 The definitive, enterprise-grade Visual Studio Code extension for exploring, querying, mutating, and managing **Google Cloud Firestore**, **Firebase Authentication**, **Security Rules**, and **Local Emulators** directly inside your IDE.
@@ -117,8 +117,11 @@ Scan and evaluate document consistency across collections:
 | `ketrik-firestore-studio.refreshIndexes` | Indexes Branch | Fetch and introspect all deployed composite indexes |
 | `ketrik-firestore-studio.generateSchema` | Collection / Document Menu | Reverse-engineer documents into TypeScript & Zod schemas |
 | `ketrik-firestore-studio.copyCollectionToInstance` | Collection Context Menu | Batch copy collection across connections or emulator |
+| `ketrik-firestore-studio.copyMultipleCollections` | Connection & Collection Menu | Selectively copy multiple collections across instances with naming rules & deep subcollection support |
 | `ketrik-firestore-studio.exportCollection` | Collection Context Menu | Export collection to CSV, JSON, or NDJSON |
 | `ketrik-firestore-studio.importCollection` | Collection Context Menu | Import external datasets with type coercion |
+| `ketrik-firestore-studio.deleteCollection` | Collection Context Menu | Permanently delete a collection and all nested documents/subcollections with safety confirmation |
+| `ketrik-firestore-studio.deleteMultipleCollections` | Connection & Collection Menu | Multi-select and batch-delete multiple collections with safety confirmation |
 
 ---
 

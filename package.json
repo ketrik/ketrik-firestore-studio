@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.16.0",
+  "version": "1.17.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -436,6 +436,24 @@
         "category": "Firestore Studio",
         "title": "Copy Collection to Another Instance...",
         "icon": "$(copy)"
+      },
+      {
+        "command": "ketrik-firestore-studio.copyMultipleCollections",
+        "category": "Firestore Studio",
+        "title": "Copy Multiple Collections to Instance...",
+        "icon": "$(repo-clone)"
+      },
+      {
+        "command": "ketrik-firestore-studio.deleteCollection",
+        "category": "Firestore Studio",
+        "title": "Delete Collection...",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ketrik-firestore-studio.deleteMultipleCollections",
+        "category": "Firestore Studio",
+        "title": "Delete Multiple Collections...",
+        "icon": "$(trash)"
       },
       {
         "command": "ketrik-firestore-studio.pushLocalCollectionToFirestore",
@@ -869,6 +887,16 @@
           "group": "1_actions@1"
         },
         {
+          "command": "ketrik-firestore-studio.copyMultipleCollections",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_actions@1.5"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteMultipleCollections",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_actions@1.6"
+        },
+        {
           "command": "ketrik-firestore-studio.queryCollectionGroup",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_actions@2"
@@ -1219,6 +1247,11 @@
           "group": "2_filter@6.5"
         },
         {
+          "command": "ketrik-firestore-studio.copyMultipleCollections",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "2_filter@6.6"
+        },
+        {
           "command": "ketrik-firestore-studio.pushLocalCollectionToFirestore",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
           "group": "2_filter@7"
@@ -1232,6 +1265,16 @@
           "command": "ketrik-firestore-studio.copyPath",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'document' || viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "3_utility@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteCollection",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "3_utility@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteMultipleCollections",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'collection'",
+          "group": "3_utility@3"
         },
         {
           "command": "ketrik-firestore-studio.addField",

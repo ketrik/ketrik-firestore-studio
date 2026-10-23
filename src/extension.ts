@@ -34,6 +34,8 @@ import {
   queryCollectionGroupCommand,
   addCollectionCommand,
   openDataGraphCommand,
+  deleteCollectionCommand,
+  deleteMultipleCollectionsCommand,
 } from "./commands/collectionCommands";
 import {
   explodeFieldCommand,
@@ -80,6 +82,7 @@ import {
   snapshotDocumentToLocalJsonCommand,
 } from "./commands/localSyncCommands";
 import { copyCollectionToInstanceCommand } from "./commands/copyCollectionCommand";
+import { copyMultipleCollectionsCommand } from "./commands/copyMultipleCollectionsCommand";
 import {
   startEmulatorCommand,
   stopEmulatorCommand,
@@ -457,11 +460,22 @@ export async function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.openFieldInEditor",
-      async (item: DocumentFieldItem) => {
+      async (itemOrPath?: DocumentFieldItem | string, connectionId?: string, fieldPath?: string) => {
+        if (typeof itemOrPath === "string") {
+          await openPath(itemOrPath, connectionId, fieldPath);
+          return;
+        }
+        const item = itemOrPath as DocumentFieldItem | undefined;
         if (!item?.parentDocRef || !item?.fieldName) {
           return;
         }
-        await openPath(item.parentDocRef.path, item.connectionId, item.fieldName);
+        const targetField =
+          (typeof item.fullFieldPath === "string" && item.fullFieldPath)
+            ? item.fullFieldPath
+            : Array.isArray(item.pathSegments) && item.pathSegments.length > 0
+            ? item.pathSegments.join(".")
+            : item.fieldName;
+        await openPath(item.parentDocRef.path, item.connectionId, targetField);
       }
     ),
     vscode.commands.registerCommand(
@@ -551,6 +565,21 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.copyCollectionToInstance",
       (item: CollectionItem) =>
         copyCollectionToInstanceCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.copyMultipleCollections",
+      (item?: any) =>
+        copyMultipleCollectionsCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.deleteCollection",
+      (item: CollectionItem) =>
+        deleteCollectionCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.deleteMultipleCollections",
+      (item?: any) =>
+        deleteMultipleCollectionsCommand(item, explorerDataProvider)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.pushLocalCollectionToFirestore",

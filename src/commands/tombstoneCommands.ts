@@ -3,6 +3,9 @@ import { DocumentFieldItem, CollectionItem } from "../explorer/items";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import { ConnectionManager } from "../connections/ConnectionManager";
+import { FieldPath } from "firebase-admin/firestore";
+import { LocalJsonService } from "../services/LocalJsonService";
+import { CostService } from "../cost/costService";
 
 /**
  * Check if an entry represents a soft-deleted tombstone.
@@ -141,9 +144,15 @@ export async function purgeFieldTombstonesCommand(
       });
     }
 
-    await item.parentDocRef.update({
-      [item.fieldName]: cleanedData,
-    });
+    const segments = item.pathSegments && item.pathSegments.length > 0 ? item.pathSegments : [item.fieldName];
+    const fullFieldPath = item.fullFieldPath || segments.join(".");
+    const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+    if (conn?.isLocalJson) {
+      LocalJsonService.getInstance().updateField(conn, item.parentDocRef.path, fullFieldPath, cleanedData);
+    } else {
+      await item.parentDocRef.update(new FieldPath(...segments), cleanedData);
+      CostService.getInstance().recordOperation(item.connectionId, "write", 1);
+    }
 
     documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
     explorerDataProvider.refreshNode(item);

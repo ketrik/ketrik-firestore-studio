@@ -6,6 +6,7 @@ import { openGraphCanvas } from "../webview/openGraphCanvas.js";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
+import { LocalJsonService } from "../services/LocalJsonService";
 
 /**
  * Open collection in table view.
@@ -235,4 +236,199 @@ export async function addCollectionCommand(
  */
 export async function openDataGraphCommand(item?: any) {
   await openGraphCanvas(item);
+}
+
+/**
+ * Permanently delete a collection and all documents / subcollections within it.
+ */
+export async function deleteCollectionCommand(
+  item: CollectionItem,
+  explorerDataProvider: ExplorerDataProvider
+): Promise<void> {
+  if (!item?.collectionId) {
+    return;
+  }
+
+  const connectionManager = ConnectionManager.getInstance();
+  const conn = connectionManager.getConnection(item.connectionId);
+  const connName = conn?.name || item.connectionId;
+  const collPath = item.reference?.path || item.collectionId;
+
+  const confirm = await vscode.window.showWarningMessage(
+    `Are you sure you want to permanently delete collection "${item.collectionId}" and all its documents from "${connName}"?\n\nPath: ${collPath}\n\n⚠️ This action is irreversible!`,
+    { modal: true },
+    "Delete Collection",
+    "Cancel"
+  );
+
+  if (confirm !== "Delete Collection") {
+    return;
+  }
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Deleting collection "${item.collectionId}" from "${connName}"...`,
+      cancellable: false,
+    },
+    async () => {
+      try {
+        if (conn?.isLocalJson) {
+          LocalJsonService.getInstance().deleteCollection(conn, item.collectionId);
+        } else {
+          const firestore = await connectionManager.getFirestore(item.connectionId);
+          await firestore.recursiveDelete(item.reference);
+        }
+
+        DocumentFileSystemProvider.getInstance().invalidateAndNotifyCollectionDeleted(item.connectionId, collPath);
+        vscode.window.showInformationMessage(`Successfully deleted collection "${item.collectionId}".`);
+        explorerDataProvider.refresh();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to delete collection: ${err.message}`);
+      }
+    }
+  );
+}
+
+/**
+ * Select and batch-delete multiple collections from a connection.
+ */
+export async function deleteMultipleCollectionsCommand(
+  item?: ConnectionTreeItem | CollectionItem,
+  explorerDataProvider?: ExplorerDataProvider
+): Promise<void> {
+  const connectionManager = ConnectionManager.getInstance();
+  const connections = connectionManager.getConnections();
+
+  if (connections.length === 0) {
+    vscode.window.showWarningMessage("No connections configured.");
+    return;
+  }
+
+  let connectionId: string | undefined;
+  let preSelectedColl: string | undefined;
+
+  if (item instanceof ConnectionTreeItem) {
+    connectionId = item.config.id;
+  } else if (item instanceof CollectionItem) {
+    connectionId = item.connectionId;
+    preSelectedColl = item.collectionId;
+  } else {
+    const pick = await vscode.window.showQuickPick(
+      connections.map((c) => ({
+        label: `$(database) ${c.name}`,
+        description: c.isLocalJson ? "Local JSON" : c.isEmulator ? "Emulator" : c.projectId || "Cloud",
+        config: c,
+      })),
+      { title: "Select Connection to Delete Collections From" }
+    );
+    if (!pick) return;
+    connectionId = pick.config.id;
+  }
+
+  const conn = connectionManager.getConnection(connectionId);
+  if (!conn) {
+    vscode.window.showErrorMessage("Connection not found.");
+    return;
+  }
+
+  let collections: string[] = [];
+  if (conn.isLocalJson) {
+    collections = LocalJsonService.getInstance().listCollections(conn);
+  } else {
+    try {
+      const firestore = await connectionManager.getFirestore(conn.id);
+      const refs = await firestore.listCollections();
+      collections = refs.map((r) => r.id);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to list collections: ${err.message}`);
+      return;
+    }
+  }
+
+  if (collections.length === 0) {
+    vscode.window.showInformationMessage(`No collections found in "${conn.name}".`);
+    return;
+  }
+
+  const picks = await vscode.window.showQuickPick(
+    collections.map((id) => ({
+      label: `$(folder) ${id}`,
+      description: "Collection",
+      collectionId: id,
+      picked: preSelectedColl ? id === preSelectedColl : false,
+    })),
+    {
+      title: `Select Collections to Permanently Delete from '${conn.name}'`,
+      placeHolder: "Choose one or more collections to delete (Space to toggle)",
+      canPickMany: true,
+    }
+  );
+
+  if (!picks || picks.length === 0) {
+    return;
+  }
+
+  const selectedIds = picks.map((p) => p.collectionId);
+  const collListStr = selectedIds.join(", ");
+
+  const confirm = await vscode.window.showWarningMessage(
+    `Are you sure you want to permanently delete ${selectedIds.length} collection(s) (${collListStr}) from "${conn.name}"?\n\n⚠️ ALL DOCUMENTS AND SUBCOLLECTIONS WILL BE DESTROYED! This action cannot be undone.`,
+    { modal: true },
+    `Delete ${selectedIds.length} Collection(s)`,
+    "Cancel"
+  );
+
+  if (confirm !== `Delete ${selectedIds.length} Collection(s)`) {
+    return;
+  }
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Deleting ${selectedIds.length} collection(s) from "${conn.name}"...`,
+      cancellable: false,
+    },
+    async (progress) => {
+      try {
+        let deletedCount = 0;
+        const total = selectedIds.length;
+
+        if (conn.isLocalJson) {
+          for (let i = 0; i < total; i++) {
+            const collId = selectedIds[i];
+            progress.report({
+              message: `[${i + 1}/${total}] Deleting '${collId}'...`,
+              increment: (1 / total) * 100,
+            });
+            LocalJsonService.getInstance().deleteCollection(conn, collId);
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyCollectionDeleted(conn.id, collId);
+            deletedCount++;
+          }
+        } else {
+          const firestore = await connectionManager.getFirestore(conn.id);
+          for (let i = 0; i < total; i++) {
+            const collId = selectedIds[i];
+            progress.report({
+              message: `[${i + 1}/${total}] Deleting '${collId}'...`,
+              increment: (1 / total) * 100,
+            });
+            const collRef = firestore.collection(collId);
+            await firestore.recursiveDelete(collRef);
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyCollectionDeleted(conn.id, collId);
+            deletedCount++;
+          }
+        }
+
+        vscode.window.showInformationMessage(
+          `Successfully deleted ${deletedCount} collection(s) from "${conn.name}".`
+        );
+        if (explorerDataProvider) {
+          explorerDataProvider.refresh();
+        }
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to delete collections: ${err.message}`);
+      }
+    }
+  );
 }
