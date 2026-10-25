@@ -1,7 +1,7 @@
 # Ketrik Firestore Studio
 
 [![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Code-Extension-007acc?style=flat-square&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=ketrik.ketrik-firestore-studio)
-[![Version](https://img.shields.io/badge/Release-v1.17.0-2ecc71?style=flat-square)](ROADMAP.md)
+[![Version](https://img.shields.io/badge/Release-v1.18.0-2ecc71?style=flat-square)](ROADMAP.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 The definitive, enterprise-grade Visual Studio Code extension for exploring, querying, mutating, and managing **Google Cloud Firestore**, **Firebase Authentication**, **Security Rules**, and **Local Emulators** directly inside your IDE.
@@ -90,6 +90,18 @@ Scan and evaluate document consistency across collections:
 * **Zombie / Orphan Key Detection**: Surfaces dead keys and obsolete attributes found in $< 5\%$ of sampled records.
 * **1-Click Audit Export**: Export reports directly to GitHub Flavored Markdown or structured JSON.
 
+### 10. AI Scratchpad, Field-Level Isolation & Workspace Sync
+Supercharge your pair-programming with AI coding assistants (Antigravity, GitHub Copilot, Cursor) while eliminating token bloat:
+* **Deterministic AI Scratchpads (`$(sparkle) Edit with AI`)**: 1-click zero-prompt scratchpad generation under `.firestore/<connectionId>/<collectionPath>/<docId>/[<fieldPath>.json]`. Eliminates manual directory creation and prevents document ID collisions across different collections.
+* **Field-Level Isolation (99.8% Token Optimization)**: For large (up to 1 MB / ~250,000 tokens) documents, right-click any targeted field to extract **only that property** (e.g. 2 KB). Drops LLM input tokens from 250,000+ to under 1,000 tokens.
+* **Atomic Field Sync**: Edits to a field scratchpad push back atomically via `FieldPath(...segments)` update without risking or re-uploading the entire 1 MB document.
+* **Unpack Monolithic Documents (`$(split-horizontal)`)**: 1-click splitting of monolithic documents into modular field files (`header.json`, `sidebar.json`, `metadata.json`), each independently tracked.
+* **Dual-Mode Architecture (`ketrik-firestore-studio.openMode`)**:
+  * `"virtual"` *(default)*: 100% in-memory virtual tabs (`ketrik-firestore-studio://`) with zero files written to disk. Perfect for ephemeral browsing and production compliance.
+  * `"workspace"`: Directly opens `.firestore/...` scratchpad files on tree clicks for seamless 0-click AI assistant editing.
+* **Auto-Sync on Save**: When enabled (`ketrik-firestore-studio.autoSyncLocalSnapshots`), saving any tracked file immediately pushes changes back to Firestore / Local JSON.
+* **Privacy & Cleanup (`$(trash) Clean All AI Scratchpads`)**: 1-click command in the Command Palette to completely wipe `.firestore/` and reset all bindings.
+
 ---
 
 ## 🛠️ Getting Started in 3 Steps
@@ -120,6 +132,12 @@ Scan and evaluate document consistency across collections:
 | `ketrik-firestore-studio.copyMultipleCollections` | Connection & Collection Menu | Selectively copy multiple collections across instances with naming rules & deep subcollection support |
 | `ketrik-firestore-studio.exportCollection` | Collection Context Menu | Export collection to CSV, JSON, or NDJSON |
 | `ketrik-firestore-studio.importCollection` | Collection Context Menu | Import external datasets with type coercion |
+| `ketrik-firestore-studio.openAiScratchpad` | Tree Item / Editor Title (`$(sparkle)`) | Instant zero-prompt local scratchpad for whole document or isolated field |
+| `ketrik-firestore-studio.unpackDocumentFields` | Document Context / Title (`$(split-horizontal)`) | Split monolithic 1MB document into modular, isolated field files for AI |
+| `ketrik-firestore-studio.cleanScratchpads` | Command Palette (`$(trash)`) | Recursively wipe all local `.firestore/` scratchpads and bindings |
+| `ketrik-firestore-studio.diffSnapshotWithFirestore` | Snapshot Editor Title (`$(diff)`) | Side-by-side graphical diff between local snapshot/field and live Firestore |
+| `ketrik-firestore-studio.pushSnapshotToFirestore` | Snapshot Editor Title (`$(cloud-upload)`) | Push local snapshot or field atomically to Firestore / Local JSON |
+| `ketrik-firestore-studio.pullSnapshotFromFirestore` | Snapshot Editor Title (`$(cloud-download)`) | Refresh local snapshot from remote Firestore without losing bindings |
 | `ketrik-firestore-studio.deleteCollection` | Collection Context Menu | Permanently delete a collection and all nested documents/subcollections with safety confirmation |
 | `ketrik-firestore-studio.deleteMultipleCollections` | Connection & Collection Menu | Multi-select and batch-delete multiple collections with safety confirmation |
 
@@ -131,6 +149,12 @@ Fine-tune extension behavior in your VS Code `settings.json`:
 
 ```jsonc
 {
+  // Document open target: "virtual" (in-memory, 0 disk files) or "workspace" (direct .firestore/ scratchpad)
+  "ketrik-firestore-studio.openMode": "virtual",
+
+  // Automatically push local changes to Firestore on file save
+  "ketrik-firestore-studio.autoSyncLocalSnapshots": true,
+
   // Maximum rows to load in collection table views (prevents unbounded quota usage)
   "ketrik-firestore-studio.maxTableRows": 100,
 

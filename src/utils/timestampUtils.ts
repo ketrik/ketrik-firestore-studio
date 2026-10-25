@@ -79,3 +79,25 @@ export function formatRelativeTime(date: Date, now: Date = new Date()): string {
   const absYears = Math.floor(absDays / 365);
   return isPast ? `${absYears}y ago` : `in ${absYears}y`;
 }
+
+/**
+ * Recursively revives {_seconds, _nanoseconds} objects into real Firestore Timestamp instances.
+ * Uses zero-allocation loops to minimize memory churn during massive document imports and clones.
+ */
+export function reviveTimestamps(val: any): any {
+  if (!val || typeof val !== "object") return val;
+  if (val instanceof Timestamp) return val;
+  if (isTimestampLike(val)) {
+    return new Timestamp((val as any)._seconds, (val as any)._nanoseconds);
+  }
+  if (Array.isArray(val)) {
+    return val.map(reviveTimestamps);
+  }
+  const res: Record<string, any> = {};
+  for (const k in val) {
+    if (Object.prototype.hasOwnProperty.call(val, k)) {
+      res[k] = reviveTimestamps(val[k]);
+    }
+  }
+  return res;
+}

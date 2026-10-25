@@ -3,6 +3,8 @@ import { scheme } from "../constants";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { getDocumentSizeInfo, DocumentSizeInfo } from "../utils/documentSizeUtils";
 
+import { SnapshotSyncService } from "../services/SnapshotSyncService";
+
 /**
  * Manages a dynamic Status Bar item that calculates and displays the active Firestore document size
  * whenever a `ketrik-firestore-studio://` document is open and focused in the editor.
@@ -73,8 +75,11 @@ export class DocumentSizeStatusBarController implements vscode.Disposable {
       return !path.endsWith(".rules") && !path.endsWith("/firestore.rules");
     }
 
-    // Support local JSON documents matching configured connections
+    // Support local JSON documents or snapshot bindings matching configured connections
     if (document.uri.scheme === "file" && document.fileName.endsWith(".json")) {
+      if (SnapshotSyncService.getInstance().getBinding(document.uri)) {
+        return true;
+      }
       const connections = ConnectionManager.getInstance().getConnections();
       const filePath = document.uri.fsPath;
       return connections.some((c) => {
@@ -94,7 +99,8 @@ export class DocumentSizeStatusBarController implements vscode.Disposable {
 
     const doc = editor.document;
     const uriKey = doc.uri.toString();
-    const docPath = doc.uri.path.replace(/^\//, "").replace(/\.json$/, "");
+    const binding = doc.uri.scheme === "file" ? SnapshotSyncService.getInstance().getBinding(doc.uri) : undefined;
+    const docPath = binding ? binding.docPath : doc.uri.path.replace(/^\//, "").replace(/\.json$/, "");
 
     // Fast-path: Reuse cached size if document version has not changed
     const cached = this._sizeCache.get(uriKey);

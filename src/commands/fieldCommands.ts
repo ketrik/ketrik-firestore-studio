@@ -20,6 +20,10 @@ export async function openFieldCommand(
     return;
   }
 
+  if (item.isArrayElement) {
+    return editArrayItemCommand(item, explorerDataProvider);
+  }
+
   const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
   const segments = item.pathSegments && item.pathSegments.length > 0 ? item.pathSegments : [item.fieldName];
   const fieldTarget = item.fullFieldPath || segments.join(".");
@@ -534,6 +538,10 @@ export async function deleteFieldCommand(
   if (!targetItem?.parentDocRef || !targetItem?.fieldName) {
     vscode.window.showErrorMessage("No field selected to delete.");
     return;
+  }
+
+  if (targetItem.isArrayElement) {
+    return deleteArrayItemCommand(targetItem, explorerDataProvider);
   }
 
   const segments = targetItem.pathSegments && targetItem.pathSegments.length > 0 ? targetItem.pathSegments : [targetItem.fieldName];
@@ -1189,3 +1197,348 @@ export async function duplicateFieldCommand(
     vscode.window.showErrorMessage(`Failed to duplicate field: ${err.message}`);
   }
 }
+
+/**
+ * Helper to mutate an array within a document in Firestore or Local JSON.
+ */
+async function mutateDocumentArray(
+  item: DocumentFieldItem,
+  mutator: (arr: any[]) => void,
+  actionDesc: string,
+  explorerDataProvider: ExplorerDataProvider
+): Promise<boolean> {
+  if (!item?.parentDocRef) return false;
+
+  const parentArray = item.isArrayElement ? (item.parentArrayItem || item) : item;
+  const arraySegments =
+    parentArray.pathSegments && parentArray.pathSegments.length > 0
+      ? parentArray.pathSegments
+      : [parentArray.fieldName];
+  const arrayPathStr = arraySegments.join(".");
+
+  try {
+    const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+    let arr: any[];
+
+    if (conn?.isLocalJson) {
+      const doc = LocalJsonService.getInstance().getDocument(conn, item.parentDocRef.path) || {};
+      let cur: any = doc;
+      for (let i = 0; i < arraySegments.length - 1; i++) {
+        cur = cur?.[arraySegments[i]];
+      }
+      const existing = cur?.[arraySegments[arraySegments.length - 1]];
+      arr = Array.isArray(existing) ? [...existing] : [];
+      mutator(arr);
+      if (cur) {
+        cur[arraySegments[arraySegments.length - 1]] = arr;
+      }
+      LocalJsonService.getInstance().setDocument(conn, item.parentDocRef.path, doc);
+    } else {
+      CostService.getInstance().recordOperation(item.connectionId, "read", 1);
+      const snap = await item.parentDocRef.get();
+      if (!snap.exists) {
+        vscode.window.showErrorMessage(`Document "${item.parentDocRef.id}" no longer exists.`);
+        return false;
+      }
+      const docData = snap.data() || {};
+      let cur: any = docData;
+      for (let i = 0; i < arraySegments.length - 1; i++) {
+        cur = cur?.[arraySegments[i]];
+      }
+      const existing = cur?.[arraySegments[arraySegments.length - 1]];
+      arr = Array.isArray(existing) ? [...existing] : [];
+      mutator(arr);
+      await item.parentDocRef.update(new FieldPath(...arraySegments), arr);
+      CostService.getInstance().recordOperation(item.connectionId, "write", 1);
+    }
+
+    if (parentArray) {
+      parentArray.value = arr;
+    }
+    DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+    explorerDataProvider.refreshNode(parentArray || item);
+    vscode.window.showInformationMessage(`${actionDesc} in '${arrayPathStr}'!`);
+    return true;
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to ${actionDesc.toLowerCase()}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Edit a single array element in place.
+ */
+export async function editArrayItemCommand(
+  item: DocumentFieldItem,
+  explorerDataProvider: ExplorerDataProvider
+) {
+  if (!item?.parentDocRef || item.arrayIndex === undefined) {
+    vscode.window.showErrorMessage("No array item selected.");
+    return;
+  }
+
+  const idx = item.arrayIndex;
+  const val = item.value;
+  const parentName = item.parentArrayItem?.fieldName || "array";
+  const valType = Array.isArray(val)
+    ? "array"
+    : val === null
+    ? "null"
+    : typeof val;
+
+  let newVal: any;
+
+  if (valType === "string") {
+    const input = await vscode.window.showInputBox({
+      prompt: `Edit item [${idx}] for '${parentName}' (String)`,
+      value: String(val),
+    });
+    if (input === undefined) return;
+    newVal = input;
+  } else if (valType === "number") {
+    const input = await vscode.window.showInputBox({
+      prompt: `Edit item [${idx}] for '${parentName}' (Number)`,
+      value: String(val),
+      validateInput: (v) => (isNaN(Number(v)) ? "Must be a valid number" : undefined),
+    });
+    if (input === undefined) return;
+    newVal = Number(input);
+  } else if (valType === "boolean") {
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: "true", description: val === true ? "(current)" : undefined },
+        { label: "false", description: val === false ? "(current)" : undefined },
+      ],
+      { placeHolder: `Set boolean value for item [${idx}]` }
+    );
+    if (!pick) return;
+    newVal = pick.label === "true";
+  } else if (valType === "object" && isTimestampLike(val)) {
+    const curDate = timestampToDate(val) ?? new Date();
+    const action = await vscode.window.showQuickPick(
+      [
+        { label: "$(clock) Set to Now", action: "now" },
+        { label: "$(edit) Edit ISO Date String", action: "custom" },
+      ],
+      { placeHolder: `Update timestamp for item [${idx}]` }
+    );
+    if (!action) return;
+    if (action.action === "now") {
+      newVal = Timestamp.now();
+    } else {
+      const input = await vscode.window.showInputBox({
+        prompt: `Enter ISO-8601 string for item [${idx}]`,
+        value: curDate.toISOString(),
+      });
+      if (!input) return;
+      newVal = Timestamp.fromDate(new Date(input));
+    }
+  } else {
+    // Complex object, array, or null: provide QuickPick
+    const currentJson = JSON.stringify(val, null, 2);
+    const action = await vscode.window.showQuickPick(
+      [
+        { label: "$(json) Edit as JSON String", action: "json", description: "Edit full JSON payload inline" },
+        { label: "$(edit) Open in Document Editor", action: "editor", description: "Jump directly into document JSON editor" },
+        { label: "$(repo-forked) Duplicate Item", action: "duplicate", description: "Insert a clone of this item" },
+        { label: "$(trash) Delete Item", action: "delete", description: "Remove this item from the array" },
+      ],
+      { placeHolder: `Choose action for item [${idx}]` }
+    );
+    if (!action) return;
+
+    if (action.action === "editor") {
+      const parentSegments =
+        item.parentArrayItem?.pathSegments ||
+        (item.pathSegments ? item.pathSegments.slice(0, -1) : [item.fieldName]);
+      await openPath(item.parentDocRef.path, item.connectionId, parentSegments.join("."));
+      return;
+    } else if (action.action === "duplicate") {
+      await duplicateArrayItemCommand(item, explorerDataProvider);
+      return;
+    } else if (action.action === "delete") {
+      await deleteArrayItemCommand(item, explorerDataProvider);
+      return;
+    } else if (action.action === "json") {
+      const input = await vscode.window.showInputBox({
+        prompt: `Edit JSON for item [${idx}]`,
+        value: currentJson,
+        validateInput: (v) => {
+          try {
+            JSON.parse(v);
+            return undefined;
+          } catch {
+            return "Invalid JSON syntax";
+          }
+        },
+      });
+      if (input === undefined) return;
+      newVal = JSON.parse(input);
+    }
+  }
+
+  await mutateDocumentArray(
+    item,
+    (arr) => {
+      arr[idx] = newVal;
+    },
+    `Updated item [${idx}]`,
+    explorerDataProvider
+  );
+}
+
+/**
+ * Duplicate a single array element at index + 1.
+ */
+export async function duplicateArrayItemCommand(
+  item: DocumentFieldItem,
+  explorerDataProvider: ExplorerDataProvider
+) {
+  if (!item?.parentDocRef || item.arrayIndex === undefined) {
+    vscode.window.showErrorMessage("No array item selected.");
+    return;
+  }
+
+  const idx = item.arrayIndex;
+  let cloneVal = item.value;
+  try {
+    cloneVal = JSON.parse(JSON.stringify(cloneVal));
+  } catch {}
+
+  await mutateDocumentArray(
+    item,
+    (arr) => {
+      arr.splice(idx + 1, 0, cloneVal);
+    },
+    `Duplicated item [${idx}]`,
+    explorerDataProvider
+  );
+}
+
+/**
+ * Delete a single array element from its parent array.
+ */
+export async function deleteArrayItemCommand(
+  item: DocumentFieldItem,
+  explorerDataProvider: ExplorerDataProvider
+) {
+  if (!item?.parentDocRef || item.arrayIndex === undefined) {
+    vscode.window.showErrorMessage("No array item selected.");
+    return;
+  }
+
+  const idx = item.arrayIndex;
+  const parentName = item.parentArrayItem?.fieldName || "array";
+  const confirm = await vscode.window.showWarningMessage(
+    `Are you sure you want to delete item [${idx}] from '${parentName}'?`,
+    { modal: true },
+    "Delete Item",
+    "Cancel"
+  );
+  if (confirm !== "Delete Item") return;
+
+  await mutateDocumentArray(
+    item,
+    (arr) => {
+      arr.splice(idx, 1);
+    },
+    `Deleted item [${idx}]`,
+    explorerDataProvider
+  );
+}
+
+/**
+ * Add a new item to an array field.
+ */
+export async function addArrayItemCommand(
+  item: DocumentFieldItem,
+  explorerDataProvider: ExplorerDataProvider
+) {
+  if (!item?.parentDocRef) {
+    vscode.window.showErrorMessage("No array selected.");
+    return;
+  }
+
+  const parentArray = item.isArrayElement ? (item.parentArrayItem || item) : item;
+  const parentName = parentArray.fieldName;
+
+  const typePick = await vscode.window.showQuickPick(
+    [
+      { label: "$(symbol-string) String", type: "string" },
+      { label: "$(symbol-number) Number", type: "number" },
+      { label: "$(symbol-boolean) Boolean", type: "boolean" },
+      { label: "$(calendar) Timestamp (Now)", type: "timestamp" },
+      { label: "$(symbol-namespace) Object / Map ({})", type: "object" },
+      { label: "$(symbol-array) Array ([])", type: "array" },
+      { label: "$(json) Custom JSON", type: "json" },
+    ],
+    { placeHolder: `Select value type for new item in '${parentName}'` }
+  );
+  if (!typePick) return;
+
+  let entryVal: any;
+  switch (typePick.type) {
+    case "string": {
+      const strVal = await vscode.window.showInputBox({
+        prompt: `Enter string value for new item in '${parentName}'`,
+      });
+      if (strVal === undefined) return;
+      entryVal = strVal;
+      break;
+    }
+    case "number": {
+      const numVal = await vscode.window.showInputBox({
+        prompt: `Enter numeric value for new item in '${parentName}'`,
+        validateInput: (v) => (isNaN(Number(v)) ? "Must be a valid number" : undefined),
+      });
+      if (numVal === undefined) return;
+      entryVal = Number(numVal);
+      break;
+    }
+    case "boolean": {
+      const boolPick = await vscode.window.showQuickPick([{ label: "true" }, { label: "false" }]);
+      if (!boolPick) return;
+      entryVal = boolPick.label === "true";
+      break;
+    }
+    case "timestamp": {
+      entryVal = Timestamp.now();
+      break;
+    }
+    case "object": {
+      entryVal = {};
+      break;
+    }
+    case "array": {
+      entryVal = [];
+      break;
+    }
+    case "json": {
+      const jsonStr = await vscode.window.showInputBox({
+        prompt: "Enter raw JSON for new array item",
+        placeHolder: '{"key": "value"}',
+        validateInput: (v) => {
+          try {
+            JSON.parse(v || "null");
+            return undefined;
+          } catch {
+            return "Invalid JSON syntax";
+          }
+        },
+      });
+      if (jsonStr === undefined) return;
+      entryVal = JSON.parse(jsonStr || "null");
+      break;
+    }
+  }
+
+  await mutateDocumentArray(
+    parentArray,
+    (arr) => {
+      arr.push(entryVal);
+    },
+    `Added item [${Array.isArray(parentArray.value) ? parentArray.value.length : 0}]`,
+    explorerDataProvider
+  );
+}
+

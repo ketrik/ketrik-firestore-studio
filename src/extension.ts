@@ -18,6 +18,8 @@ import {
   copyDocumentCommand,
   pasteDocumentCommand,
   copyDocumentJsonCommand,
+  filterCollectionCommand,
+  clearCollectionFilterCommand,
 } from "./commands/documentCommands";
 import {
   openFieldCommand,
@@ -28,6 +30,10 @@ import {
   addNestedPropertyCommand,
   copyFieldJsonCommand,
   duplicateFieldCommand,
+  editArrayItemCommand,
+  addArrayItemCommand,
+  duplicateArrayItemCommand,
+  deleteArrayItemCommand,
 } from "./commands/fieldCommands";
 import {
   openCollectionAsTableCommand,
@@ -81,6 +87,19 @@ import {
   pushLocalDocumentToFirestoreCommand,
   snapshotDocumentToLocalJsonCommand,
 } from "./commands/localSyncCommands";
+import {
+  openAiScratchpadCommand,
+  unpackDocumentFieldsCommand,
+  snapshotToWorkspaceCommand,
+  diffSnapshotWithFirestoreCommand,
+  pushSnapshotToFirestoreCommand,
+  pullSnapshotFromFirestoreCommand,
+  bindFileToFirestoreCommand,
+  unbindFileFromFirestoreCommand,
+  snapshotActionsMenuCommand,
+  cleanScratchpadsCommand,
+} from "./commands/snapshotSyncCommands";
+import { SnapshotSyncService } from "./services/SnapshotSyncService";
 import { copyCollectionToInstanceCommand } from "./commands/copyCollectionCommand";
 import { copyMultipleCollectionsCommand } from "./commands/copyMultipleCollectionsCommand";
 import {
@@ -101,10 +120,11 @@ import { openFieldAsTable } from "./webview/openFieldAsTable";
 import { openAuthUsersAsTable } from "./webview/openAuthUsersAsTable";
 import { ConnectionManager } from "./connections/ConnectionManager";
 import { TemplateService } from "./services/TemplateService";
-import { TimestampInlayHintsProvider, TimestampHoverProvider } from "./editor/TimestampEditorDecorations";
+import { TimestampInlayHintsProvider, TimestampHoverProvider, createTimestampDocumentCloseListener } from "./editor/TimestampEditorDecorations";
 import { DocumentSizeStatusBarController } from "./editor/DocumentSizeStatusBarController";
 import { openCostSimulator } from "./webview/openCostSimulator";
 import { openOverviewDashboard } from "./webview/openOverviewDashboard";
+import { OverviewService } from "./analytics/overviewService";
 import { CostStatusBarController } from "./cost/CostStatusBarController";
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -147,10 +167,19 @@ export async function activate(context: vscode.ExtensionContext) {
     treeDataProvider: explorerDataProvider,
   });
   explorerDataProvider.setTreeView(explorerView);
+  context.subscriptions.push(explorerView);
+
+  // Initialize OverviewService singleton
+  context.subscriptions.push(OverviewService.getInstance());
+
+  // Initialize SnapshotSyncService singleton
+  const snapshotSyncService = SnapshotSyncService.getInstance();
+  context.subscriptions.push(snapshotSyncService);
 
   // Auto-reveal active Firestore document or field in Tree View when switching tabs or opening docs
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
+      snapshotSyncService.updateContextForEditor(editor);
       if (!editor) {
         return;
       }
@@ -172,9 +201,26 @@ export async function activate(context: vscode.ExtensionContext) {
             );
           }
         }
+      } else if (uri.scheme === "file") {
+        const binding = snapshotSyncService.getBinding(uri);
+        if (binding) {
+          const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+          if (config.get<boolean>("autoRevealDocumentInTree", true)) {
+            explorerDataProvider.revealDocument(
+              binding.docPath,
+              binding.connectionId,
+              {
+                select: true,
+                focus: false,
+                expand: true,
+              }
+            );
+          }
+        }
       }
     })
   );
+  snapshotSyncService.updateContextForEditor(vscode.window.activeTextEditor);
 
   // Register editor Inlay Hints & Hover providers for Firestore Timestamps
   const jsonSelector: vscode.DocumentSelector = [
@@ -184,6 +230,7 @@ export async function activate(context: vscode.ExtensionContext) {
     { scheme: "file", language: "jsonc" },
   ];
   context.subscriptions.push(
+    createTimestampDocumentCloseListener(),
     vscode.languages.registerInlayHintsProvider(jsonSelector, new TimestampInlayHintsProvider()),
     vscode.languages.registerHoverProvider(jsonSelector, new TimestampHoverProvider())
   );
@@ -391,6 +438,14 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.inspectProjectAuthConfig",
       (item?: any) => inspectProjectAuthConfigCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.filterCollection",
+      (item: CollectionItem) => filterCollectionCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.clearCollectionFilter",
+      (item: CollectionItem) => clearCollectionFilterCommand(item, explorerDataProvider)
     )
   );
 
@@ -449,11 +504,62 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.copyDocumentJson",
       copyDocumentJsonCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.clickDocument",
+      async (item: DocumentItem) => {
+        if (!item?.reference?.path) return;
+        const isExpanded = explorerDataProvider.isDocumentExpanded(item.connectionId, item.reference.path);
+        if (isExpanded) {
+          await openPath(item.reference.path, item.connectionId);
+        } else {
+          await explorerDataProvider.expandItem(item);
+        }
+      }
     )
   );
 
   // ── Field Commands ────────────────────────────────────────────────────────────
   context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.clickField",
+      async (item: DocumentFieldItem) => {
+        if (!item?.parentDocRef || !item?.fieldName) return;
+        if (item.isArrayElement) {
+          await editArrayItemCommand(item, explorerDataProvider);
+          return;
+        }
+        const isMap = item.contextValue === "documentFieldMap";
+        const keyCount = isMap && item.value && typeof item.value === "object" ? Object.keys(item.value).length : 0;
+        const isArray = Array.isArray(item.value) && item.value.length > 0;
+        if ((isMap && keyCount > 0) || isArray) {
+          const isExpanded = explorerDataProvider.isFieldExpanded(item.id);
+          if (isExpanded) {
+            await vscode.commands.executeCommand("ketrik-firestore-studio.openFieldInEditor", item);
+          } else {
+            await explorerDataProvider.expandItem(item);
+          }
+        } else {
+          await openFieldCommand(item, explorerDataProvider);
+        }
+      }
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.editArrayItem",
+      (item: DocumentFieldItem) => editArrayItemCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.addArrayItem",
+      (item: DocumentFieldItem) => addArrayItemCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.duplicateArrayItem",
+      (item: DocumentFieldItem) => duplicateArrayItemCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.deleteArrayItem",
+      (item: DocumentFieldItem) => deleteArrayItemCommand(item, explorerDataProvider)
+    ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.openField",
       (item: DocumentFieldItem) => openFieldCommand(item, explorerDataProvider)
@@ -619,14 +725,52 @@ export async function activate(context: vscode.ExtensionContext) {
         const connectionId = item?.config?.id || item?.connectionId || (typeof item === "string" ? item : undefined);
         return openOverviewDashboard(connectionId ? { connectionId } : undefined);
       }
+    ),
+    // ── Snapshot & Workspace Sync Commands ──────────────────────────────────────
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openAiScratchpad",
+      (target?: any) => openAiScratchpadCommand(target)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.unpackDocumentFields",
+      (target?: any) => unpackDocumentFieldsCommand(target)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.snapshotToWorkspace",
+      (target?: any) => snapshotToWorkspaceCommand(target)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.diffSnapshotWithFirestore",
+      (target?: vscode.Uri) => diffSnapshotWithFirestoreCommand(target)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.pushSnapshotToFirestore",
+      (target?: vscode.Uri, silent?: boolean) => pushSnapshotToFirestoreCommand(target, explorerDataProvider, silent)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.pullSnapshotFromFirestore",
+      (target?: vscode.Uri) => pullSnapshotFromFirestoreCommand(target)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.bindFileToFirestore",
+      (target?: vscode.Uri) => bindFileToFirestoreCommand(target)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.unbindFileFromFirestore",
+      (target?: vscode.Uri) => unbindFileFromFirestoreCommand(target)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.snapshotActionsMenu",
+      () => snapshotActionsMenuCommand()
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.cleanScratchpads",
+      () => cleanScratchpadsCommand()
     )
   );
 
   registerIndexCommands(context, explorerDataProvider);
   registerStorageCommands(context, explorerDataProvider);
-
-  context.subscriptions.push(explorerView);
-
 
   context.subscriptions.push(
     vscode.workspace.registerFileSystemProvider(

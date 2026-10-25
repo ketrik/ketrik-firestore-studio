@@ -4,8 +4,7 @@ import { ConnectionManager, FirestoreConnectionConfig } from "../connections/Con
 import { LocalJsonService } from "../services/LocalJsonService";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
-import { Timestamp } from "firebase-admin/firestore";
-import { isTimestampLike } from "../utils/timestampUtils";
+import { reviveTimestamps } from "../utils/timestampUtils";
 
 /**
  * Command: Push / Seed a local JSON collection into a Firestore database (Cloud or Emulator).
@@ -95,26 +94,7 @@ export async function pushLocalCollectionToFirestoreCommand(
     return;
   }
 
-  // Revive {_seconds, _nanoseconds} maps into Timestamp objects
-  const reviveTimestamps = (val: any): any => {
-    if (!val || typeof val !== "object") {
-      return val;
-    }
-    if (val instanceof Timestamp) {
-      return val;
-    }
-    if (isTimestampLike(val)) {
-      return new Timestamp((val as any)._seconds, (val as any)._nanoseconds);
-    }
-    if (Array.isArray(val)) {
-      return val.map(reviveTimestamps);
-    }
-    const res: Record<string, any> = {};
-    for (const [k, v] of Object.entries(val)) {
-      res[k] = reviveTimestamps(v);
-    }
-    return res;
-  };
+
 
   // 6. Execute chunked batch write (400 per batch)
   await vscode.window.withProgress(
@@ -353,19 +333,7 @@ export async function pushLocalDocumentToFirestoreCommand(
 
   if (!strategyPick) return;
 
-  const reviveTimestamps = (val: any): any => {
-    if (!val || typeof val !== "object") return val;
-    if (val instanceof Timestamp) return val;
-    if (isTimestampLike(val)) {
-      return new Timestamp((val as any)._seconds, (val as any)._nanoseconds);
-    }
-    if (Array.isArray(val)) return val.map(reviveTimestamps);
-    const res: Record<string, any> = {};
-    for (const [k, v] of Object.entries(val)) {
-      res[k] = reviveTimestamps(v);
-    }
-    return res;
-  };
+
 
   try {
     const firestore = await connectionManager.getFirestore(targetConn.id);

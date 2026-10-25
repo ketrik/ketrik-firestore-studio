@@ -69,23 +69,24 @@ export function extractDocumentFieldEntries(
   obj: Record<string, any>,
   prefix = "",
   maxDepth = 2,
-  currentDepth = 0
+  currentDepth = 0,
+  results: { path: string; value: any }[] = []
 ): { path: string; value: any }[] {
-  const results: { path: string; value: any }[] = [];
   if (!obj || typeof obj !== "object" || Array.isArray(obj) || currentDepth >= maxDepth) {
     return results;
   }
 
-  for (const [key, val] of Object.entries(obj)) {
+  for (const key in obj) {
+    if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
     if (key.startsWith("__") && (key === "__id" || key === "__path")) continue;
+    const val = obj[key];
     const fullPath = prefix ? `${prefix}.${key}` : key;
     results.push({ path: fullPath, value: val });
 
     // Inspect nested plain map
     const type = detectDetailedValueType(val);
     if (type === "map" && currentDepth + 1 < maxDepth) {
-      const nested = extractDocumentFieldEntries(val, fullPath, maxDepth, currentDepth + 1);
-      results.push(...nested);
+      extractDocumentFieldEntries(val, fullPath, maxDepth, currentDepth + 1, results);
     }
   }
   return results;

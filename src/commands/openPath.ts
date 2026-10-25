@@ -63,6 +63,27 @@ export default async function openPath(
       }
 
       if (parts.length % 2 === 0) {
+        const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+        const openMode = config.get<string>("openMode", "virtual");
+        const hasWorkspace = !!vscode.workspace.workspaceFolders?.length;
+
+        if (openMode === "workspace" && hasWorkspace) {
+          if (targetField) {
+            await vscode.commands.executeCommand("ketrik-firestore-studio.openAiScratchpad", {
+              connectionId,
+              parentDocRef: { path: cleanPath },
+              fieldName: targetField,
+              fullFieldPath: targetField,
+            });
+          } else {
+            await vscode.commands.executeCommand("ketrik-firestore-studio.openAiScratchpad", {
+              connectionId,
+              reference: { path: cleanPath },
+            });
+          }
+          return;
+        }
+
         const conn = connectionManager.getConnection(connectionId);
         if (conn?.isLocalJson) {
           const authority = connectionId || "default";

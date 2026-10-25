@@ -9,6 +9,57 @@ import { LocalJsonService } from "../services/LocalJsonService";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import { FieldPath } from "firebase-admin/firestore";
 
+interface FieldPanelContext {
+  panel: vscode.WebviewPanel;
+  headers: string[];
+  rows: any[];
+  rawData: any;
+  isArray: boolean;
+  messageSubscription?: vscode.Disposable;
+}
+
+// Active field table panels registry to avoid duplicate webviews and memory retention
+const activeFieldPanels = new Map<string, FieldPanelContext>();
+
+/**
+ * Robust nested field extraction from an object hierarchy.
+ */
+function extractNestedValue(docData: any, targetFieldPath: string, segments: string[]): any {
+  if (!docData || typeof docData !== "object") return undefined;
+  if (targetFieldPath in docData) return docData[targetFieldPath];
+
+  // 1. Try normalizedSegments
+  let cur: any = docData;
+  let found = true;
+  for (const seg of segments) {
+    if (cur && typeof cur === "object" && seg in cur) {
+      cur = cur[seg];
+    } else {
+      found = false;
+      break;
+    }
+  }
+  if (found && cur !== undefined) return cur;
+
+  // 2. Try dot path split if not already tried
+  if (targetFieldPath.includes(".")) {
+    const parts = targetFieldPath.split(".");
+    let cur2: any = docData;
+    let found2 = true;
+    for (const p of parts) {
+      if (cur2 && typeof cur2 === "object" && p in cur2) {
+        cur2 = cur2[p];
+      } else {
+        found2 = false;
+        break;
+      }
+    }
+    if (found2 && cur2 !== undefined) return cur2;
+  }
+
+  return undefined;
+}
+
 /**
  * Open a DocumentFieldItem (Record<string, T> or T[]) as an interactive virtual Collection Table.
  *
@@ -16,93 +67,122 @@ import { FieldPath } from "firebase-admin/firestore";
  * - If Record<string, T> (Keyed Map / Registry): Dictionary keys become Row IDs.
  * - If T[] (Sequence / Array): Array indices or item.id become Row IDs.
  */
-// Active field table panels registry to avoid duplicate webviews and memory retention
-const activeFieldPanels = new Map<string, vscode.WebviewPanel>();
-
 export async function openFieldAsTable(item: DocumentFieldItem) {
   const fieldSegments =
     item.pathSegments && item.pathSegments.length > 0
       ? item.pathSegments
       : [item.fieldName];
   const targetFieldPath =
-    (typeof item.fullFieldPath === "string" && item.fullFieldPath)
+    typeof item.fullFieldPath === "string" && item.fullFieldPath
       ? item.fullFieldPath
       : fieldSegments.join(".");
-
-  const panelKey = `${item.connectionId}:${item.parentDocRef.path}:${targetFieldPath}`;
-  const existingPanel = activeFieldPanels.get(panelKey);
-  if (existingPanel) {
-    existingPanel.reveal(vscode.ViewColumn.One);
-    return;
-  }
-
-  const isArray = Array.isArray(item.value);
-  const panelTitle = isArray
-    ? `Array: ${targetFieldPath} [${item.value?.length ?? 0}]`
-    : `Registry: ${targetFieldPath}`;
-
-  const panel = vscode.window.createWebviewPanel(
-    "firestoreFieldTable",
-    panelTitle,
-    vscode.ViewColumn.One,
-    {
-      enableScripts: true,
-    }
-  );
-  activeFieldPanels.set(panelKey, panel);
+  const normalizedSegments = targetFieldPath.includes(".")
+    ? targetFieldPath.split(".")
+    : fieldSegments;
 
   let rawData = item.value;
-  // If item.value is undefined or needs fresh data from parent doc, fetch snapshot
-  if (rawData === undefined && item.parentDocRef) {
+
+  // Attempt JSON parse if rawData is a string
+  if (typeof rawData === "string") {
+    const trimmed = rawData.trim();
+    if (
+      (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+      (trimmed.startsWith("{") && trimmed.endsWith("}"))
+    ) {
+      try {
+        rawData = JSON.parse(trimmed);
+      } catch {}
+    }
+  }
+
+  // If rawData is empty or missing, fetch fresh snapshot from Local JSON or Firestore
+  const isDataEmpty =
+    rawData === undefined ||
+    rawData === null ||
+    (Array.isArray(rawData) && rawData.length === 0) ||
+    (typeof rawData === "object" && Object.keys(rawData).length === 0);
+
+  if (isDataEmpty && item.parentDocRef) {
     try {
       const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
       if (conn?.isLocalJson) {
         const localDoc = LocalJsonService.getInstance().getDocument(conn, item.parentDocRef.path);
         if (localDoc) {
-          let cur: any = localDoc;
-          for (const seg of fieldSegments) {
-            if (cur && typeof cur === "object" && seg in cur) {
-              cur = cur[seg];
-            } else {
-              cur = undefined;
-              break;
-            }
+          const extracted = extractNestedValue(localDoc, targetFieldPath, normalizedSegments);
+          if (extracted !== undefined) {
+            rawData = extracted;
           }
-          rawData = cur;
         }
       } else {
-        const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-        const docSnap = await firestore.doc(item.parentDocRef.path).get();
-        if (docSnap.exists) {
-          const docData = docSnap.data() || {};
-          let cur: any = docData;
-          for (const seg of fieldSegments) {
-            if (cur && typeof cur === "object" && seg in cur) {
-              cur = cur[seg];
-            } else {
-              cur = undefined;
-              break;
-            }
+        let docData: any;
+        // Check snapshot cache first to avoid unnecessary remote reads
+        try {
+          const cachedSnap = await DocumentFileSystemProvider.getInstance().getCachedSnapshot(
+            item.connectionId,
+            item.parentDocRef.path
+          );
+          if (cachedSnap?.exists) {
+            docData = cachedSnap.data();
           }
-          rawData = cur;
+        } catch {}
+
+        if (!docData) {
+          const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
+          const docSnap = await firestore.doc(item.parentDocRef.path).get();
+          if (docSnap.exists) {
+            docData = docSnap.data() || {};
+          }
+        }
+
+        if (docData) {
+          const extracted = extractNestedValue(docData, targetFieldPath, normalizedSegments);
+          if (extracted !== undefined) {
+            rawData = extracted;
+          }
         }
       }
-    } catch {}
+
+      // If fetched string was JSON, parse it
+      if (typeof rawData === "string") {
+        const trimmed = rawData.trim();
+        if (
+          (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+          (trimmed.startsWith("{") && trimmed.endsWith("}"))
+        ) {
+          try {
+            rawData = JSON.parse(trimmed);
+          } catch {}
+        }
+      }
+    } catch (err: any) {
+      console.warn("Could not fetch fresh document snapshot for field table:", err);
+    }
   }
 
-  let rows: any[] = [];
-  let headers: string[] = [];
-
   function parseRows(data: any): { rows: any[]; headers: string[] } {
+    let targetData = data;
+    if (typeof targetData === "string") {
+      const trimmed = targetData.trim();
+      if (
+        (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+        (trimmed.startsWith("{") && trimmed.endsWith("}"))
+      ) {
+        try {
+          targetData = JSON.parse(trimmed);
+        } catch {}
+      }
+    }
+
     const parsedRows: any[] = [];
     const headerSet = new Set<string>();
+    const safeData = sanitizeFirestoreValue(targetData);
 
-    if (Array.isArray(data)) {
-      data.forEach((entry, index) => {
+    if (Array.isArray(safeData)) {
+      safeData.forEach((entry, index) => {
         let rowObj: any = {};
         let rowId = String(index);
 
-        if (entry !== null && typeof entry === "object") {
+        if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
           if (Buffer.isBuffer(entry) || entry instanceof Uint8Array) {
             rowObj = { value: `[Blob: ${entry.length} bytes]` };
           } else {
@@ -117,7 +197,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
 
         rowObj.__id = rowId;
         rowObj.__index = index;
-        rowObj.__path = `${item.parentDocRef.path}/${targetFieldPath}`;
+        rowObj.__path = `${item.parentDocRef?.path || ""}/${targetFieldPath}`;
 
         Object.keys(rowObj).forEach((k) => {
           if (k !== "__id" && k !== "__index" && k !== "__path") {
@@ -127,8 +207,8 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
 
         parsedRows.push(rowObj);
       });
-    } else if (data !== null && typeof data === "object") {
-      Object.entries(data).forEach(([key, val]) => {
+    } else if (safeData !== null && typeof safeData === "object") {
+      Object.entries(safeData).forEach(([key, val]) => {
         let rowObj: any = {};
         if (val !== null && typeof val === "object" && !Array.isArray(val)) {
           if (Buffer.isBuffer(val) || val instanceof Uint8Array) {
@@ -141,7 +221,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         }
 
         rowObj.__id = key;
-        rowObj.__path = `${item.parentDocRef.path}/${targetFieldPath}`;
+        rowObj.__path = `${item.parentDocRef?.path || ""}/${targetFieldPath}`;
 
         Object.keys(rowObj).forEach((k) => {
           if (k !== "__id" && k !== "__path") {
@@ -165,15 +245,68 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
   }
 
   const parsed = parseRows(rawData);
-  rows = parsed.rows;
-  headers = parsed.headers;
+  const rows = parsed.rows;
+  const headers = parsed.headers;
+
+  const panelKey = `${item.connectionId}:${item.parentDocRef?.path || ""}:${targetFieldPath}`;
+  const isArray = Array.isArray(rawData);
+  const count = isArray ? (Array.isArray(rawData) ? rawData.length : 0) : rawData && typeof rawData === "object" ? Object.keys(rawData).length : 0;
+  const panelTitle = isArray
+    ? `Array: ${targetFieldPath} [${count}]`
+    : `Registry: ${targetFieldPath}`;
+
+  const existingCtx = activeFieldPanels.get(panelKey);
+  if (existingCtx) {
+    existingCtx.headers = headers;
+    existingCtx.rows = rows;
+    existingCtx.rawData = rawData;
+    existingCtx.isArray = isArray;
+    existingCtx.panel.title = panelTitle;
+    existingCtx.panel.webview.html = getFieldTableHtml({
+      panelTitle,
+      fieldName: targetFieldPath,
+      connectionId: item.connectionId,
+      docPath: item.parentDocRef?.path || "",
+      isArray,
+      initialData: { headers, rows },
+    });
+    existingCtx.panel.reveal(vscode.ViewColumn.One);
+    existingCtx.panel.webview.postMessage({
+      type: "init",
+      headers,
+      rows,
+    });
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+  const retainContextWhenHidden = config.get<boolean>("retainWebviewTabs", true);
+
+  const panel = vscode.window.createWebviewPanel(
+    "firestoreFieldTable",
+    panelTitle,
+    vscode.ViewColumn.One,
+    {
+      enableScripts: true,
+      retainContextWhenHidden,
+    }
+  );
+
+  const ctx: FieldPanelContext = {
+    panel,
+    headers,
+    rows,
+    rawData,
+    isArray,
+  };
+  activeFieldPanels.set(panelKey, ctx);
 
   const messageSubscription = panel.webview.onDidReceiveMessage(async (message) => {
     if (message.command === "ready" || message.command === "clearSearch") {
       panel.webview.postMessage({
         type: "init",
-        headers,
-        rows,
+        headers: ctx.headers,
+        rows: ctx.rows,
       });
       return;
     }
@@ -223,9 +356,9 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
 
         const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
 
-        if (isArray) {
+        if (ctx.isArray) {
           const idx = index !== undefined ? index : Number(rowId);
-          let currentArr: any[] = Array.isArray(rawData) ? [...rawData] : [];
+          let currentArr: any[] = Array.isArray(ctx.rawData) ? [...ctx.rawData] : [];
           if (idx >= 0 && idx < currentArr.length) {
             if (typeof currentArr[idx] === "object" && currentArr[idx] !== null && field !== "value") {
               currentArr[idx] = { ...currentArr[idx], [field]: writeVal };
@@ -245,11 +378,11 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             await firestore.doc(item.parentDocRef.path).update(new FieldPath(...fieldSegments), currentArr);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
-          rawData = currentArr;
+          ctx.rawData = currentArr;
         } else {
           // Map
           let targetSegments: string[];
-          if (field === "value" && headers.length === 1 && headers[0] === "value") {
+          if (field === "value" && ctx.headers.length === 1 && ctx.headers[0] === "value") {
             targetSegments = [...fieldSegments, rowId];
           } else {
             targetSegments = [...fieldSegments, rowId, field];
@@ -268,20 +401,20 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
 
-          if (rawData && typeof rawData === "object") {
-            if (field === "value" && (typeof rawData[rowId] !== "object" || rawData[rowId] === null)) {
-              rawData[rowId] = writeVal;
-            } else if (rawData[rowId] && typeof rawData[rowId] === "object") {
-              rawData[rowId][field] = writeVal;
+          if (ctx.rawData && typeof ctx.rawData === "object") {
+            if (field === "value" && (typeof ctx.rawData[rowId] !== "object" || ctx.rawData[rowId] === null)) {
+              ctx.rawData[rowId] = writeVal;
+            } else if (ctx.rawData[rowId] && typeof ctx.rawData[rowId] === "object") {
+              ctx.rawData[rowId][field] = writeVal;
             }
           }
         }
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
 
-        const updatedParsed = parseRows(rawData);
-        rows = updatedParsed.rows;
-        headers = updatedParsed.headers;
+        const updatedParsed = parseRows(ctx.rawData);
+        ctx.rows = updatedParsed.rows;
+        ctx.headers = updatedParsed.headers;
 
         panel.webview.postMessage({
           type: "fieldEntryUpdated",
@@ -309,9 +442,9 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
 
       try {
         const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
-        if (isArray) {
+        if (ctx.isArray) {
           const idx = index !== undefined ? index : Number(rowId);
-          let currentArr: any[] = Array.isArray(rawData) ? [...rawData] : [];
+          let currentArr: any[] = Array.isArray(ctx.rawData) ? [...ctx.rawData] : [];
           if (idx >= 0 && idx < currentArr.length) {
             currentArr.splice(idx, 1);
           }
@@ -327,7 +460,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             await firestore.doc(item.parentDocRef.path).update(new FieldPath(...fieldSegments), currentArr);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
-          rawData = currentArr;
+          ctx.rawData = currentArr;
         } else {
           // Map
           const targetSegments = [...fieldSegments, rowId];
@@ -347,21 +480,21 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
               .update(new FieldPath(...targetSegments), FieldValue.delete());
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
-          if (rawData && typeof rawData === "object") {
-            delete rawData[rowId];
+          if (ctx.rawData && typeof ctx.rawData === "object") {
+            delete ctx.rawData[rowId];
           }
         }
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
 
-        const updatedParsed = parseRows(rawData);
-        rows = updatedParsed.rows;
-        headers = updatedParsed.headers;
+        const updatedParsed = parseRows(ctx.rawData);
+        ctx.rows = updatedParsed.rows;
+        ctx.headers = updatedParsed.headers;
 
         panel.webview.postMessage({
           type: "init",
-          headers,
-          rows,
+          headers: ctx.headers,
+          rows: ctx.rows,
         });
         vscode.window.showInformationMessage(`Entry '${rowId}' deleted!`);
       } catch (err: any) {
@@ -373,14 +506,14 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     if (message.command === "addFieldEntry") {
       try {
         let entryKey = "";
-        if (!isArray) {
+        if (!ctx.isArray) {
           const keyInput = await vscode.window.showInputBox({
             prompt: `Enter new key name for '${targetFieldPath}'`,
             validateInput: (v) => {
               const trimmed = v.trim();
               if (!trimmed) return "Key name cannot be empty";
               if (trimmed.includes("/")) return "Key name cannot contain '/'";
-              if (rawData && typeof rawData === "object" && trimmed in rawData) {
+              if (ctx.rawData && typeof ctx.rawData === "object" && trimmed in ctx.rawData) {
                 return `Key '${trimmed}' already exists`;
               }
               return undefined;
@@ -442,23 +575,25 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
           }
           case "json": {
             const jsonStr = await vscode.window.showInputBox({
-              prompt: "Enter raw JSON",
-              placeHolder: '{"key": "value"}',
+              prompt: "Enter valid JSON",
+              validateInput: (v) => {
+                try {
+                  JSON.parse(v);
+                  return undefined;
+                } catch {
+                  return "Invalid JSON syntax";
+                }
+              },
             });
             if (jsonStr === undefined) return;
-            try {
-              entryVal = JSON.parse(jsonStr || "null");
-            } catch {
-              vscode.window.showErrorMessage("Invalid JSON value entered.");
-              return;
-            }
+            entryVal = JSON.parse(jsonStr);
             break;
           }
         }
 
         const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
-        if (isArray) {
-          let currentArr: any[] = Array.isArray(rawData) ? [...rawData] : [];
+        if (ctx.isArray) {
+          const currentArr: any[] = Array.isArray(ctx.rawData) ? [...ctx.rawData] : [];
           currentArr.push(entryVal);
           if (conn?.isLocalJson) {
             LocalJsonService.getInstance().updateField(
@@ -472,7 +607,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             await firestore.doc(item.parentDocRef.path).update(new FieldPath(...fieldSegments), currentArr);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
-          rawData = currentArr;
+          ctx.rawData = currentArr;
         } else {
           const targetSegments = [...fieldSegments, entryKey];
           if (conn?.isLocalJson) {
@@ -487,24 +622,24 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             await firestore.doc(item.parentDocRef.path).update(new FieldPath(...targetSegments), entryVal);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
-          if (rawData && typeof rawData === "object") {
-            rawData[entryKey] = entryVal;
+          if (ctx.rawData && typeof ctx.rawData === "object") {
+            ctx.rawData[entryKey] = entryVal;
           }
         }
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
 
-        const updatedParsed = parseRows(rawData);
-        rows = updatedParsed.rows;
-        headers = updatedParsed.headers;
+        const updatedParsed = parseRows(ctx.rawData);
+        ctx.rows = updatedParsed.rows;
+        ctx.headers = updatedParsed.headers;
 
         panel.webview.postMessage({
           type: "init",
-          headers,
-          rows,
+          headers: ctx.headers,
+          rows: ctx.rows,
         });
         vscode.window.showInformationMessage(
-          isArray ? `Item added to array!` : `Entry '${entryKey}' added to map!`
+          ctx.isArray ? `Item added to array!` : `Entry '${entryKey}' added to map!`
         );
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to add entry: ${err.message}`);
@@ -512,6 +647,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
       return;
     }
   });
+  ctx.messageSubscription = messageSubscription;
 
   panel.webview.html = getFieldTableHtml({
     panelTitle,
@@ -519,6 +655,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     connectionId: item.connectionId,
     docPath: item.parentDocRef.path,
     isArray,
+    initialData: { headers, rows },
   });
 
   // Immediate postMessage fallback in case client is already active
@@ -531,8 +668,8 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
   panel.onDidDispose(() => {
     activeFieldPanels.delete(panelKey);
     messageSubscription.dispose();
-    rows = [];
-    headers = [];
-    rawData = null;
+    ctx.rows = [];
+    ctx.headers = [];
+    ctx.rawData = null;
   });
 }

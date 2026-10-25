@@ -19,8 +19,9 @@ timeline
         2026-10-20 : v1.15.0 Expandable Map Fields, Nested Property Mutations & Substrate Parity : v1.15.1 Field Table In-Place Editing, Row Mutations & Duplicate Field
         2026-10-22 : v1.16.0 Studio Overview Dashboard & Traffic Analytics Suite
         2026-10-23 : v1.17.0 Multi-Collection Batch Replication Suite, Nested Field Editor & Performance Polish
+        2026-10-25 : v1.18.0 AI Scratchpad, Tree Collection Filter, Array Item Mutations & UX Overhaul
     section Planned
-        Q1 2027 : v1.18.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
+        Q1 2027 : v1.19.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -54,7 +55,8 @@ timeline
 | **v1.15.1** | Shipped | 2026-10-20 | Field Table in-place spreadsheet cell editing, row entry addition & deletion, Duplicate Field command (`ketrik-firestore-studio.duplicateField`), and shared webview table styles |
 | **v1.16.0** | Shipped | 2026-10-22 | Unified Studio Overview Dashboard, Database & User Insights, Network & Traffic Analytics Suite, Storage Footprint & Quota Burn Rate Gauges |
 | **v1.17.0** | Shipped | 2026-10-23 | Multi-Collection Batch Replication Suite, Bulk Collection Deletion, Nested Field Virtual Editor, Tree Hierarchical Reveal, Overview Memory Optimization |
-| **v1.18.0** | Planned | Q1 2027 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
+| **v1.18.0** | Shipped | 2026-10-25 | AI Scratchpad (.firestore/ hierarchy), Field-Level Isolation (Token Optimization), Live Auto-Sync, Tree Collection Filter, Expandable Tree Array Item Editing, Context Menu Tiers & Field Table Fixes |
+| **v1.19.0** | Planned | Q1 2027 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
 ---
@@ -531,7 +533,51 @@ timeline
 
 ---
 
-### [v1.18.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q1 2027)
+### [v1.18.0] — AI Scratchpad, Field-Level Isolation & Dual-Mode Architecture (Shipped: 2026-10-25)
+
+*Theme: AI coding assistant optimization, LLM token reduction for 1MB documents, deterministic workspace scratchpads, and dual-mode architecture.*
+
+* **Deterministic AI Scratchpads (`ketrik-firestore-studio.openAiScratchpad`)**:
+  * 1-click zero-prompt scratchpad generation under `.firestore/<connectionId>/<collectionPath>/<docId>/[<fieldPath>.json]`.
+  * Eliminates manual directory creation, file picking dialogs, and document ID collisions across different collections.
+  * Automatically binds origin metadata in `.firestore/snapshots.json` and ensures `.firestore/` is gitignored.
+* **Field-Level Isolation (Token Optimization for 1MB Documents)**:
+  * Extract and isolate a single document field (e.g. `config.groups` or `sidebar_finance`) into its own scratchpad file.
+  * Reduces AI LLM token consumption by up to 99.8% (e.g. 2 KB instead of 1 MB / ~250k tokens).
+  * On save, pushes atomic partial updates via Firestore `FieldPath(...segments)` without re-uploading or risking the rest of the document.
+* **Unpack Monolithic Document Fields (`ketrik-firestore-studio.unpackDocumentFields`)**:
+  * 1-click unpack of all top-level keys in a document into individual modular files (`header.json`, `sidebar.json`, `metadata.json`), each independently tracked and auto-synced.
+* **Dual-Mode Document Architecture (`ketrik-firestore-studio.openMode`)**:
+  * `"virtual"` (default): 100% in-memory virtual tabs (`ketrik-firestore-studio://`) with zero files written to disk.
+  * `"workspace"`: Directly opens `.firestore/...` scratchpad files on tree clicks for seamless 0-click AI assistant editing.
+* **Live Automatic Synchronization (`ketrik-firestore-studio.autoSyncLocalSnapshots`)**:
+  * When enabled, saving any tracked snapshot or scratchpad file immediately pushes changes back to Firestore or Local JSON.
+* **Privacy & Scratchpad Cleanup (`ketrik-firestore-studio.cleanScratchpads`)**:
+  * 1-click command in the Command Palette to recursively delete `.firestore/` and clear all bindings.
+* **Side-by-Side Diffing, Push & Pull Suite**:
+  * Dedicated toolbar and context menu actions for tracked files: `$(diff) Compare with Firestore`, `$(cloud-upload) Push to Firestore`, `$(cloud-download) Pull Latest from Firestore`.
+* **AI Coding Assistant Virtual Path Resolution**:
+  * Permanent rules registered in `AGENTS.md` and workflow skills to immediately recognize `/conn_...` as virtual Firestore Studio tabs and map them deterministically to `.firestore/` mirrors without wasting turns searching.
+* **Interactive Collection Filter on Explorer Tree (`ketrik-firestore-studio.filterCollection`)**:
+  * Filter any collection directly on the tree by Doc ID prefix or substring with inline `$(filter)` action, active badge indicator, and 1-click filter reset (`$(clear-all)`).
+  * Fast early-exit recursive term matcher (`matchesSearchTerm`) that avoids full `JSON.stringify` allocations on large collections.
+* **Expandable Array Tree Items & In-Place Item Mutations**:
+  * Arrays on the tree are now collapsible and expandable into indexed individual elements (`[0]`, `[1]`, etc.).
+  * Dedicated actions for Edit Array Item (`$(edit)`), Duplicate Array Item (`$(copy)`), Add Item to Array (`$(add)`), and Delete Array Item (`$(trash)`).
+* **Tree Context Menu Overhaul & Logical Grouping Tiers**:
+  * Restructured Explorer Tree context menus across Connections, Collections, Documents, Fields, and Array Items into logical tiers (`1_open`, `2_ai`, `3_edit`, `4_clipboard`, `5_tools`, `6_sync`, `7_refresh`, `9_danger`).
+* **Field Table View Data Hydration & Sanitization (`openFieldAsTable`)**:
+  * Embedded initial data directly into webview HTML (`window.__INITIAL_DATA__`) to eliminate `postMessage` race conditions.
+  * Deep serialization and sanitization (`sanitizeFirestoreValue`) preventing complex/circular Firestore objects and timestamps from breaking webview structured cloning.
+* **Deep CPU & Memory Optimization Suite**:
+  * Zero-allocation `for..in` loops across document sizing, field items, table filtering, and schema analysis.
+  * Shared zero-allocation `reviveTimestamps()` across all commands, sync services, and file system providers.
+  * Precompiled function regexes and 500-item LRU bounds in `RulesParser.ts`.
+  * Comprehensive disposable tracking for `OverviewService`, TTL timer cancellation in `DocumentFileSystemProvider`, and close listener leak fixes in `TimestampEditorDecorations.ts`.
+
+---
+
+### [v1.19.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q1 2027)
 
 *Theme: Deep Cloud Functions developer tooling, Firestore trigger simulation, live logging, and in-editor Admin SDK scratchpads.*
 

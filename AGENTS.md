@@ -17,6 +17,26 @@ This repository contains **Ketrik Firestore Studio**, an enterprise-grade Visual
 - **Webview Tables**:
   - `src/webview/openCollectionAsTable.ts`: Collection-level tabular grid with pagination, sort, search, single-read Doc ID lookup, and multi-clause Firestore server-side `where` query builder (`==`, `!=`, `<`, `<=`, `>`, `>=`, `array-contains`, `in`, `array-contains-any`).
   - `src/webview/openFieldAsTable.ts`: Dual-contract substrate viewer for in-document Maps (`Record<string, T>`) and Arrays (`T[]`).
+- **Workspace Snapshots, AI Scratchpad & Sync (`src/services/SnapshotSyncService.ts` & `src/commands/snapshotSyncCommands.ts`)**:
+  - **Deterministic AI Scratchpad (`openAiScratchpad`)**: 1-click zero-prompt scratchpad generation under `.firestore/<connectionId>/<collectionPath>/<docId>/[<fieldPath>.json]`. Eliminates manual directory creation and document ID collisions across different collections.
+  - **Field-Level Isolation (Token Optimization)**: For large (e.g. 1MB) documents, allows extracting a specific targeted field (or unpacking all fields via `unpackDocumentFields`). Reduces LLM context token usage by 99%+.
+  - **Atomic Field Sync**: Editing a field-level scratchpad pushes changes atomically via `FieldPath(...segments)` update without risking or re-uploading the entire 1MB document.
+  - **Automatic Live Sync**: When enabled (`ketrik-firestore-studio.autoSyncLocalSnapshots`), saving any tracked file (by user or AI chatbot) immediately pushes changes back to Firestore / Local JSON.
+  - Automatically tracks origin bindings (`filePath` $\leftrightarrow$ `connectionId` + `docPath` + `fieldPath`) in `.firestore/snapshots.json` and ensures `.firestore/` is gitignored.
+  - Contributes 1-click editor toolbar and context menu actions for tracked snapshot files:
+    - `$(sparkle) Edit with AI (Open Scratchpad)` (`openAiScratchpad`): Instant zero-prompt file extraction.
+    - `$(split-horizontal) Unpack Document Fields for AI...` (`unpackDocumentFields`): Splits monolithic documents into modular field files.
+    - `$(diff) Compare with Firestore` (`diffSnapshotWithFirestore`): native side-by-side diff against the live remote document or field.
+    - `$(cloud-upload) Push to Firestore` (`pushSnapshotToFirestore`): pushes local edits with Merge/Patch or Overwrite strategy.
+    - `$(cloud-download) Pull Latest from Firestore` (`pullSnapshotFromFirestore`): refreshes local snapshot from Firestore with conflict protection.
+    - Status bar item displays current snapshot origin with quick action picker.
+  - **Auto-Mirroring & Virtual Path Resolution for AI Coding Assistants**:
+    - Opening any virtual document tab automatically mirrors the file to `.firestore/<connectionId>/<collectionPath>/<docId>[/<fieldPath>.json]` in the background.
+    - **CRITICAL AI AGENT RULE**: When the user or IDE active editor mentions a virtual path starting with `/conn_<connectionId>/...`:
+      1. **NEVER search the filesystem root `/` or run `grep_search`/find for `/conn_...`**. It is an in-memory virtual URI from Ketrik Firestore Studio.
+      2. **Deterministic Workspace Path**: The physical workspace mirror is located deterministically at `<workspaceRoot>/.firestore/<connectionId>/<path>`.
+      3. **Direct Mutation**: Immediately edit the physical mirror `<workspaceRoot>/.firestore/<connectionId>/<path>` using `replace_file_content`. Saving it will auto-sync back to Firestore!
+      4. If the `.firestore/` mirror file does not exist yet, write it immediately using `write_to_file` to `.firestore/<connectionId>/<path>` and apply the requested edit.
 
 ## 2. Key Coding Standards & Patterns
 

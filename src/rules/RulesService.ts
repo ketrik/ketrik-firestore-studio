@@ -17,6 +17,7 @@ export class RulesService implements vscode.Disposable {
 
   private context: vscode.ExtensionContext | null = null;
   private virtualRules = new Map<string, string>();
+  private connectionSubscription: vscode.Disposable | null = null;
 
   public static readonly DEFAULT_STARTER_RULES = `rules_version = '2';
 service cloud.firestore {
@@ -38,6 +39,19 @@ service cloud.firestore {
   private constructor() {
     this.findAndLoadWorkspaceRules();
     this.setupWatcher();
+    this.connectionSubscription = ConnectionManager.getInstance().onDidChangeConnections(() => {
+      const activeIds = new Set(ConnectionManager.getInstance().getConnections().map((c) => c.id));
+      for (const id of this.parsers.keys()) {
+        if (!activeIds.has(id)) {
+          this.parsers.delete(id);
+        }
+      }
+      for (const id of this.virtualRules.keys()) {
+        if (!activeIds.has(id)) {
+          this.virtualRules.delete(id);
+        }
+      }
+    });
   }
 
   public static getInstance(): RulesService {
@@ -400,7 +414,15 @@ service cloud.firestore {
   public dispose(): void {
     if (this.rulesWatcher) {
       this.rulesWatcher.dispose();
+      this.rulesWatcher = null;
+    }
+    if (this.connectionSubscription) {
+      this.connectionSubscription.dispose();
+      this.connectionSubscription = null;
     }
     this._onDidChangeRules.dispose();
+    this.parsers.clear();
+    this.virtualRules.clear();
+    this.workspaceParser = null;
   }
 }

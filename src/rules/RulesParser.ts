@@ -82,8 +82,10 @@ function classifyCondition(conditionStr?: string): OperationAccess {
  * Parser for firestore.rules that extracts match blocks and evaluates collection access.
  */
 export class RulesParser {
+  private static readonly MAX_ACCESS_CACHE_SIZE = 500;
   private blocks: RuleMatchBlock[] = [];
   private functions = new Map<string, string>();
+  private functionReplacements: Array<{ name: string; expr: string; regex: RegExp }> = [];
   private _accessCache = new Map<string, CollectionSecurityAccess>();
 
   constructor(rulesContent: string) {
@@ -96,6 +98,7 @@ export class RulesParser {
   private parse(content: string): void {
     this.blocks = [];
     this.functions.clear();
+    this.functionReplacements = [];
     this._accessCache.clear();
 
     // 1. Strip comments
@@ -109,7 +112,13 @@ export class RulesParser {
       const fnBody = fnMatch[2];
       const retMatch = /return\s+([\s\S]*?);/.exec(fnBody);
       if (retMatch) {
-        this.functions.set(fnName, retMatch[1].replace(/\s+/g, " ").trim());
+        const expr = retMatch[1].replace(/\s+/g, " ").trim();
+        this.functions.set(fnName, expr);
+        this.functionReplacements.push({
+          name: fnName,
+          expr,
+          regex: new RegExp(`\\b${fnName}\\s*\\([^)]*\\)`, "g"),
+        });
       }
     }
 
@@ -188,9 +197,10 @@ export class RulesParser {
         let cond = a[2].replace(/\s+/g, " ").trim();
 
         // Expand top-level function calls in condition if known
-        for (const [fnName, fnExpr] of this.functions.entries()) {
-          if (cond.includes(`${fnName}(`)) {
-            cond = cond.replace(new RegExp(`\\b${fnName}\\s*\\([^)]*\\)`, "g"), `(${fnExpr})`);
+        for (let i = 0; i < this.functionReplacements.length; i++) {
+          const fn = this.functionReplacements[i];
+          if (cond.includes(`${fn.name}(`)) {
+            cond = cond.replace(fn.regex, `(${fn.expr})`);
           }
         }
 
@@ -281,6 +291,8 @@ export class RulesParser {
   public getAccessForCollection(collPath: string): CollectionSecurityAccess {
     const cached = this._accessCache.get(collPath);
     if (cached) {
+      this._accessCache.delete(collPath);
+      this._accessCache.set(collPath, cached);
       return cached;
     }
 
@@ -344,7 +356,7 @@ export class RulesParser {
         read: { role: "locked", condition: "no rule matched (default deny)" },
         write: { role: "locked", condition: "no rule matched (default deny)" },
       };
-      this._accessCache.set(collPath, defaultDeny);
+      this.setCachedAccess(collPath, defaultDeny);
       return defaultDeny;
     }
 
@@ -364,8 +376,18 @@ export class RulesParser {
       write: writeAccess,
       rawRuleSnippet: chosenBlock.snippet,
     };
-    this._accessCache.set(collPath, result);
+    this.setCachedAccess(collPath, result);
     return result;
+  }
+
+  private setCachedAccess(collPath: string, access: CollectionSecurityAccess): void {
+    if (this._accessCache.size >= RulesParser.MAX_ACCESS_CACHE_SIZE) {
+      const oldest = this._accessCache.keys().next().value;
+      if (oldest !== undefined) {
+        this._accessCache.delete(oldest);
+      }
+    }
+    this._accessCache.set(collPath, access);
   }
 
   /**

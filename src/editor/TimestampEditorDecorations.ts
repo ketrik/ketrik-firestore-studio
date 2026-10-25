@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { formatDateTime, formatRelativeTime } from "../utils/timestampUtils";
 import { scheme } from "../constants";
+import { ConnectionManager } from "../connections/ConnectionManager";
 
 /**
  * Parses JSON documents open under the `ketrik-firestore-studio` scheme
@@ -18,15 +19,34 @@ interface TimestampMatch {
 const MAX_TIMESTAMP_CACHE = 50;
 const _docTimestampCache = new Map<string, { version: number; matches: TimestampMatch[] }>();
 
-// Free memory when documents are closed
-vscode.workspace.onDidCloseTextDocument((doc) => {
-  _docTimestampCache.delete(doc.uri.toString());
-});
+/**
+ * Creates a disposable listener to clear cached timestamps when documents are closed.
+ */
+export function createTimestampDocumentCloseListener(): vscode.Disposable {
+  return vscode.workspace.onDidCloseTextDocument((doc) => {
+    _docTimestampCache.delete(doc.uri.toString());
+  });
+}
+
+/**
+ * Clear timestamp cache to free memory.
+ */
+export function clearTimestampCache(): void {
+  _docTimestampCache.clear();
+}
+
+// Precompiled regex matching single-line and multi-line formatted timestamps in either order:
+// Case A: { "_seconds": 123, "_nanoseconds": 456 }
+// Case B: { "_nanoseconds": 456, "_seconds": 123 }
+const TIMESTAMP_REGEX = /\{\s*(?:"_seconds"\s*:\s*(\d+)\s*,\s*"_nanoseconds"\s*:\s*(\d+)|"_nanoseconds"\s*:\s*(\d+)\s*,\s*"_seconds"\s*:\s*(\d+))\s*\}/g;
 
 function findTimestampsInDocument(document: vscode.TextDocument): TimestampMatch[] {
   const uriKey = document.uri.toString();
   const cached = _docTimestampCache.get(uriKey);
   if (cached && cached.version === document.version) {
+    // Refresh recency for LRU
+    _docTimestampCache.delete(uriKey);
+    _docTimestampCache.set(uriKey, cached);
     return cached.matches;
   }
 
@@ -44,13 +64,9 @@ function findTimestampsInDocument(document: vscode.TextDocument): TimestampMatch
 
   const matches: TimestampMatch[] = [];
 
-  // Single-pass regex matching both single-line and multi-line formatted timestamps in either order:
-  // Case A: { "_seconds": 123, "_nanoseconds": 456 }
-  // Case B: { "_nanoseconds": 456, "_seconds": 123 }
-  const regex = /\{\s*(?:"_seconds"\s*:\s*(\d+)\s*,\s*"_nanoseconds"\s*:\s*(\d+)|"_nanoseconds"\s*:\s*(\d+)\s*,\s*"_seconds"\s*:\s*(\d+))\s*\}/g;
-
+  TIMESTAMP_REGEX.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = regex.exec(text)) !== null) {
+  while ((m = TIMESTAMP_REGEX.exec(text)) !== null) {
     const rawMatch = m[0];
     const matchIndex = m.index;
 
@@ -84,19 +100,21 @@ function findTimestampsInDocument(document: vscode.TextDocument): TimestampMatch
   return matches;
 }
 
-import { ConnectionManager } from "../connections/ConnectionManager";
-
 function isSupportedDocument(document: vscode.TextDocument): boolean {
   if (document.uri.scheme === scheme) {
     return true;
   }
   if (document.uri.scheme === "file" && document.fileName.endsWith(".json")) {
-    const connections = ConnectionManager.getInstance().getConnections();
     const filePath = document.uri.fsPath;
-    return connections.some((c) => {
-      if (!c.isLocalJson || !c.localJsonPath) return false;
-      return filePath === c.localJsonPath || filePath.startsWith(c.localJsonPath);
-    });
+    if (filePath.includes(".firestore")) {
+      return true;
+    }
+    const connections = ConnectionManager.getInstance().getConnections();
+    for (const c of connections) {
+      if (c.isLocalJson && c.localJsonPath && (filePath === c.localJsonPath || filePath.startsWith(c.localJsonPath))) {
+        return true;
+      }
+    }
   }
   return false;
 }

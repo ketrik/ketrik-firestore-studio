@@ -10,6 +10,25 @@ export abstract class Item extends vscode.TreeItem {
 }
 
 /**
+ * A generic informational or action Tree View item (e.g. empty filter, notices).
+ */
+export class InfoMessageItem extends Item {
+  reference = undefined;
+
+  constructor(
+    label: string,
+    icon: string = "info",
+    contextValue: string = "infoMessage",
+    command?: vscode.Command
+  ) {
+    super(label, vscode.TreeItemCollapsibleState.None);
+    this.iconPath = new vscode.ThemeIcon(icon);
+    this.contextValue = contextValue;
+    this.command = command;
+  }
+}
+
+/**
  * A Tree View item representing a Firestore Connection.
  */
 export class ConnectionTreeItem extends Item {
@@ -59,21 +78,30 @@ export class DocumentItem extends Item {
     public reference: DocumentReference,
     public connectionId: string,
     docData?: any,
-    isExpanded: boolean = false
+    isExpanded: boolean = false,
+    public isMissingDocument: boolean = false
   ) {
     super(documentId, isExpanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
-    if (isExpanded) {
-      this.command = {
-        command: "ketrik-firestore-studio.openPath",
-        title: "Open",
-        arguments: [reference.path, connectionId],
-      };
-    }
+    this.command = {
+      command: "ketrik-firestore-studio.clickDocument",
+      title: "Open Document",
+      arguments: [this],
+    };
 
-    this.id = `${connectionId}:${reference.path}`;
+    this.id = `doc:${connectionId}:${reference.path}`;
     this.contextValue = "document";
 
-    if (docData !== undefined) {
+    if (isMissingDocument) {
+      this.description = "(missing document)";
+      this.iconPath = new vscode.ThemeIcon(
+        "file-submodule",
+        new vscode.ThemeColor("descriptionForeground")
+      );
+      this.tooltip =
+        `Document: ${documentId}\n` +
+        `Path: [${connectionId}] ${reference.path}\n` +
+        `Status: Missing document (only exists as parent of subcollections)`;
+    } else if (docData !== undefined) {
       const sizeInfo = getDocumentSizeInfo(docData, reference.path);
       const isExceeded = sizeInfo.isWarning || sizeInfo.isCritical;
 
@@ -121,6 +149,9 @@ export class DocumentFieldItem extends Item {
   reference: DocumentReference;
   public pathSegments: string[];
   public parentFieldItem?: DocumentFieldItem;
+  public isArrayElement?: boolean;
+  public arrayIndex?: number;
+  public parentArrayItem?: DocumentFieldItem;
 
   get fullFieldPath(): string {
     return this.pathSegments.join(".");
@@ -133,7 +164,10 @@ export class DocumentFieldItem extends Item {
     public connectionId: string,
     pathSegments?: string[],
     parentFieldItem?: DocumentFieldItem,
-    isExpanded: boolean = false
+    isExpanded: boolean = false,
+    isArrayElement?: boolean,
+    arrayIndex?: number,
+    parentArrayItem?: DocumentFieldItem
   ) {
     const segments = pathSegments && pathSegments.length > 0 ? pathSegments : [fieldName];
     const isTimestamp = value !== null && typeof value === "object" && isTimestampLike(value);
@@ -151,9 +185,19 @@ export class DocumentFieldItem extends Item {
       ? "null"
       : typeof value;
 
+    const isArray = valType === "array";
     const isMap = valType === "object" && !isTimestamp && !isVector;
-    const keyCount = isMap ? Object.keys(value || {}).length : 0;
-    const isCollapsible = isMap && keyCount > 0;
+    let keyCount = 0;
+    if (isMap && value) {
+      for (const _k in value) {
+        if (Object.prototype.hasOwnProperty.call(value, _k)) {
+          keyCount++;
+        }
+      }
+    } else if (isArray && value) {
+      keyCount = value.length;
+    }
+    const isCollapsible = (isMap && keyCount > 0) || (isArray && keyCount > 0);
 
     super(
       fieldName,
@@ -167,6 +211,9 @@ export class DocumentFieldItem extends Item {
     this.reference = parentDocRef;
     this.pathSegments = segments;
     this.parentFieldItem = parentFieldItem;
+    this.isArrayElement = isArrayElement;
+    this.arrayIndex = arrayIndex;
+    this.parentArrayItem = parentArrayItem;
 
     let icon = "symbol-variable";
     let iconColor: vscode.ThemeColor | undefined;
@@ -193,9 +240,9 @@ export class DocumentFieldItem extends Item {
         ? new vscode.ThemeColor("charts.purple")
         : new vscode.ThemeColor("charts.orange");
       const dims =
-        typeof value.toArray === "function"
-          ? value.toArray().length
-          : value.values?.length || value._values?.length || 0;
+        value.values?.length ||
+        value._values?.length ||
+        (typeof value.toArray === "function" ? value.toArray().length : 0);
       this.description = `[Vector: ${dims} dims]`;
     } else if (valType === "object") {
       if (isProtocol) {
@@ -251,16 +298,29 @@ export class DocumentFieldItem extends Item {
       this.description = String(value);
     }
 
-    this.id = `${connectionId}:${parentDocRef.path}#${this.fullFieldPath}`;
-    this.contextValue = isTimestamp
-      ? "documentFieldTimestamp"
-      : isVector
-      ? "documentFieldVector"
-      : valType === "object"
-      ? "documentFieldMap"
-      : valType === "array"
-      ? "documentFieldArray"
-      : "documentField";
+    this.id = `field:${connectionId}:${parentDocRef.path}#${this.fullFieldPath}`;
+
+    if (this.isArrayElement) {
+      this.contextValue = isTimestamp
+        ? "documentFieldArrayItemTimestamp"
+        : valType === "object"
+        ? "documentFieldArrayItemMap"
+        : valType === "array"
+        ? "documentFieldArrayItemArray"
+        : valType === "null"
+        ? "documentFieldArrayItemNull"
+        : "documentFieldArrayItemScalar";
+    } else {
+      this.contextValue = isTimestamp
+        ? "documentFieldTimestamp"
+        : isVector
+        ? "documentFieldVector"
+        : valType === "object"
+        ? "documentFieldMap"
+        : valType === "array"
+        ? "documentFieldArray"
+        : "documentField";
+    }
 
     const tierLabel = isProtocol
       ? " [Protocol / Operational]"
@@ -268,7 +328,9 @@ export class DocumentFieldItem extends Item {
       ? " [System Envelope / Index]"
       : "";
     const typeLabel = isTimestamp ? "timestamp" : valType;
-    if (isTimestamp && timestampDate) {
+    if (this.isArrayElement) {
+      this.tooltip = `Array Item [${this.arrayIndex}] (${typeLabel})${tierLabel}\nPath: ${this.fullFieldPath}\nDoc: ${parentDocRef.path}`;
+    } else if (isTimestamp && timestampDate) {
       const epochSec = Math.floor(timestampDate.getTime() / 1000);
       this.tooltip = `Field: ${this.fullFieldPath} (timestamp)${tierLabel}\nDate: ${timestampDate.toISOString()}\nLocal: ${formatDateTime(timestampDate)}\nEpoch Seconds: ${epochSec}\nDoc: ${parentDocRef.path}`;
     } else {
@@ -277,15 +339,11 @@ export class DocumentFieldItem extends Item {
     this.iconPath = new vscode.ThemeIcon(icon, iconColor);
 
     if (isCollapsible) {
-      if (isExpanded) {
-        this.command = {
-          command: "ketrik-firestore-studio.openFieldInEditor",
-          title: "Open in Editor",
-          arguments: [this],
-        };
-      } else {
-        this.command = undefined;
-      }
+      this.command = {
+        command: "ketrik-firestore-studio.clickField",
+        title: "Open Field",
+        arguments: [this],
+      };
     } else {
       this.command = {
         command: "ketrik-firestore-studio.openField",
@@ -307,12 +365,13 @@ export class CollectionItem extends Item {
     public orderBy: {
       fieldName: string;
       direction: OrderByDirection;
-    } = { fieldName: "id", direction: "asc" }
+    } = { fieldName: "id", direction: "asc" },
+    public filter?: string
   ) {
     super(collectionId, vscode.TreeItemCollapsibleState.Collapsed);
 
-    this.id = `${connectionId}:${reference.path}`;
-    this.contextValue = "collection";
+    this.id = `col:${connectionId}:${reference.path}`;
+    this.contextValue = filter ? "collectionFiltered" : "collection";
     this.tooltip = `[${connectionId}] ${reference.path}`;
     // Folder icon with warm gold/amber color
     this.iconPath = new vscode.ThemeIcon(
@@ -320,7 +379,10 @@ export class CollectionItem extends Item {
       new vscode.ThemeColor("charts.orange")
     );
 
-    const orderDesc = (orderBy.direction === "asc" ? "↑" : "↓") + orderBy.fieldName;
+    let orderDesc = (orderBy.direction === "asc" ? "↑" : "↓") + orderBy.fieldName;
+    if (filter) {
+      orderDesc += `  [🔍 "${filter}"]`;
+    }
 
     // Evaluate security access badge from rules
     const rulesService = RulesService.getInstance();
@@ -329,10 +391,14 @@ export class CollectionItem extends Item {
     if (access) {
       const { badge, tooltip: ruleTooltip } = RulesParser.formatBadge(access);
       this.description = badge ? `${orderDesc}  ${badge}` : orderDesc;
-      this.tooltip = `[${connectionId}] ${reference.path}\n\n${ruleTooltip}`;
+      this.tooltip = filter
+        ? `[${connectionId}] ${reference.path}\nActive Filter: "${filter}"\n\n${ruleTooltip}`
+        : `[${connectionId}] ${reference.path}\n\n${ruleTooltip}`;
     } else {
       this.description = orderDesc;
-      this.tooltip = `[${connectionId}] ${reference.path}`;
+      this.tooltip = filter
+        ? `[${connectionId}] ${reference.path}\nActive Filter: "${filter}"`
+        : `[${connectionId}] ${reference.path}`;
     }
   }
 }
@@ -354,7 +420,7 @@ export class ShowMoreItemsItem extends Item {
     super(`Load ${pagingLimit} more`, vscode.TreeItemCollapsibleState.None);
     this.reference = reference;
     this.connectionId = connectionId;
-    this.id = `${connectionId}:${reference.path}///showMore`;
+    this.id = `more:${connectionId}:${reference.path}`;
     this.offset = offset;
     this.iconPath = new vscode.ThemeIcon("more");
     this.command = {

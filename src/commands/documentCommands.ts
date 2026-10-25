@@ -61,6 +61,14 @@ export async function jumpToDocumentCommand(
     const docRef = item.reference.doc(trimmedId);
     const snapshot = await docRef.get();
     if (!snapshot.exists) {
+      try {
+        const subcollections = await docRef.listCollections();
+        if (subcollections.length > 0) {
+          await openPath(docRef.path, item.connectionId);
+          return;
+        }
+      } catch {}
+
       const createChoice = await vscode.window.showWarningMessage(
         `Document '${trimmedId}' does not exist in collection '${item.collectionId}'. Would you like to create it?`,
         "Create",
@@ -557,14 +565,73 @@ export async function copyDocumentJsonCommand(item: DocumentItem) {
   try {
     const snapshot = await item.reference.get();
     if (!snapshot.exists) {
-      vscode.window.showErrorMessage(`Document "${item.documentId}" does not exist.`);
-      return;
+      try {
+        const subcollections = await item.reference.listCollections();
+        if (subcollections.length === 0) {
+          vscode.window.showErrorMessage(`Document "${item.documentId}" does not exist.`);
+          return;
+        }
+      } catch {
+        vscode.window.showErrorMessage(`Document "${item.documentId}" does not exist.`);
+        return;
+      }
     }
 
-    const jsonText = JSON.stringify(snapshot.data() || {}, null, 2);
+    const jsonText = JSON.stringify(snapshot.exists ? snapshot.data() || {} : {}, null, 2);
     await vscode.env.clipboard.writeText(jsonText);
     vscode.window.showInformationMessage(`Copied document JSON to clipboard.`);
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to copy JSON: ${err.message}`);
   }
 }
+
+/**
+ * Prompt to filter documents in a collection by ID prefix/substring or keyword.
+ */
+export async function filterCollectionCommand(
+  item: CollectionItem,
+  explorerDataProvider: ExplorerDataProvider
+) {
+  if (!item?.collectionId || !item?.reference?.path) {
+    vscode.window.showErrorMessage("No collection selected.");
+    return;
+  }
+
+  const currentFilter = explorerDataProvider.getCollectionFilter(item.connectionId, item.reference.path) || "";
+  const input = await vscode.window.showInputBox({
+    prompt: `Filter documents in collection '${item.collectionId}'`,
+    value: currentFilter,
+    placeHolder: "Enter Doc ID prefix/substring or keyword (leave blank to clear)...",
+  });
+
+  if (input === undefined) {
+    return;
+  }
+
+  const trimmed = input.trim();
+  if (!trimmed) {
+    explorerDataProvider.clearCollectionFilter(item.connectionId, item.reference.path);
+    vscode.window.showInformationMessage(`Filter cleared for collection '${item.collectionId}'`);
+  } else {
+    explorerDataProvider.setCollectionFilter(item.connectionId, item.reference.path, trimmed);
+    vscode.window.showInformationMessage(`Filtered '${item.collectionId}' by "${trimmed}"`);
+  }
+  explorerDataProvider.refreshNode(item);
+}
+
+/**
+ * Clear any active filter on a collection.
+ */
+export async function clearCollectionFilterCommand(
+  item: CollectionItem,
+  explorerDataProvider: ExplorerDataProvider
+) {
+  if (!item?.reference?.path) {
+    return;
+  }
+
+  explorerDataProvider.clearCollectionFilter(item.connectionId, item.reference.path);
+  vscode.window.showInformationMessage(`Filter cleared for collection '${item.collectionId || item.reference.path}'`);
+  explorerDataProvider.refreshNode(item);
+}
+

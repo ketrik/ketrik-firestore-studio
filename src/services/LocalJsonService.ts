@@ -143,15 +143,92 @@ export class LocalJsonService {
     }
 
     if (this.isDirectoryMode(config)) {
+      // 1. Direct path check: e.g. <localJsonPath>/dashboard/broker/session.json or <localJsonPath>/dashboard.json
       const filePath = path.join(config.localJsonPath, `${collectionId}.json`);
-      const parsed = this._readJsonFile(filePath);
-      return this._normalizeToDocumentMap(parsed);
+      if (fs.existsSync(filePath)) {
+        const parsed = this._readJsonFile(filePath);
+        return this._normalizeToDocumentMap(parsed);
+      }
+
+      // 2. Directory check: e.g. <localJsonPath>/dashboard/broker/session/ containing individual .json documents
+      const dirPath = path.join(config.localJsonPath, collectionId);
+      if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+        try {
+          const files = fs.readdirSync(dirPath);
+          const map: Record<string, any> = {};
+          for (const f of files) {
+            if (f.endsWith(".json")) {
+              const docId = f.slice(0, -5);
+              const docContent = this._readJsonFile(path.join(dirPath, f));
+              if (docContent !== undefined) {
+                map[docId] = docContent;
+              }
+            }
+          }
+          if (Object.keys(map).length > 0) {
+            return map;
+          }
+        } catch {}
+      }
+
+      // 3. Fallback: Check last segment: e.g. session.json if collectionId is "dashboard/broker/session"
+      const segments = collectionId.split("/").filter(Boolean);
+      if (segments.length > 1) {
+        const lastSeg = segments[segments.length - 1];
+        const lastFilePath = path.join(config.localJsonPath, `${lastSeg}.json`);
+        if (fs.existsSync(lastFilePath)) {
+          const parsed = this._readJsonFile(lastFilePath);
+          return this._normalizeToDocumentMap(parsed);
+        }
+
+        // 4. Try root collection file and deep navigation: e.g. <localJsonPath>/dashboard.json
+        const rootColl = segments[0];
+        const rootFile = path.join(config.localJsonPath, `${rootColl}.json`);
+        if (fs.existsSync(rootFile)) {
+          let cur: any = this._readJsonFile(rootFile);
+          for (let i = 1; i < segments.length; i++) {
+            if (cur && typeof cur === "object" && segments[i] in cur) {
+              cur = cur[segments[i]];
+            } else {
+              cur = undefined;
+              break;
+            }
+          }
+          if (cur) {
+            return this._normalizeToDocumentMap(cur);
+          }
+        }
+      }
+
+      return {};
     }
 
     // Single JSON file
     const parsed = this._readJsonFile(config.localJsonPath);
-    if (parsed && typeof parsed === "object" && parsed[collectionId]) {
-      return this._normalizeToDocumentMap(parsed[collectionId]);
+    if (parsed && typeof parsed === "object") {
+      // Direct collection path key
+      if (parsed[collectionId]) {
+        return this._normalizeToDocumentMap(parsed[collectionId]);
+      }
+      // Deep navigation by segments
+      const segments = collectionId.split("/").filter(Boolean);
+      let cur: any = parsed;
+      for (const seg of segments) {
+        if (cur && typeof cur === "object" && seg in cur) {
+          cur = cur[seg];
+        } else {
+          cur = undefined;
+          break;
+        }
+      }
+      if (cur) {
+        return this._normalizeToDocumentMap(cur);
+      }
+      // Last segment
+      const lastSeg = segments[segments.length - 1];
+      if (lastSeg && parsed[lastSeg]) {
+        return this._normalizeToDocumentMap(parsed[lastSeg]);
+      }
     }
 
     return {};
@@ -192,17 +269,81 @@ export class LocalJsonService {
   }
 
   /**
-   * Get a single document by docPath: e.g. "users/user1"
+   * Get a single document by docPath: e.g. "users/user1" or "dashboard/broker/session/metadata"
    */
   public getDocument(config: FirestoreConnectionConfig, docPath: string): Record<string, any> | undefined {
     const segments = docPath.split("/").filter(Boolean);
     if (segments.length < 2) {
       return undefined;
     }
-    const collectionId = segments[0];
-    const docId = segments[1];
-    const collMap = this.getCollectionData(config, collectionId);
-    return collMap[docId];
+
+    const docId = segments[segments.length - 1];
+    const collPath = segments.slice(0, -1).join("/");
+
+    if (this.isDirectoryMode(config)) {
+      // 1. Direct document file check: e.g. <localJsonPath>/dashboard/broker/session/metadata.json
+      const exactDocFile = path.join(config.localJsonPath!, `${docPath}.json`);
+      if (fs.existsSync(exactDocFile) && !fs.statSync(exactDocFile).isDirectory()) {
+        const parsed = this._readJsonFile(exactDocFile);
+        if (parsed !== undefined) return parsed;
+      }
+
+      // 2. Direct filename check: e.g. <localJsonPath>/metadata.json
+      const standaloneDocFile = path.join(config.localJsonPath!, `${docId}.json`);
+      if (fs.existsSync(standaloneDocFile) && !fs.statSync(standaloneDocFile).isDirectory()) {
+        const parsed = this._readJsonFile(standaloneDocFile);
+        if (parsed !== undefined && !Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+
+      // 3. Collection map check
+      const collMap = this.getCollectionData(config, collPath);
+      if (collMap && collMap[docId] !== undefined) {
+        return collMap[docId];
+      }
+
+      // 4. If 2-segment fallback:
+      if (segments.length === 2) {
+        const rootMap = this.getCollectionData(config, segments[0]);
+        return rootMap[docId];
+      }
+
+      return undefined;
+    }
+
+    // Single JSON file
+    const parsed = this._readJsonFile(config.localJsonPath!);
+    if (parsed && typeof parsed === "object") {
+      // Direct doc path key: e.g. "dashboard/broker/session/metadata"
+      if (parsed[docPath] !== undefined) {
+        return parsed[docPath];
+      }
+      // Deep navigation
+      let cur: any = parsed;
+      for (const seg of segments) {
+        if (cur && typeof cur === "object" && seg in cur) {
+          cur = cur[seg];
+        } else {
+          cur = undefined;
+          break;
+        }
+      }
+      if (cur !== undefined) {
+        return cur;
+      }
+      // Via collection map
+      const collMap = this.getCollectionData(config, collPath);
+      if (collMap && collMap[docId] !== undefined) {
+        return collMap[docId];
+      }
+      // Direct docId key
+      if (parsed[docId] !== undefined) {
+        return parsed[docId];
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -213,14 +354,30 @@ export class LocalJsonService {
     if (segments.length < 2) {
       throw new Error(`Invalid document path: '${docPath}'`);
     }
-    const collectionId = segments[0];
-    const docId = segments[1];
+
+    const docId = segments[segments.length - 1];
+    const collPath = segments.slice(0, -1).join("/");
 
     if (this.isDirectoryMode(config)) {
-      const filePath = path.join(config.localJsonPath!, `${collectionId}.json`);
-      const collMap = this.getCollectionData(config, collectionId);
+      // 1. If exact doc file exists, write to it
+      const exactDocFile = path.join(config.localJsonPath!, `${docPath}.json`);
+      if (fs.existsSync(exactDocFile)) {
+        this._writeJsonFile(exactDocFile, data);
+        return;
+      }
+
+      // 2. If standalone doc file exists, write to it
+      const standaloneDocFile = path.join(config.localJsonPath!, `${docId}.json`);
+      if (fs.existsSync(standaloneDocFile)) {
+        this._writeJsonFile(standaloneDocFile, data);
+        return;
+      }
+
+      // 3. Write into collection file
+      const collFilePath = path.join(config.localJsonPath!, `${collPath}.json`);
+      const collMap = this.getCollectionData(config, collPath);
       collMap[docId] = data;
-      this._writeJsonFile(filePath, collMap);
+      this._writeJsonFile(collFilePath, collMap);
       return;
     }
 
@@ -229,10 +386,20 @@ export class LocalJsonService {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       parsed = {};
     }
-    if (!parsed[collectionId] || typeof parsed[collectionId] !== "object") {
-      parsed[collectionId] = {};
+
+    if (parsed[docPath] !== undefined) {
+      parsed[docPath] = data;
+    } else {
+      let cur = parsed;
+      for (let i = 0; i < segments.length - 1; i++) {
+        if (!cur[segments[i]] || typeof cur[segments[i]] !== "object") {
+          cur[segments[i]] = {};
+        }
+        cur = cur[segments[i]];
+      }
+      cur[docId] = data;
     }
-    parsed[collectionId][docId] = data;
+
     this._writeJsonFile(config.localJsonPath!, parsed);
   }
 
@@ -303,22 +470,48 @@ export class LocalJsonService {
     if (segments.length < 2) {
       return;
     }
-    const collectionId = segments[0];
-    const docId = segments[1];
+
+    const docId = segments[segments.length - 1];
+    const collPath = segments.slice(0, -1).join("/");
 
     if (this.isDirectoryMode(config)) {
-      const filePath = path.join(config.localJsonPath!, `${collectionId}.json`);
-      const collMap = this.getCollectionData(config, collectionId);
+      const exactDocFile = path.join(config.localJsonPath!, `${docPath}.json`);
+      if (fs.existsSync(exactDocFile)) {
+        fs.unlinkSync(exactDocFile);
+        this._fileCache.delete(exactDocFile);
+        return;
+      }
+
+      const standaloneDocFile = path.join(config.localJsonPath!, `${docId}.json`);
+      if (fs.existsSync(standaloneDocFile)) {
+        fs.unlinkSync(standaloneDocFile);
+        this._fileCache.delete(standaloneDocFile);
+        return;
+      }
+
+      const collFilePath = path.join(config.localJsonPath!, `${collPath}.json`);
+      const collMap = this.getCollectionData(config, collPath);
       delete collMap[docId];
-      this._writeJsonFile(filePath, collMap);
+      this._writeJsonFile(collFilePath, collMap);
       return;
     }
 
     // Single JSON file
     if (!config.localJsonPath || !fs.existsSync(config.localJsonPath)) return;
     const parsed = this._readJsonFile(config.localJsonPath);
-    if (parsed && parsed[collectionId]) {
-      delete parsed[collectionId][docId];
+    if (parsed && typeof parsed === "object") {
+      if (parsed[docPath]) {
+        delete parsed[docPath];
+      }
+      let cur = parsed;
+      for (let i = 0; i < segments.length - 1; i++) {
+        if (cur && typeof cur === "object") {
+          cur = cur[segments[i]];
+        }
+      }
+      if (cur && typeof cur === "object") {
+        delete cur[docId];
+      }
       this._writeJsonFile(config.localJsonPath, parsed);
     }
   }

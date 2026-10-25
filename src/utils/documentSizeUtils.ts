@@ -46,7 +46,7 @@ export function calculateDocumentSize(data: any, docPath?: string): number {
   return size;
 }
 
-function calculateValueSize(val: any): number {
+function calculateValueSize(val: any, depth = 0): number {
   if (val === null || val === undefined) {
     return 1;
   }
@@ -63,6 +63,10 @@ function calculateValueSize(val: any): number {
     return getUtf8ByteLength(val) + 1;
   }
 
+  if (depth > 50) {
+    return 0; // Safeguard against circular references or excessively deep hierarchies
+  }
+
   // Firestore Timestamp ({ _seconds, _nanoseconds } or Timestamp instance)
   if (
     (typeof val === "object" && typeof val._seconds === "number" && typeof val._nanoseconds === "number") ||
@@ -72,14 +76,22 @@ function calculateValueSize(val: any): number {
     return 8;
   }
 
-  // GeoPoint ({ latitude, longitude })
+  // GeoPoint ({ latitude, longitude }) - zero allocation key count check
   if (
     typeof val === "object" &&
     typeof val.latitude === "number" &&
-    typeof val.longitude === "number" &&
-    Object.keys(val).length === 2
+    typeof val.longitude === "number"
   ) {
-    return 16;
+    let keyCount = 0;
+    for (const k in val) {
+      if (Object.prototype.hasOwnProperty.call(val, k)) {
+        keyCount++;
+        if (keyCount > 2) break;
+      }
+    }
+    if (keyCount === 2) {
+      return 16;
+    }
   }
 
   // DocumentReference
@@ -90,17 +102,19 @@ function calculateValueSize(val: any): number {
   if (Array.isArray(val)) {
     let arraySize = 0;
     for (const item of val) {
-      arraySize += calculateValueSize(item);
+      arraySize += calculateValueSize(item, depth + 1);
     }
     return arraySize;
   }
 
   if (typeof val === "object") {
     let mapSize = 0;
-    for (const key of Object.keys(val)) {
-      // Each field in a map charges string bytes for the key + value size
-      mapSize += getUtf8ByteLength(key) + 1;
-      mapSize += calculateValueSize(val[key]);
+    for (const key in val) {
+      if (Object.prototype.hasOwnProperty.call(val, key)) {
+        // Each field in a map charges string bytes for the key + value size
+        mapSize += getUtf8ByteLength(key) + 1;
+        mapSize += calculateValueSize(val[key], depth + 1);
+      }
     }
     return mapSize;
   }

@@ -1,7 +1,7 @@
 ---
 title: Composite Indexes Management
 description: Inspecting, diagnosing, and managing Cloud Firestore and Emulator composite indexes directly in VS Code.
-sidebar_position: 5
+sidebar_position: 4
 ---
 
 # Composite Indexes Management

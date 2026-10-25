@@ -4,25 +4,8 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { LocalJsonService } from "../services/LocalJsonService";
-import { QueryDocumentSnapshot, Timestamp } from "firebase-admin/firestore";
-import { isTimestampLike } from "../utils/timestampUtils";
-
-/**
- * Helper to revive Firestore Timestamp objects from raw serialized JSON or Firestore maps.
- */
-function reviveTimestamps(val: any): any {
-  if (!val || typeof val !== "object") return val;
-  if (val instanceof Timestamp) return val;
-  if (isTimestampLike(val)) {
-    return new Timestamp((val as any)._seconds, (val as any)._nanoseconds);
-  }
-  if (Array.isArray(val)) return val.map(reviveTimestamps);
-  const res: Record<string, any> = {};
-  for (const [k, v] of Object.entries(val)) {
-    res[k] = reviveTimestamps(v);
-  }
-  return res;
-}
+import { QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { reviveTimestamps } from "../utils/timestampUtils";
 
 /**
  * Safe chunked WriteBatch manager to stay well below the 500-operation Firestore limit.

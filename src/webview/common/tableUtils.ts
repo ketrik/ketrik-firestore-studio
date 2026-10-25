@@ -80,29 +80,35 @@ export function filterObjects(items: any[], searchTerm: string, excludedKeys: st
     return items;
   }
   const term = searchTerm.toLowerCase().trim();
+  const excludedSet = new Set(excludedKeys);
+
   return items.filter((item) => {
     if (!item || typeof item !== "object") {
       return false;
     }
-    return Object.entries(item).some(([key, val]) => {
-      if (excludedKeys.includes(key) || val === undefined || val === null) {
-        return false;
+    for (const key in item) {
+      if (!Object.prototype.hasOwnProperty.call(item, key) || excludedSet.has(key)) {
+        continue;
       }
-      if (key === "__id" && (typeof val === "string" || typeof val === "number")) {
-        return String(val).toLowerCase().includes(term);
+      const val = item[key];
+      if (val === undefined || val === null) {
+        continue;
       }
       if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
-        return String(val).toLowerCase().includes(term);
-      }
-      if (typeof val === "object") {
+        if (String(val).toLowerCase().includes(term)) {
+          return true;
+        }
+      } else if (typeof val === "object") {
         try {
-          return JSON.stringify(val).toLowerCase().includes(term);
+          if (JSON.stringify(val).toLowerCase().includes(term)) {
+            return true;
+          }
         } catch {
-          return false;
+          // ignore circular references
         }
       }
-      return false;
-    });
+    }
+    return false;
   });
 }
 
@@ -137,8 +143,10 @@ export function sanitizeFirestoreValue(val: any): any {
     return val.map(sanitizeFirestoreValue);
   }
   const result: Record<string, any> = {};
-  for (const k of Object.keys(val)) {
-    result[k] = sanitizeFirestoreValue(val[k]);
+  for (const k in val) {
+    if (Object.prototype.hasOwnProperty.call(val, k)) {
+      result[k] = sanitizeFirestoreValue(val[k]);
+    }
   }
   return result;
 }

@@ -15,6 +15,27 @@ export async function openDocument(
     ? `/${documentReference.path}/${encodeURIComponent(fieldPath)}.json`
     : `/${documentReference.path}.json`;
 
+  const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+  const openMode = config.get<string>("openMode", "virtual");
+  const hasWorkspace = !!vscode.workspace.workspaceFolders?.length;
+
+  if (openMode === "workspace" && hasWorkspace) {
+    if (fieldPath) {
+      await vscode.commands.executeCommand("ketrik-firestore-studio.openAiScratchpad", {
+        connectionId: connectionId || "default",
+        parentDocRef: documentReference,
+        fieldName: fieldPath,
+        fullFieldPath: fieldPath,
+      });
+    } else {
+      await vscode.commands.executeCommand("ketrik-firestore-studio.openAiScratchpad", {
+        connectionId: connectionId || "default",
+        reference: documentReference,
+      });
+    }
+    return;
+  }
+
   const uri = vscode.Uri.from({
     scheme,
     authority,

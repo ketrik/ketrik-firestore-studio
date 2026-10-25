@@ -1,7 +1,7 @@
 ---
 title: Dual-Contract Substrate (Map & Array Table View)
 description: Visualizing Record<string, T> registries and T[] sequences as virtual collection tables.
-sidebar_position: 5
+sidebar_position: 3
 ---
 
 # Dual-Contract Substrate: Map & Array Table View

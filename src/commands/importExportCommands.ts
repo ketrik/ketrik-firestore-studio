@@ -80,9 +80,14 @@ function coerceCsvValue(val: string): any {
 function recordsToCsv(records: Record<string, any>[]): string {
   if (records.length === 0) return "";
   const headerSet = new Set<string>();
-  records.forEach((r) => Object.keys(r).forEach((k) => {
-    if (k !== "__path" && k !== "__id") headerSet.add(k);
-  }));
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    for (const k in r) {
+      if (Object.prototype.hasOwnProperty.call(r, k) && k !== "__path" && k !== "__id") {
+        headerSet.add(k);
+      }
+    }
+  }
   const headers = ["id", ...Array.from(headerSet)];
 
   function escapeCsvCell(val: any): string {
@@ -97,12 +102,16 @@ function recordsToCsv(records: Record<string, any>[]): string {
   const csvLines: string[] = [];
   csvLines.push(headers.map(escapeCsvCell).join(","));
 
-  for (const r of records) {
-    const line = headers.map((h) => {
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    let line = "";
+    for (let j = 0; j < headers.length; j++) {
+      const h = headers[j];
       const v = h === "id" ? r.__id || r.id : r[h];
-      return escapeCsvCell(v);
-    });
-    csvLines.push(line.join(","));
+      const cell = escapeCsvCell(v);
+      line += (j === 0 ? cell : "," + cell);
+    }
+    csvLines.push(line);
   }
 
   return csvLines.join("\n");

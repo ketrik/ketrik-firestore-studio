@@ -563,7 +563,20 @@ export async function openCollectionAsTable(
         const docSnap = await firestore.doc(message.docPath).get();
         if (docSnap.exists) {
           const data = docSnap.data() || {};
-          const fieldVal = data[message.field];
+          let fieldVal = data[message.field];
+          if (fieldVal === undefined && typeof message.field === "string" && message.field.includes(".")) {
+            let cur: any = data;
+            const segments = message.field.split(".");
+            for (const seg of segments) {
+              if (cur && typeof cur === "object") {
+                cur = cur[seg];
+              } else {
+                cur = undefined;
+                break;
+              }
+            }
+            fieldVal = cur;
+          }
           const fieldItem = new DocumentFieldItem(
             message.field,
             fieldVal,

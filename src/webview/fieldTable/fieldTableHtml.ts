@@ -6,10 +6,18 @@ export function getFieldTableHtml(params: {
   connectionId: string;
   docPath: string;
   isArray: boolean;
+  initialData?: { headers: string[]; rows: any[] };
 }): string {
-  const { panelTitle, fieldName, connectionId, docPath, isArray } = params;
+  const { panelTitle, fieldName, connectionId, docPath, isArray, initialData } = params;
   const substrateType = isArray ? "Sequence (Array)" : "Registry (Keyed Map)";
   const rowIdHeader = isArray ? "Index / ID" : "Key / ID";
+  const safeInitialData = initialData
+    ? JSON.stringify(initialData)
+        .replace(/<\/script/gi, '<\\/script')
+        .replace(/<!--/g, '<\\!--')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029')
+    : '{"headers":[],"rows":[]}';
 
   return `
     <!DOCTYPE html>
@@ -119,6 +127,9 @@ export function getFieldTableHtml(params: {
       </div>
 
       <script>
+        window.__INITIAL_DATA__ = ${safeInitialData};
+      </script>
+      <script>
         ${getFieldTableClientScript(rowIdHeader)}
       </script>
     </body>
@@ -145,7 +156,8 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;');
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
       }
 
       function parseTimeVal(val) {
@@ -322,7 +334,7 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
             if (searchWrapper) searchWrapper.style.display = 'none';
             if (searchBtn) searchBtn.style.display = 'none';
             if (exportBtn) exportBtn.style.display = 'none';
-            if (infoBar) infoBar.style.display = 'none';
+            if (infoBar) infoBar.style.display = 'flex';
           }
         } else {
           emptyState.style.display = 'none';
@@ -730,6 +742,20 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         emptyClearFilterBtn.onclick = function() {
           document.getElementById('clearSearchBtn').click();
         };
+      }
+
+      try {
+        if (window.__INITIAL_DATA__ && Array.isArray(window.__INITIAL_DATA__.rows)) {
+          currentHeaders = window.__INITIAL_DATA__.headers || [];
+          allRows = window.__INITIAL_DATA__.rows || [];
+          currentRows = allRows;
+          reRenderCurrentTable();
+          const countEl = document.getElementById('row-count');
+          if (countEl) countEl.textContent = allRows.length;
+          updateEmptyState(allRows.length);
+        }
+      } catch (err) {
+        console.error('Initial table hydration error:', err);
       }
 
       vscode.postMessage({ command: 'ready' });

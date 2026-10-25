@@ -1,7 +1,7 @@
 ---
 title: Collection Table & Server Query Builder
 description: Tabular collection visualization, server-side multi-clause where query builder, and 1-read document lookup.
-sidebar_position: 4
+sidebar_position: 2
 ---
 
 # Collection Table & Server Query Builder

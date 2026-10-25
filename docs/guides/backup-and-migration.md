@@ -1,32 +1,78 @@
 ---
 title: Backup, Export & Migration
-description: Data extraction, backup strategies, and migration patterns between collections and document substrates.
-sidebar_position: 4
+description: Data extraction, backup strategies, multi-collection replication, and migration patterns between collections and document substrates.
+sidebar_position: 5
 ---
 
 # Backup, Export & Migration
 
-Ketrik Firestore Studio provides lightweight client-side data export tools and architectural workflows for backing up and migrating your Firestore datasets.
+Ketrik Firestore Studio provides comprehensive client-side data export tools, cross-instance replication wizards, and architectural workflows for backing up, migrating, and seeding your Firestore datasets.
 
 ---
 
-## Interactive Data Export
+## 1. Batch Multi-Collection Replication & Deletion
 
-### 1. Collection Table Export
+Managing multiple collections across environments (e.g. replicating production seed datasets into staging or local Firebase Emulators) is streamlined with multi-collection batch tools.
+
+### Batch Copy Multiple Collections (`copyMultipleCollections`)
+1. Right-click any connection node in the Explorer tree $\rightarrow$ select **"Copy Multiple Collections to Instance..."** (or run `ketrik-firestore-studio.copyMultipleCollections`).
+2. A multi-select QuickPick displays all root collections with document counts.
+3. Check the collections you want to replicate and click **OK**.
+4. Select the target destination connection (e.g. `Local Emulator`).
+5. Choose your collision strategy:
+   - **Merge / Patch**: Updates matching documents without overwriting omitted fields.
+   - **Overwrite**: Atomically replaces target documents with the copied payload.
+6. Firestore Studio executes chunked batch writes (`WriteBatch`, 400 documents/batch) with a live progress indicator and cancellation controls.
+
+### Batch Delete Multiple Collections (`deleteMultipleCollections`)
+1. Right-click any connection node $\rightarrow$ select **"Delete Multiple Collections..."** (or run `ketrik-firestore-studio.deleteMultipleCollections`).
+2. Select the collections to delete from the multi-select QuickPick.
+3. A modal confirmation warns with the collection names and document totals.
+4. Confirming purges the selected collections in safety-chunked batch operations.
+
+---
+
+## 2. Interactive Data Export & Import
+
+### Collection Table Export (CSV, JSON, NDJSON)
 When viewing any collection or filtered query in the **Collection Table Webview**:
-1. Click the **Export CSV** button in the header toolbar to download all currently loaded documents as a comma-separated values file. Nested map objects and arrays are safely serialized as JSON strings.
-2. Click the **Export JSON** button to download a formatted array of documents, ideal for seeding development environments or analyzing in external tools.
+1. Click **Export CSV** in the header toolbar to download loaded documents as comma-separated values. Nested map objects and arrays are safely serialized as JSON strings.
+2. Click **Export JSON** to download a formatted array of documents, ideal for seeding development environments or analyzing in external tools.
+3. Use command `ketrik-firestore-studio.exportCollection` to export entire collections to CSV, JSON, or NDJSON (Newline Delimited JSON).
 
-### 2. In-Document Map & Array Substrate Export
-When inspecting large in-document registry maps (`Record<string, T>`) or arrays (`T[]`) via **View as Table**:
-- Use the table toolbar to copy or export the structured fields to JSON.
-- This allows rapid data auditing without writing one-off scripts.
+### Bulk Data Import (`importCollection`)
+To seed collections from existing datasets:
+- Run **"Firestore: Import Data (CSV, JSON, NDJSON)..."** (`ketrik-firestore-studio.importCollection`).
+- Choose your input file and configure field type mappings.
+- Data is validated and ingested using chunked batch writes.
 
 ---
 
-## Recursive Subcollection Backup vs. Managed Cloud Backups
+## 3. Local JSON Offline Store & Seed
 
-When planning full backups of Firestore databases, it is essential to distinguish between **client-side tree crawling** and **managed cloud infrastructure**:
+For offline development, unit tests, and mock backends:
+- **Snapshot Collection to Local JSON**: Right-click any collection $\rightarrow$ **"Snapshot Collection to Local JSON Store..."** (`ketrik-firestore-studio.snapshotFirestoreToLocalJson`). Writes a clean, serialized JSON array to your local workspace.
+- **Push / Seed to Firestore**: Right-click a snapshot file or collection $\rightarrow$ **"Push / Seed to Firestore (Cloud or Emulator)..."** (`ketrik-firestore-studio.pushLocalCollectionToFirestore`). Batches the local documents directly into your target connection.
+
+---
+
+## 4. Substrate Migration: Explode & Consolidate
+
+When refactoring document architectures between **discrete subcollections** and **in-document aggregated maps/arrays**:
+
+### Explode Field to Collection (`explodeField`)
+Transforms an in-document Map (`Record<string, T>`) or Array (`T[]`) into a standalone Firestore subcollection:
+- Each key/index becomes an individual document ID.
+- Automatically handles deep batch creation without locking the parent document.
+
+### Consolidate Collection to Field (`consolidateCollection`)
+Flattens all documents in a subcollection into a single aggregated Map or Array field in the parent document:
+- Minimizes future read query costs ($O(N) \rightarrow O(1)$).
+- Optionally prompts to clean up the source subcollection documents after consolidation.
+
+---
+
+## 5. Managed Cloud Backups vs. Client-Side Tools
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -50,9 +96,3 @@ gcloud firestore export gs://my-backup-bucket/firestore-backups-$(date +%Y%m%d)
 ```
 
 This exports data server-side directly to Cloud Storage buckets without incurring local network latency or saturating client bandwidth.
-
-### Local & Subcollection Seeds (Roadmap Feature)
-For developer seeding, testing, and isolated staging environments, Ketrik Firestore Studio is introducing native **Recursive Tree Export**:
-- Recursively traverses root documents and all subcollections (`doc.listCollections()`).
-- Bundles documents and their subcollection trees into a single structured archive file (`.firestore.json`).
-- Supports one-click **Restore / Seed** into local Firebase Emulators or target staging databases with batch writes.

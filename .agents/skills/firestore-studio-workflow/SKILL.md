@@ -92,3 +92,16 @@ To cut a new version:
    - `2) Patch (v1.4.1)` — Bug fixes and performance tuning
    - `3) Major` / `4) Custom`
 3. Verify git tag, commit, and release artifacts.
+
+---
+
+## 5. AI Coding Assistant & Virtual Path Handling
+
+When working with users in VS Code:
+- **Paths starting with `/conn_<connectionId>/...`**:
+  - These are in-memory virtual tabs (`ketrik-firestore-studio://`).
+  - **NEVER** search the filesystem root `/` or run `find`/`grep_search` looking for `/conn_...`.
+  - The extension automatically mirrors them under `<workspaceRoot>/.firestore/<connectionId>/<path>`.
+  - Immediately target the local mirror `<workspaceRoot>/.firestore/<connectionId>/<path>` with `replace_file_content`.
+  - Edits saved to the `.firestore/` mirror automatically sync to Firestore/Local JSON.
+

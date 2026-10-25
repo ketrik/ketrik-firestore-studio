@@ -2,6 +2,62 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.18.0] - 2026-10-25
+
+### Added
+- **Deterministic AI Scratchpads (`ketrik-firestore-studio.openAiScratchpad`)**:
+  * 1-click zero-prompt scratchpad generation under `.firestore/<connectionId>/<collectionPath>/<docId>/[<fieldPath>.json]`.
+  * Eliminates manual directory creation, file picking dialogs, and document ID collisions across different collections.
+  * Automatically binds origin metadata in `.firestore/snapshots.json` and ensures `.firestore/` is gitignored.
+- **Field-Level Isolation (Token Optimization for 1MB Documents)**:
+  * Extract and isolate a single document field (e.g. `config.groups` or `sidebar_finance`) into its own scratchpad file.
+  * Reduces AI LLM token consumption by up to 99.8% (e.g. 2 KB instead of 1 MB / ~250k tokens).
+  * On save, pushes atomic partial updates via Firestore `FieldPath(...segments)` without re-uploading or risking the rest of the document.
+- **Unpack Monolithic Document Fields (`ketrik-firestore-studio.unpackDocumentFields`)**:
+  * 1-click unpack of all top-level keys in a document into individual modular files (`header.json`, `sidebar.json`, `metadata.json`), each independently tracked and auto-synced.
+- **Dual-Mode Document Architecture (`ketrik-firestore-studio.openMode`)**:
+  * `"virtual"` (default): 100% in-memory virtual tabs (`ketrik-firestore-studio://`) with zero files written to disk.
+  * `"workspace"`: Directly opens `.firestore/...` scratchpad files on tree clicks for seamless 0-click AI assistant editing.
+- **Live Automatic Synchronization (`ketrik-firestore-studio.autoSyncLocalSnapshots`)**:
+  * When enabled, saving any tracked snapshot or scratchpad file immediately pushes changes back to Firestore or Local JSON.
+- **Privacy & Scratchpad Cleanup (`ketrik-firestore-studio.cleanScratchpads`)**:
+  * 1-click command to recursively delete `.firestore/` and clear all bindings.
+- **Interactive Collection Filter on Tree (`ketrik-firestore-studio.filterCollection`)**:
+  * Filter any collection directly on the Explorer Tree by Doc ID prefix, substring, or content without having to open and scroll through all items.
+  * Dedicated inline filter action (`$(filter)`), active badge indicator (`[🔍 "filter"]`), context menu action, and 1-click filter clearing (`$(clear-all)`).
+  * Empty state guidance with direct action to reset the filter.
+- **Expandable Array Tree Items & In-Place Item Mutations**:
+  * Arrays on the Explorer Tree are now collapsible and expandable into indexed individual elements (`[0]`, `[1]`, etc.).
+  * Edit single array items directly from the tree (primitives via type-validated input prompts, maps/arrays via inline editor/JSON prompt).
+  * Dedicated inline and context menu actions: Edit Array Item (`$(edit)`), Duplicate Array Item (`$(copy)`), Add Item to Array (`$(add)`), and Delete Array Item (`$(trash)`).
+  * Atomic Firestore array mutation preserving index ordering across both Cloud Firestore and Local JSON.
+- **Tree Context Menu Overhaul & Logical Grouping Tiers**:
+  * Complete restructuring of Explorer Tree context menus across Connections, Collections, Documents, Fields, and Array Items into logical, beautifully separated tiers (`1_open`, `2_ai`, `3_edit`, `4_clipboard`, `5_tools`, `6_sync`, `7_refresh`, `9_danger`).
+  * Replaces cluttered, unordered menus with clean separators and predictable action placements.
+- **Field Table View Data Hydration & Sanitization (`openFieldAsTable`)**:
+  * Fixed empty view ("0 items") when opening arrays or maps as tables: embedded initial data directly into webview HTML (`window.__INITIAL_DATA__`) to eliminate `postMessage` race conditions.
+  * Added deep serialization and sanitization (`sanitizeFirestoreValue`) preventing complex/circular Firestore SDK objects and timestamps from breaking webview structured cloning.
+  * Fixed nested dot-path resolution (e.g. `config.groups`) when opening field tables from the collection grid.
+- **Side-by-Side Diffing, Push & Pull Suite**:
+  * Dedicated toolbar and context menu actions for tracked files: `$(diff) Compare with Firestore`, `$(cloud-upload) Push to Firestore`, `$(cloud-download) Pull Latest from Firestore`.
+
+### Optimized & Hardened
+- **Zero-Allocation Traversals & Sizing Loops**:
+  * Replaced `Object.keys()` and `Object.entries()` allocations with zero-allocation `for..in` loops and `hasOwnProperty` across document sizing (`calculateValueSize`), field items, table filtering (`filterObjects`), and schema analysis (`extractDocumentFieldEntries`).
+  * Converted `tableUtils.filterObjects` excluded keys check to an $O(1)$ `Set` with early exit on primitive matches, eliminating tens of thousands of tuple allocations during search keystrokes.
+- **Shared Timestamp Revival & Bulk Operations**:
+  * Unified and exported `reviveTimestamps()` in `timestampUtils.ts` with zero intermediate array allocations, reducing heap pressure during large collection copies, local syncs, and virtual file saves.
+- **Rules AST Parser & Cache Bounds**:
+  * Precompiled helper function replacement regexes in `RulesParser.ts` to avoid constructing dynamic `RegExp` objects inside rule evaluation loops.
+  * Bounded `RulesParser._accessCache` to 500 entries with LRU eviction to prevent unbounded memory growth on large subcollection graphs.
+  * Automated cleanup of rules parsers and virtual rules on connection deletion.
+- **Resource Disposal & Memory Leak Prevention**:
+  * Added `OverviewService` connection listener disposal and bound `overviewService` to extension context subscriptions.
+  * Canceled pending TTL timers in `DocumentFileSystemProvider` on document invalidations, updates, and provider disposal.
+  * Replaced module-level text document close listener leak in `TimestampEditorDecorations.ts` with a disposable subscription registered on extension activate.
+  * Cached `.gitignore` validation in `SnapshotSyncService` to eliminate redundant synchronous disk I/O on every save.
+  * Streamlined collection search filtering in `ExplorerDataProvider` with early-exit recursive term matching (`matchesSearchTerm`), avoiding full-document `JSON.stringify` allocations.
+
 ## [1.17.0] - 2026-10-23
 
 ### Added

@@ -1,5 +1,6 @@
 import {
   CollectionReference,
+  DocumentReference,
   FieldPath,
   OrderByDirection,
   QueryDocumentSnapshot,
@@ -18,6 +19,7 @@ import {
   CostQuotaBranchItem,
   DocumentFieldItem,
   DocumentItem,
+  InfoMessageItem,
   Item,
   ShowMoreAuthUsersItem,
   ShowMoreItemsItem,
@@ -32,6 +34,7 @@ import { StorageService } from "../storage/storageService";
 import { parseHostPort, probePort } from "../emulator/portUtils";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { isTimestampLike } from "../utils/timestampUtils";
+import { CostService } from "../cost/costService";
 
 
 /** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
@@ -53,6 +56,40 @@ function evictIfNeeded<K, V>(map: Map<K, V>, maxSize: number): void {
 }
 
 /**
+ * Fast zero-allocation recursive matcher to test if a document's keys or values
+ * match an active lowercase search term without allocating large JSON strings.
+ */
+function matchesSearchTerm(val: any, term: string, depth = 0): boolean {
+  if (val === null || val === undefined || depth > 8) {
+    return false;
+  }
+  if (typeof val === "string") {
+    return val.toLowerCase().includes(term);
+  }
+  if (typeof val === "number" || typeof val === "boolean") {
+    return String(val).toLowerCase().includes(term);
+  }
+  if (Array.isArray(val)) {
+    for (let i = 0; i < val.length; i++) {
+      if (matchesSearchTerm(val[i], term, depth + 1)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (typeof val === "object") {
+    for (const k in val) {
+      if (Object.prototype.hasOwnProperty.call(val, k)) {
+        if (k.toLowerCase().includes(term) || matchesSearchTerm(val[k], term, depth + 1)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Provides the Firestore Studio Tree View data for multiple connections.
  */
 export default class ExplorerDataProvider implements vscode.TreeDataProvider<Item>, vscode.Disposable {
@@ -62,8 +99,41 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   private _paging = new Map<string, number>();
   private _authUsersPaging = new Map<string, { items: AuthUserItem[]; nextPageToken?: string }>();
   private _orderBy = new Map<string, { field: string | undefined; direction: "asc" | "desc" }>();
+  private _collectionFilters = new Map<string, string>();
   private _connectionListener: vscode.Disposable;
   private _rulesListener: vscode.Disposable;
+
+  public setCollectionFilter(connectionId: string, collPath: string, filter: string): void {
+    const key = `${connectionId}:${collPath}`;
+    const trimmed = filter.trim().toLowerCase();
+    if (!trimmed) {
+      this._collectionFilters.delete(key);
+    } else {
+      this._collectionFilters.set(key, trimmed);
+    }
+    const prefix = `col:${connectionId}:${collPath}:`;
+    for (const k of this._treeCache.keys()) {
+      if (k.startsWith(prefix)) {
+        this._treeCache.delete(k);
+      }
+    }
+  }
+
+  public clearCollectionFilter(connectionId: string, collPath: string): void {
+    const key = `${connectionId}:${collPath}`;
+    this._collectionFilters.delete(key);
+    const prefix = `col:${connectionId}:${collPath}:`;
+    for (const k of this._treeCache.keys()) {
+      if (k.startsWith(prefix)) {
+        this._treeCache.delete(k);
+      }
+    }
+  }
+
+  public getCollectionFilter(connectionId: string, collPath: string): string | undefined {
+    const key = `${connectionId}:${collPath}`;
+    return this._collectionFilters.get(key);
+  }
 
   /** Cache tree children (collections, docs, fields) to avoid re-requesting on repeated expand/collapse. */
   private _treeCache = new Map<string, { items: Item[]; timestamp: number }>();
@@ -87,24 +157,18 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     this._treeViewDisposables.push(
       treeView.onDidExpandElement((e) => {
         if (e.element instanceof DocumentItem) {
-          const docKey = `${e.element.connectionId}:${e.element.reference.path}`;
+          const docKey = `doc:${e.element.connectionId}:${e.element.reference.path}`;
           this._expandedDocIds.add(docKey);
-          // Refresh item so its click command becomes ketrik-firestore-studio.openPath
-          this._onDidChangeTreeData.fire(e.element);
         } else if (e.element instanceof DocumentFieldItem && e.element.id) {
           this._expandedFieldIds.add(e.element.id);
-          this._onDidChangeTreeData.fire(e.element);
         }
       }),
       treeView.onDidCollapseElement((e) => {
         if (e.element instanceof DocumentItem) {
-          const docKey = `${e.element.connectionId}:${e.element.reference.path}`;
+          const docKey = `doc:${e.element.connectionId}:${e.element.reference.path}`;
           this._expandedDocIds.delete(docKey);
-          // Refresh item so single-click expands it instead of opening JSON
-          this._onDidChangeTreeData.fire(e.element);
         } else if (e.element instanceof DocumentFieldItem && e.element.id) {
           this._expandedFieldIds.delete(e.element.id);
-          this._onDidChangeTreeData.fire(e.element);
         }
       })
     );
@@ -152,6 +216,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     this._authUsersPaging.clear();
     this._orderBy.clear();
     this._treeCache.clear();
+    this._collectionFilters.clear();
   }
 
   refresh(resetState = false): void {
@@ -236,7 +301,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     if (invalidatedDocs.length > 0 && invalidatedDocs.length <= 5) {
       let anyDocRefreshed = false;
       for (const { connectionId, docPath } of invalidatedDocs) {
-        const targetDocId = `${connectionId}:${docPath}`;
+        const targetDocId = `doc:${connectionId}:${docPath}`;
         let matchedDoc: DocumentItem | undefined;
         for (const [k, v] of this._treeCache.entries()) {
           if (k.startsWith(`col:${connectionId}:`)) {
@@ -282,7 +347,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       
       // Look up the existing DocumentItem instance in cached collection results
       let targetDocItem: DocumentItem | undefined;
-      const targetDocId = `${element.connectionId}:${element.parentDocRef.path}`;
+      const targetDocId = `doc:${element.connectionId}:${element.parentDocRef.path}`;
       for (const [k, v] of this._treeCache.entries()) {
         if (k.startsWith(`col:${element.connectionId}:`)) {
           const match = v.items.find(
@@ -369,39 +434,25 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     }
   }
 
-  getTreeItem(element: Item): vscode.TreeItem {
-    if (element instanceof DocumentItem) {
-      const docKey = `${element.connectionId}:${element.reference.path}`;
-      const isExpanded = this._expandedDocIds.has(docKey);
-      if (isExpanded) {
-        element.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
-        element.command = {
-          command: "ketrik-firestore-studio.openPath",
-          title: "Open in Editor",
-          arguments: [element.reference.path, element.connectionId],
-        };
-      } else {
-        element.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
-        element.command = undefined;
-      }
-    } else if (element instanceof DocumentFieldItem) {
-      const isMap = element.contextValue === "documentFieldMap";
-      const keyCount = isMap && element.value && typeof element.value === "object" ? Object.keys(element.value).length : 0;
-      if (isMap && keyCount > 0) {
-        const isExpanded = !!(element.id && this._expandedFieldIds.has(element.id));
-        if (isExpanded) {
-          element.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
-          element.command = {
-            command: "ketrik-firestore-studio.openFieldInEditor",
-            title: "Open in Editor",
-            arguments: [element],
-          };
-        } else {
-          element.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
-          element.command = undefined;
-        }
+  public isDocumentExpanded(connectionId: string, docPath: string): boolean {
+    return this._expandedDocIds.has(`doc:${connectionId}:${docPath}`);
+  }
+
+  public isFieldExpanded(fieldId?: string): boolean {
+    return !!(fieldId && this._expandedFieldIds.has(fieldId));
+  }
+
+  public async expandItem(item: Item): Promise<void> {
+    if (this._treeView) {
+      try {
+        await this._treeView.reveal(item, { select: true, focus: false, expand: true });
+      } catch {
+        // Silently ignore if tree node cannot be revealed
       }
     }
+  }
+
+  getTreeItem(element: Item): vscode.TreeItem {
     return element;
   }
 
@@ -501,7 +552,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         : element instanceof DocumentItem
         ? `doc:${element.connectionId}:${element.reference.path}`
         : element instanceof CollectionItem
-        ? `col:${element.connectionId}:${element.reference.path}:${this._paging.get(`${element.connectionId}:${element.reference.path}`) ?? defaultLimit}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.field ?? "id"}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.direction ?? "asc"}`
+        ? `col:${element.connectionId}:${element.reference.path}:${this._paging.get(`${element.connectionId}:${element.reference.path}`) ?? defaultLimit}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.field ?? "id"}:${this._orderBy.get(`${element.connectionId}:${element.reference.path}`)?.direction ?? "asc"}:${this.getCollectionFilter(element.connectionId, element.reference.path) ?? ""}`
         : element instanceof AuthUsersBranchItem
         ? `auth:${element.connectionId}`
         : element instanceof CompositeIndexesBranchItem
@@ -525,13 +576,25 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           this._revealingDoc.connectionId === element.connectionId &&
           (this._revealingDoc.docPath.startsWith(element.reference.path + "/") ||
             element.reference.path === this._revealingDoc.docPath.split("/").slice(0, -1).join("/")) &&
-          !cached.items.some((it) => it.id === `${element.connectionId}:${this._revealingDoc!.docPath}`)
+          !cached.items.some((it) => it.id === `doc:${element.connectionId}:${this._revealingDoc!.docPath}`)
         ) {
           try {
             const targetSnap = await element.reference.doc(this._revealingDoc.docId).get();
-            if (targetSnap.exists) {
+            const hasSubcollections = !targetSnap.exists
+              ? (await targetSnap.ref.listCollections()).length > 0
+              : false;
+            if (targetSnap.exists || hasSubcollections) {
+              const docKey = `doc:${element.connectionId}:${targetSnap.ref.path}`;
+              const isExp = this._expandedDocIds.has(docKey);
               cached.items.unshift(
-                new DocumentItem(targetSnap.id, targetSnap.ref, element.connectionId, targetSnap.data())
+                new DocumentItem(
+                  targetSnap.id,
+                  targetSnap.ref,
+                  element.connectionId,
+                  targetSnap.exists ? targetSnap.data() : undefined,
+                  isExp,
+                  !targetSnap.exists
+                )
               );
             }
           } catch {}
@@ -558,7 +621,8 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
               id: collId,
               path: collId,
             } as any;
-            return new CollectionItem(collId, fakeRef, element.config.id);
+            const filter = this.getCollectionFilter(element.config.id, collId);
+            return new CollectionItem(collId, fakeRef, element.config.id, undefined, filter);
           });
           return storeAndReturn(collItems);
         } catch (err: any) {
@@ -591,10 +655,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
         const collItems = refs.map((ref: CollectionReference) => {
           const sortKey = `${element.config.id}:${ref.path}`;
+          const filter = this.getCollectionFilter(element.config.id, ref.path);
           return new CollectionItem(ref.id, ref, element.config.id, {
             fieldName: this._orderBy.get(sortKey)?.field ?? "id",
             direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
-          });
+          }, filter);
         });
 
         // Add Authentication, Composite Indexes, Cloud Storage, and Cost & Quotas nodes alongside Root Collections
@@ -730,7 +795,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           const docData = LocalJsonService.getInstance().getDocument(conn, element.reference.path) || {};
           const fieldKeys = Object.keys(docData).sort((a, b) => a.localeCompare(b));
           const items: Item[] = fieldKeys.map((key) => {
-            const fieldId = `${element.connectionId}:${element.reference.path}#${key}`;
+            const fieldId = `field:${element.connectionId}:${element.reference.path}#${key}`;
             const isExpanded = this._expandedFieldIds.has(fieldId);
             return new DocumentFieldItem(
               key,
@@ -751,10 +816,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const refs = (await element.reference.listCollections()) as CollectionReference[];
         const subCollections = refs.map((ref: CollectionReference) => {
           const sortKey = `${element.connectionId}:${ref.path}`;
+          const filter = this.getCollectionFilter(element.connectionId, ref.path);
           return new CollectionItem(ref.id, ref, element.connectionId, {
             fieldName: this._orderBy.get(sortKey)?.field ?? "id",
             direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
-          });
+          }, filter);
         });
         items.push(...subCollections);
 
@@ -776,7 +842,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
             return a.localeCompare(b);
           });
           for (const key of fieldKeys) {
-            const fieldId = `${element.connectionId}:${element.reference.path}#${key}`;
+            const fieldId = `field:${element.connectionId}:${element.reference.path}#${key}`;
             const isExpanded = this._expandedFieldIds.has(fieldId);
             items.push(
               new DocumentFieldItem(
@@ -800,10 +866,33 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         return [];
       }
     } else if (element instanceof DocumentFieldItem) {
-      if (
+      if (Array.isArray(element.value)) {
+        const arr = element.value;
+        const currentSegments =
+          element.pathSegments && element.pathSegments.length > 0
+            ? element.pathSegments
+            : [element.fieldName];
+        const items: Item[] = arr.map((itemVal, idx) => {
+          const childSegments = [...currentSegments, String(idx)];
+          const childId = `field:${element.connectionId}:${element.parentDocRef.path}#${childSegments.join(".")}`;
+          const isExpanded = this._expandedFieldIds.has(childId);
+          return new DocumentFieldItem(
+            `[${idx}]`,
+            itemVal,
+            element.parentDocRef,
+            element.connectionId,
+            childSegments,
+            element,
+            isExpanded,
+            true,
+            idx,
+            element
+          );
+        });
+        return storeAndReturn(items);
+      } else if (
         element.value &&
         typeof element.value === "object" &&
-        !Array.isArray(element.value) &&
         !isTimestampLike(element.value)
       ) {
         const isVector =
@@ -833,7 +922,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
               : [element.fieldName];
           const items: Item[] = fieldKeys.map((key) => {
             const childSegments = [...currentSegments, key];
-            const childId = `${element.connectionId}:${element.parentDocRef.path}#${childSegments.join(".")}`;
+            const childId = `field:${element.connectionId}:${element.parentDocRef.path}#${childSegments.join(".")}`;
             const isExpanded = this._expandedFieldIds.has(childId);
             return new DocumentFieldItem(
               key,
@@ -850,16 +939,40 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       }
       return [];
     } else if (element instanceof CollectionItem) {
+      const activeFilter = this.getCollectionFilter(element.connectionId, element.reference.path);
       try {
         const conn = this._connectionManager.getConnection(element.connectionId);
         if (conn?.isLocalJson) {
-          const docs = LocalJsonService.getInstance().listDocuments(conn, element.collectionId);
+          const effectiveCollPath = element.reference?.path || element.collectionId;
+          let docs = LocalJsonService.getInstance().listDocuments(conn, effectiveCollPath);
+          if (activeFilter) {
+            docs = docs.filter(
+              (d) =>
+                d.id.toLowerCase().includes(activeFilter) ||
+                (d.data && matchesSearchTerm(d.data, activeFilter))
+            );
+          }
+          if (docs.length === 0 && activeFilter) {
+            const emptyItem = new InfoMessageItem(
+              `No documents matching "${activeFilter}"`,
+              "search-stop",
+              "collectionEmptyFilter",
+              {
+                command: "ketrik-firestore-studio.clearCollectionFilter",
+                title: "Clear Filter",
+                arguments: [element],
+              }
+            );
+            return storeAndReturn([emptyItem]);
+          }
           const items: DocumentItem[] = docs.map((d) => {
             const fakeDocRef = {
               id: d.id,
-              path: `${element.collectionId}/${d.id}`,
+              path: `${effectiveCollPath}/${d.id}`,
             } as any;
-            return new DocumentItem(d.id, fakeDocRef, element.connectionId, d.data);
+            const docKey = `doc:${element.connectionId}:${fakeDocRef.path}`;
+            const isExp = this._expandedDocIds.has(docKey);
+            return new DocumentItem(d.id, fakeDocRef, element.connectionId, d.data, isExp);
           });
           return storeAndReturn(items);
         }
@@ -868,20 +981,170 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const limit = this._paging.get(key) ?? defaultLimit;
 
         const sortConfig = this._orderBy.get(key);
-        const snapshots = await element.reference
-          .limit(limit + 1)
-          .orderBy(
-            sortConfig?.field ?? FieldPath.documentId(),
-            sortConfig?.direction ?? "asc"
-          )
-          .get();
+        const isDefaultSort =
+          !sortConfig ||
+          sortConfig.field === "id" ||
+          (sortConfig.field as any) === FieldPath.documentId();
 
         const items: DocumentItem[] = [];
-        snapshots.forEach((snapshot: QueryDocumentSnapshot) => {
-          items.push(
-            new DocumentItem(snapshot.id, snapshot.ref, element.connectionId, snapshot.data())
-          );
-        });
+        let hasMore = false;
+
+        if (activeFilter) {
+          let matchingRefs: DocumentReference[] = [];
+          if (typeof element.reference.listDocuments === "function") {
+            try {
+              const docRefs = await element.reference.listDocuments();
+              matchingRefs = docRefs.filter((r) => r.id.toLowerCase().includes(activeFilter));
+            } catch {}
+          }
+
+          if (matchingRefs.length === 0) {
+            try {
+              const directDoc = await element.reference.doc(activeFilter).get();
+              if (directDoc.exists) {
+                matchingRefs = [directDoc.ref];
+              }
+            } catch {}
+          }
+
+          if (matchingRefs.length > 0) {
+            const firestore = await this._connectionManager.getFirestore(element.connectionId);
+            hasMore = matchingRefs.length > limit;
+            const pageRefs = matchingRefs.slice(0, limit);
+            const snapshots = await firestore.getAll(...pageRefs);
+            CostService.getInstance().recordOperation(
+              element.connectionId,
+              "read",
+              snapshots.filter((s) => s.exists).length
+            );
+
+            for (const snap of snapshots) {
+              const docKey = `doc:${element.connectionId}:${snap.ref.path}`;
+              const isExp = this._expandedDocIds.has(docKey);
+              items.push(
+                new DocumentItem(
+                  snap.id,
+                  snap.ref,
+                  element.connectionId,
+                  snap.exists ? snap.data() : undefined,
+                  isExp,
+                  !snap.exists
+                )
+              );
+            }
+          } else {
+            // Query with text scan
+            try {
+              const snapshots = await element.reference.limit(limit * 2).get();
+              for (const doc of snapshots.docs) {
+                if (doc.id.toLowerCase().includes(activeFilter) || matchesSearchTerm(doc.data(), activeFilter)) {
+                  const docKey = `doc:${element.connectionId}:${doc.ref.path}`;
+                  const isExp = this._expandedDocIds.has(docKey);
+                  items.push(new DocumentItem(doc.id, doc.ref, element.connectionId, doc.data(), isExp));
+                }
+              }
+            } catch {}
+          }
+
+          if (items.length === 0) {
+            const emptyItem = new InfoMessageItem(
+              `No documents matching "${activeFilter}"`,
+              "search-stop",
+              "collectionEmptyFilter",
+              {
+                command: "ketrik-firestore-studio.clearCollectionFilter",
+                title: "Clear Filter",
+                arguments: [element],
+              }
+            );
+            return storeAndReturn([emptyItem]);
+          }
+
+          if (hasMore) {
+            const result = [
+              ...items,
+              new ShowMoreItemsItem(element.reference, limit, element.connectionId, defaultLimit),
+            ];
+            return storeAndReturn(result);
+          }
+          return storeAndReturn(items);
+        }
+
+        if (isDefaultSort && typeof element.reference.listDocuments === "function") {
+          try {
+            const docRefs = await element.reference.listDocuments();
+            if (sortConfig?.direction === "desc") {
+              docRefs.reverse();
+            }
+
+            hasMore = docRefs.length > limit;
+            const pageRefs = docRefs.slice(0, limit);
+
+            if (pageRefs.length > 0) {
+              const firestore = await this._connectionManager.getFirestore(element.connectionId);
+              const snapshots = await firestore.getAll(...pageRefs);
+              CostService.getInstance().recordOperation(
+                element.connectionId,
+                "read",
+                snapshots.filter((s) => s.exists).length
+              );
+
+              for (const snap of snapshots) {
+                const docKey = `doc:${element.connectionId}:${snap.ref.path}`;
+                const isExp = this._expandedDocIds.has(docKey);
+                items.push(
+                  new DocumentItem(
+                    snap.id,
+                    snap.ref,
+                    element.connectionId,
+                    snap.exists ? snap.data() : undefined,
+                    isExp,
+                    !snap.exists
+                  )
+                );
+              }
+            }
+          } catch {
+            // Fall back to standard query if listDocuments fails
+          }
+        }
+
+        if (items.length === 0 && !hasMore) {
+          const snapshots = await element.reference
+            .limit(limit + 1)
+            .orderBy(
+              sortConfig?.field ?? FieldPath.documentId(),
+              sortConfig?.direction ?? "asc"
+            )
+            .get();
+
+          snapshots.forEach((snapshot: QueryDocumentSnapshot) => {
+            const docKey = `doc:${element.connectionId}:${snapshot.ref.path}`;
+            const isExp = this._expandedDocIds.has(docKey);
+            items.push(
+              new DocumentItem(snapshot.id, snapshot.ref, element.connectionId, snapshot.data(), isExp)
+            );
+          });
+
+          // If the query returned 0 documents, check if there are missing documents that have subcollections
+          if (items.length === 0 && typeof element.reference.listDocuments === "function") {
+            try {
+              const docRefs = await element.reference.listDocuments();
+              hasMore = docRefs.length > limit;
+              const pageRefs = docRefs.slice(0, limit);
+              for (const ref of pageRefs) {
+                const docKey = `doc:${element.connectionId}:${ref.path}`;
+                const isExp = this._expandedDocIds.has(docKey);
+                items.push(
+                  new DocumentItem(ref.id, ref, element.connectionId, undefined, isExp, true)
+                );
+              }
+            } catch {}
+          } else if (items.length > limit) {
+            items.pop();
+            hasMore = true;
+          }
+        }
 
         // Ensure target revealing document is present in the children list even if beyond initial page limit
         if (
@@ -889,20 +1152,31 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           this._revealingDoc.connectionId === element.connectionId &&
           (this._revealingDoc.docPath.startsWith(element.reference.path + "/") ||
             element.reference.path === this._revealingDoc.docPath.split("/").slice(0, -1).join("/")) &&
-          !items.some((it) => it.id === `${element.connectionId}:${this._revealingDoc!.docPath}`)
+          !items.some((it) => it.id === `doc:${element.connectionId}:${this._revealingDoc!.docPath}`)
         ) {
           try {
             const targetSnap = await element.reference.doc(this._revealingDoc.docId).get();
-            if (targetSnap.exists) {
+            const hasSubcollections = !targetSnap.exists
+              ? (await targetSnap.ref.listCollections()).length > 0
+              : false;
+            if (targetSnap.exists || hasSubcollections) {
+              const docKey = `doc:${element.connectionId}:${targetSnap.ref.path}`;
+              const isExp = this._expandedDocIds.has(docKey);
               items.unshift(
-                new DocumentItem(targetSnap.id, targetSnap.ref, element.connectionId, targetSnap.data())
+                new DocumentItem(
+                  targetSnap.id,
+                  targetSnap.ref,
+                  element.connectionId,
+                  targetSnap.exists ? targetSnap.data() : undefined,
+                  isExp,
+                  !targetSnap.exists
+                )
               );
             }
           } catch {}
         }
 
-        if (items.length > limit) {
-          items.pop();
+        if (hasMore) {
           const result = [
             ...items,
             new ShowMoreItemsItem(element.reference, limit, element.connectionId, defaultLimit),
@@ -1054,12 +1328,14 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
             path: fullDocPath,
           } as any;
           const docData = LocalJsonService.getInstance().getDocument(conn, fullDocPath);
-          docItem = new DocumentItem(docId, fakeDocRef, connectionId, docData);
+          const isExp = this._expandedDocIds.has(`doc:${connectionId}:${fullDocPath}`);
+          docItem = new DocumentItem(docId, fakeDocRef, connectionId, docData, isExp);
           docRef = fakeDocRef;
         } else {
           const firestore = await this._connectionManager.getFirestore(connectionId);
           docRef = firestore.doc(fullDocPath);
-          docItem = new DocumentItem(docId, docRef, connectionId);
+          const isExp = this._expandedDocIds.has(`doc:${connectionId}:${fullDocPath}`);
+          docItem = new DocumentItem(docId, docRef, connectionId, undefined, isExp);
         }
 
         // If a specific field/property is targeted, reveal the DocumentFieldItem
@@ -1117,12 +1393,16 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
             );
           }
 
+          const fallbackId = `field:${connectionId}:${docRef.path}#${targetSegments.join(".")}`;
+          const isExpField = this._expandedFieldIds.has(fallbackId);
           const fallbackFieldItem = new DocumentFieldItem(
             targetSegments[targetSegments.length - 1],
             fieldValue,
             docRef,
             connectionId,
-            targetSegments
+            targetSegments,
+            undefined,
+            isExpField
           );
           await this._treeView?.reveal(fallbackFieldItem, options);
           return;

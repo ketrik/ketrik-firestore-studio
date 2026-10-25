@@ -1,3 +1,4 @@
+import * as vscode from "vscode";
 import { ConnectionManager, FirestoreConnectionConfig } from "../connections/ConnectionManager";
 import { calculateDocumentSize } from "../utils/documentSizeUtils";
 import { TrafficMetricsProvider } from "./trafficMetricsProvider";
@@ -9,16 +10,17 @@ import {
   CollectionMetricItem,
 } from "./overviewTypes";
 
-export class OverviewService {
+export class OverviewService implements vscode.Disposable {
   private static instance: OverviewService;
 
   // Cache overview data for 60 seconds to prevent rapid redundant aggregations
   private cache = new Map<string, { timestamp: number; data: OverviewDashboardData }>();
   private readonly CACHE_TTL_MS = 60 * 1000;
   private readonly MAX_CACHE_ENTRIES = 20;
+  private _connectionListener: vscode.Disposable;
 
   private constructor() {
-    ConnectionManager.getInstance().onDidChangeConnections(() => {
+    this._connectionListener = ConnectionManager.getInstance().onDidChangeConnections(() => {
       this.invalidateCache();
     });
   }
@@ -28,6 +30,11 @@ export class OverviewService {
       OverviewService.instance = new OverviewService();
     }
     return OverviewService.instance;
+  }
+
+  public dispose(): void {
+    this._connectionListener.dispose();
+    this.cache.clear();
   }
 
   /**

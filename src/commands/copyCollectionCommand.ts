@@ -4,8 +4,8 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { LocalJsonService } from "../services/LocalJsonService";
-import { QueryDocumentSnapshot, Timestamp } from "firebase-admin/firestore";
-import { isTimestampLike } from "../utils/timestampUtils";
+import { QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { reviveTimestamps } from "../utils/timestampUtils";
 
 /**
  * Command: Directly copy/clone an entire collection from one Firestore instance to another.
@@ -101,19 +101,7 @@ export async function copyCollectionToInstanceCommand(
     return;
   }
 
-  const reviveTimestamps = (val: any): any => {
-    if (!val || typeof val !== "object") return val;
-    if (val instanceof Timestamp) return val;
-    if (isTimestampLike(val)) {
-      return new Timestamp((val as any)._seconds, (val as any)._nanoseconds);
-    }
-    if (Array.isArray(val)) return val.map(reviveTimestamps);
-    const res: Record<string, any> = {};
-    for (const [k, v] of Object.entries(val)) {
-      res[k] = reviveTimestamps(v);
-    }
-    return res;
-  };
+
 
   // 5. Execute copy with progress indicator
   await vscode.window.withProgress(
