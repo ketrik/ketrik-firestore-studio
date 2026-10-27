@@ -557,7 +557,45 @@ export async function pushSnapshotToFirestoreCommand(
 
       if (binding.fieldPath) {
         const segments = binding.fieldPath.includes(".") ? binding.fieldPath.split(".") : [binding.fieldPath];
-        await docRef.update(new FieldPath(...segments), sanitized);
+        const hasNumericIndex = segments.some((s) => /^\d+$/.test(s));
+
+        if (hasNumericIndex) {
+          // Firestore update with numeric segments turns arrays into maps { "0": ... }.
+          // Mutate the parent array safely in memory and update the containing array field.
+          const docSnap = await docRef.get();
+          const docData = docSnap.exists ? docSnap.data() || {} : {};
+
+          let target: any = docData;
+          for (let i = 0; i < segments.length - 1; i++) {
+            const key = segments[i];
+            const nextKey = segments[i + 1];
+            if (!target[key] || typeof target[key] !== "object") {
+              target[key] = /^\d+$/.test(nextKey) ? [] : {};
+            }
+            target = target[key];
+          }
+
+          const lastKey = segments[segments.length - 1];
+          if (Array.isArray(target) && /^\d+$/.test(lastKey)) {
+            target[parseInt(lastKey, 10)] = sanitized;
+          } else {
+            target[lastKey] = sanitized;
+          }
+
+          const firstNumericIdx = segments.findIndex((s) => /^\d+$/.test(s));
+          if (firstNumericIdx > 0) {
+            const arrayParentSegments = segments.slice(0, firstNumericIdx);
+            let arrayVal: any = docData;
+            for (const seg of arrayParentSegments) {
+              arrayVal = arrayVal?.[seg];
+            }
+            await docRef.update(new FieldPath(...arrayParentSegments), arrayVal);
+          } else {
+            await docRef.set(docData, { merge: true });
+          }
+        } else {
+          await docRef.update(new FieldPath(...segments), sanitized);
+        }
       } else {
         await docRef.set(sanitized, { merge: isMerge });
       }

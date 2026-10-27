@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.18.0",
+  "version": "1.19.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -115,6 +115,15 @@
               "authEmulatorHost": {
                 "type": "string",
                 "description": "Firebase Auth emulator host (host:port, e.g. localhost:9099)"
+              },
+              "useSecretStorage": {
+                "type": "boolean",
+                "default": false,
+                "description": "Store and load service account credentials securely from the OS Keychain via VS Code SecretStorage"
+              },
+              "secretUri": {
+                "type": "string",
+                "description": "Google Cloud Secret Manager secret resource path (e.g. projects/PROJECT_ID/secrets/SECRET_ID/versions/latest)"
               }
             },
             "required": [
@@ -601,6 +610,12 @@
         "icon": "$(files)"
       },
       {
+        "command": "ketrik-firestore-studio.copyDocumentToInstance",
+        "category": "Firestore Studio",
+        "title": "Copy Document to Another Instance...",
+        "icon": "$(repo-clone)"
+      },
+      {
         "command": "ketrik-firestore-studio.pasteDocument",
         "category": "Firestore Studio",
         "title": "Paste Document",
@@ -960,6 +975,78 @@
         "category": "Firestore Studio",
         "title": "Delete Array Item",
         "icon": "$(trash)"
+      },
+      {
+        "command": "ketrik-firestore-studio.createSecret",
+        "category": "Firestore Studio",
+        "title": "Create Secret...",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ketrik-firestore-studio.addSecretVersion",
+        "category": "Firestore Studio",
+        "title": "Add Secret Version...",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "ketrik-firestore-studio.inspectSecretPayload",
+        "category": "Firestore Studio",
+        "title": "Inspect Secret Payload",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "ketrik-firestore-studio.copySecretPayload",
+        "category": "Firestore Studio",
+        "title": "Copy Secret Payload",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "ketrik-firestore-studio.copySecretResourceName",
+        "category": "Firestore Studio",
+        "title": "Copy Secret Resource Name",
+        "icon": "$(link)"
+      },
+      {
+        "command": "ketrik-firestore-studio.disableSecretVersion",
+        "category": "Firestore Studio",
+        "title": "Disable Secret Version",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "ketrik-firestore-studio.enableSecretVersion",
+        "category": "Firestore Studio",
+        "title": "Enable Secret Version",
+        "icon": "$(pass-filled)"
+      },
+      {
+        "command": "ketrik-firestore-studio.destroySecretVersion",
+        "category": "Firestore Studio",
+        "title": "Destroy Secret Version",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ketrik-firestore-studio.linkFieldToSecret",
+        "category": "Firestore Studio",
+        "title": "Link to Google Secret...",
+        "icon": "$(key)"
+      },
+      {
+        "command": "ketrik-firestore-studio.migrateFieldToSecret",
+        "category": "Firestore Studio",
+        "title": "Migrate Field to Secret Manager (Extract & Mask)...",
+        "icon": "$(shield-lock)"
+      },
+      {
+        "command": "ketrik-firestore-studio.revealFieldSecretPayload",
+        "category": "Firestore Studio",
+        "title": "Reveal Linked Secret Value",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "ketrik-firestore-studio.refreshSecrets",
+        "category": "Firestore Studio",
+        "title": "Refresh Secrets",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -983,6 +1070,11 @@
           "command": "ketrik-firestore-studio.convertDashboardFormat",
           "when": "resourceScheme == ketrik-firestore-studio",
           "group": "navigation@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.copyDocumentToInstance",
+          "when": "resourceScheme == ketrik-firestore-studio",
+          "group": "navigation@2a"
         },
         {
           "command": "ketrik-firestore-studio.snapshotToWorkspace",
@@ -1020,6 +1112,11 @@
           "command": "ketrik-firestore-studio.unpackDocumentFields",
           "when": "resourceScheme == ketrik-firestore-studio",
           "group": "firestoreSnapshot@0a"
+        },
+        {
+          "command": "ketrik-firestore-studio.copyDocumentToInstance",
+          "when": "resourceScheme == ketrik-firestore-studio",
+          "group": "firestoreDoc@1"
         },
         {
           "command": "ketrik-firestore-studio.diffSnapshotWithFirestore",
@@ -1331,6 +1428,101 @@
           "group": "2_danger@1"
         },
         {
+          "command": "ketrik-firestore-studio.createSecret",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretManagerBranch'",
+          "group": "inline@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.createSecret",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretManagerBranch'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.refreshSecrets",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretManagerBranch'",
+          "group": "inline@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.refreshSecrets",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretManagerBranch'",
+          "group": "7_refresh@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.addSecretVersion",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretItem'",
+          "group": "inline@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.addSecretVersion",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretItem'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.inspectSecretPayload",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretItem'",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.copySecretPayload",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretItem'",
+          "group": "2_clipboard@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.copySecretResourceName",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretItem'",
+          "group": "2_clipboard@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.refreshSecrets",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretItem'",
+          "group": "7_refresh@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.inspectSecretPayload",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretVersionEnabled'",
+          "group": "inline@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.inspectSecretPayload",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretVersionEnabled'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.copySecretPayload",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretVersionEnabled'",
+          "group": "2_clipboard@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.copySecretResourceName",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretVersionEnabled'",
+          "group": "2_clipboard@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.disableSecretVersion",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretVersionEnabled'",
+          "group": "3_lifecycle@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.destroySecretVersion",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretVersionEnabled'",
+          "group": "9_danger@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.enableSecretVersion",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretVersionDisabled'",
+          "group": "inline@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.enableSecretVersion",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretVersionDisabled'",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.destroySecretVersion",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretVersionDisabled'",
+          "group": "9_danger@1"
+        },
+        {
           "command": "ketrik-firestore-studio.openAuthUserClaims",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'authUser'",
           "group": "1_actions@1"
@@ -1576,6 +1768,11 @@
           "group": "4_clipboard@1"
         },
         {
+          "command": "ketrik-firestore-studio.copyDocumentToInstance",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "4_clipboard@1a"
+        },
+        {
           "command": "ketrik-firestore-studio.copyDocumentJson",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "4_clipboard@2"
@@ -1699,6 +1896,26 @@
           "command": "ketrik-firestore-studio.duplicateField",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "3_edit@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.revealFieldSecretPayload",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentFieldSecretRef' || viewItem == 'documentFieldArrayItemSecretRef')",
+          "group": "inline@0"
+        },
+        {
+          "command": "ketrik-firestore-studio.revealFieldSecretPayload",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentFieldSecretRef' || viewItem == 'documentFieldArrayItemSecretRef')",
+          "group": "1_open@0"
+        },
+        {
+          "command": "ketrik-firestore-studio.linkFieldToSecret",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldSecretRef' || viewItem == 'documentFieldTimestamp')",
+          "group": "3_edit@5"
+        },
+        {
+          "command": "ketrik-firestore-studio.migrateFieldToSecret",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'documentField'",
+          "group": "3_edit@6"
         },
         {
           "command": "ketrik-firestore-studio.copyFieldJson",
@@ -1943,6 +2160,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@google-cloud/secret-manager": "^7.2.0",
     "firebase-admin": "^14.5.0"
   },
   "overrides": {

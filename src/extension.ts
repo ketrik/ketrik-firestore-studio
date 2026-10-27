@@ -78,6 +78,7 @@ import { openSchemaAnalyzer } from "./schema/openSchemaAnalyzer";
 import { generateSyntheticDataCommand } from "./commands/syntheticDataCommands";
 import { registerIndexCommands } from "./commands/indexCommands";
 import { registerStorageCommands } from "./storage/storageCommands";
+import { registerSecretCommands } from "./secrets/secretCommands";
 import { exportCollectionCommand, importCollectionCommand } from "./commands/importExportCommands";
 
 import { convertDashboardFormatCommand } from "./commands/dashboardCommands";
@@ -102,6 +103,7 @@ import {
 import { SnapshotSyncService } from "./services/SnapshotSyncService";
 import { copyCollectionToInstanceCommand } from "./commands/copyCollectionCommand";
 import { copyMultipleCollectionsCommand } from "./commands/copyMultipleCollectionsCommand";
+import { copyDocumentToInstanceCommand } from "./commands/copyDocumentToInstanceCommand";
 import {
   startEmulatorCommand,
   stopEmulatorCommand,
@@ -126,8 +128,12 @@ import { openCostSimulator } from "./webview/openCostSimulator";
 import { openOverviewDashboard } from "./webview/openOverviewDashboard";
 import { OverviewService } from "./analytics/overviewService";
 import { CostStatusBarController } from "./cost/CostStatusBarController";
+import { SecretStorageService } from "./secrets/SecretStorageService";
+import { SecretManagerService } from "./secrets/SecretManagerService";
 
 export async function activate(context: vscode.ExtensionContext) {
+  // Initialize SecretStorageService for secure OS Keychain credential management
+  SecretStorageService.getInstance().init(context);
   // Initialize ConnectionManager singleton
   const connectionManager = ConnectionManager.getInstance();
   context.subscriptions.push(connectionManager);
@@ -497,6 +503,11 @@ export async function activate(context: vscode.ExtensionContext) {
       copyDocumentCommand
     ),
     vscode.commands.registerCommand(
+      "ketrik-firestore-studio.copyDocumentToInstance",
+      (target?: DocumentItem | vscode.Uri) =>
+        copyDocumentToInstanceCommand(target, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
       "ketrik-firestore-studio.pasteDocument",
       (item: CollectionItem | DocumentFieldItem) =>
         pasteDocumentCommand(item, explorerDataProvider, documentFileSystemProvider)
@@ -771,6 +782,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   registerIndexCommands(context, explorerDataProvider);
   registerStorageCommands(context, explorerDataProvider);
+  registerSecretCommands(context, explorerDataProvider);
 
   context.subscriptions.push(
     vscode.workspace.registerFileSystemProvider(
@@ -802,5 +814,6 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export async function deactivate(): Promise<void> {
+  SecretManagerService.getInstance().clearAll();
   await ConnectionManager.getInstance().dispose();
 }

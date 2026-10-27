@@ -27,7 +27,11 @@ import {
   StorageBucketTreeItem,
   StorageFolderTreeItem,
   StorageFileTreeItem,
+  SecretManagerBranchItem,
+  SecretTreeItem,
+  SecretVersionTreeItem,
 } from "./items";
+import { SecretManagerService } from "../secrets/SecretManagerService";
 import { AuthService } from "../auth/AuthService";
 import { IndexesService } from "../indexes/indexesService";
 import { StorageService } from "../storage/storageService";
@@ -563,6 +567,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         ? `storageFiles:${element.connectionId}:${element.bucketName}:root`
         : element instanceof StorageFolderTreeItem
         ? `storageFiles:${element.connectionId}:${element.bucketName}:${element.prefix}`
+        : element instanceof SecretManagerBranchItem
+        ? `secrets:${element.connectionId}`
+        : element instanceof SecretTreeItem
+        ? `secretVersions:${element.connectionId}:${element.secret.id}`
         : undefined
       : "root";
 
@@ -662,12 +670,13 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           }, filter);
         });
 
-        // Add Authentication, Composite Indexes, Cloud Storage, and Cost & Quotas nodes alongside Root Collections
+        // Add Authentication, Composite Indexes, Cloud Storage, Secret Manager, and Cost & Quotas nodes alongside Root Collections
         const authBranch = new AuthUsersBranchItem(element.config.id);
         const indexesBranch = new CompositeIndexesBranchItem(element.config.id);
         const storageBranch = new StorageBucketsBranchItem(element.config.id);
+        const secretManagerBranch = new SecretManagerBranchItem(element.config.id);
         const costQuotaBranch = new CostQuotaBranchItem(element.config.id);
-        const items: Item[] = [authBranch, indexesBranch, storageBranch, costQuotaBranch, ...collItems];
+        const items: Item[] = [authBranch, indexesBranch, storageBranch, secretManagerBranch, costQuotaBranch, ...collItems];
         return storeAndReturn(items);
       } catch (err: any) {
         const isUnavailable =
@@ -721,6 +730,57 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to load Cloud Storage buckets: ${err.message}`);
         return [];
+      }
+    } else if (element instanceof SecretManagerBranchItem) {
+      try {
+        const secretService = SecretManagerService.getInstance();
+        const { secrets } = await secretService.listSecrets(element.connectionId);
+        if (secrets.length === 0) {
+          return storeAndReturn([
+            new InfoMessageItem("No secrets found in this project", "info", "infoMessage", {
+              command: "ketrik-firestore-studio.createSecret",
+              title: "Create Secret",
+              arguments: [element],
+            }),
+          ]);
+        }
+        const secretItems = secrets.map((sec) => new SecretTreeItem(element.connectionId, sec));
+        return storeAndReturn(secretItems);
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        vscode.window.showErrorMessage(`Failed to load Google Secret Manager secrets: ${errMsg}`);
+        // Return an actionable error item in the tree so it immediately stops spinning and informs the user
+        let actionItem: InfoMessageItem;
+        if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("Permission")) {
+          actionItem = new InfoMessageItem("Permission denied (Grant Secret Manager Secret Accessor / Viewer)", "lock", "secretError");
+        } else if (errMsg.includes("Could not load the default credentials") || errMsg.includes("authentication required")) {
+          actionItem = new InfoMessageItem("Authentication required (Run 'gcloud auth application-default login')", "key", "secretError");
+        } else {
+          actionItem = new InfoMessageItem(`Error: ${errMsg.slice(0, 80)}`, "warning", "secretError");
+        }
+        return storeAndReturn([actionItem]);
+      }
+    } else if (element instanceof SecretTreeItem) {
+      try {
+        const secretService = SecretManagerService.getInstance();
+        const versions = await secretService.listSecretVersions(element.connectionId, element.secret.id);
+        if (versions.length === 0) {
+          return storeAndReturn([
+            new InfoMessageItem("No versions available", "info", "infoMessage", {
+              command: "ketrik-firestore-studio.addSecretVersion",
+              title: "Add Version",
+              arguments: [element],
+            }),
+          ]);
+        }
+        const versionItems = versions.map((v) => new SecretVersionTreeItem(element.connectionId, v));
+        return storeAndReturn(versionItems);
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        vscode.window.showErrorMessage(`Failed to load versions for secret '${element.secret.id}': ${errMsg}`);
+        return storeAndReturn([
+          new InfoMessageItem(`Error loading versions: ${errMsg.slice(0, 80)}`, "warning", "secretError"),
+        ]);
       }
     } else if (element instanceof StorageBucketTreeItem) {
       try {

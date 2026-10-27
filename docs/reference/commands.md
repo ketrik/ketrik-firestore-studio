@@ -71,6 +71,7 @@ All commands can be executed via the VS Code Command Palette (`Cmd+Shift+P` / `C
 | `ketrik-firestore-studio.copyPath` | **Firestore: Copy Path** | Context Menu | Copies the full Firestore document or collection path to clipboard. |
 | `ketrik-firestore-studio.duplicateDocument` | **Firestore: Duplicate Document...** | Document Context Menu / Inline Icon | Clones document within the collection with a new ID prompt. |
 | `ketrik-firestore-studio.copyDocument` | **Firestore: Copy Document** | Document Context Menu / Inline Icon | Copies document to internal clipboard for cross-collection or cross-connection pasting. |
+| `ketrik-firestore-studio.copyDocumentToInstance` | **Firestore: Copy Document to Another Instance...** | Document Context Menu / Editor Title / Palette | Deep or shallow clone of an individual document plus all nested subcollections to any target database. |
 | `ketrik-firestore-studio.pasteDocument` | **Firestore: Paste Document** | Collection / Document Menu | Pastes copied document into selected collection or connection. |
 | `ketrik-firestore-studio.copyDocumentJson` | **Firestore: Copy as JSON** | Document Context Menu | Copies formatted JSON representation of the document directly to OS clipboard. |
 | `ketrik-firestore-studio.deleteDocument` | **Firestore: Delete Document** | Document Context Menu / Inline Icon | Permanently deletes document with subcollection detection and deep delete option. |
@@ -181,3 +182,22 @@ All commands can be executed via the VS Code Command Palette (`Cmd+Shift+P` / `C
 | `ketrik-firestore-studio.openCostSimulator` | **Firestore: Open Cost Simulator & Quota Usage Dashboard** | Title Bar / Palette | Interactive quota tracker, real-time read/write billable counter, and monthly cost forecast. |
 | `ketrik-firestore-studio.openOverviewDashboard` | **Firestore: Open Studio Overview & Traffic Analytics** | Title Bar / Palette | Comprehensive health panel with active connections, collection counts, and recent mutations. |
 | `ketrik-firestore-studio.openDataGraph` | **Firestore: Visualize Data Graph (Boxes & Nodes)...** | Connection / Palette | Graphical visualization of entity relations and references across collections. |
+
+---
+
+## Google Secret Manager & Field Links
+
+| Command ID | Title | Context / Location | Description |
+| :--- | :--- | :--- | :--- |
+| `ketrik-firestore-studio.createSecret` | **Firestore: Create Secret...** | Secret Branch Menu (`$(add)`) / Palette | Provision a new secret in Google Cloud Secret Manager with optional initial value. |
+| `ketrik-firestore-studio.addSecretVersion` | **Firestore: Add Secret Version...** | Secret Item Menu (`$(plus)`) / Palette | Upload or input a new version payload for an existing secret. |
+| `ketrik-firestore-studio.inspectSecretPayload` | **Firestore: Inspect Secret Payload** | Secret & Version Item (`$(eye)`) | Securely inspect live decrypted payload via ephemeral modal, virtual scratchpad, or auto-wipe copy. |
+| `ketrik-firestore-studio.copySecretPayload` | **Firestore: Copy Secret Payload** | Secret & Version Item (`$(copy)`) | Copies secret payload to clipboard with an automated 20-second security auto-wipe timer. |
+| `ketrik-firestore-studio.copySecretResourceName` | **Firestore: Copy Secret Resource Name** | Secret & Version Item (`$(link)`) | Copies canonical `projects/.../secrets/...` resource identifier to clipboard. |
+| `ketrik-firestore-studio.disableSecretVersion` | **Firestore: Disable Secret Version** | Secret Version Menu | Disables an active secret version in Google Cloud. |
+| `ketrik-firestore-studio.enableSecretVersion` | **Firestore: Enable Secret Version** | Secret Version Menu | Re-enables a previously disabled secret version. |
+| `ketrik-firestore-studio.destroySecretVersion` | **Firestore: Destroy Secret Version** | Secret Version Menu (`$(trash)`) | Permanently wipes a compromised or obsolete secret version with safety confirmation. |
+| `ketrik-firestore-studio.linkFieldToSecret` | **Firestore: Link to Google Secret...** | Field Context Menu (`$(key)`) | QuickPick to bind a document field directly to a Google Secret Manager resource link. |
+| `ketrik-firestore-studio.migrateFieldToSecret` | **Firestore: Migrate Field to Secret Manager (Extract & Mask)...** | Field Context Menu (`$(shield-lock)`) | Extracts sensitive plaintext field into a new Google Secret and replaces the field with the secret reference link. |
+| `ketrik-firestore-studio.revealFieldSecretPayload` | **Firestore: Reveal Linked Secret Value** | Secret Field Inline Menu (`$(eye)`) | Inline inspection of linked secret values directly from document fields. |
+| `ketrik-firestore-studio.refreshSecrets` | **Firestore: Refresh Secrets** | Secret Branch Menu | Refreshes secrets list and version tree hierarchy from Google Cloud. |

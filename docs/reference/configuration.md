@@ -172,3 +172,17 @@ Ketrik Firestore Studio provides granular workspace and user-level settings to c
 - **Type**: `array`
 - **Default**: `[]`
 - **Description**: Predefined JSON templates for quick document creation. Each item specifies a `label` and a default `data` object.
+
+---
+
+## Enterprise Credentials & Secret Manager
+
+### `ketrik-firestore-studio.connections[].useSecretStorage`
+- **Type**: `boolean`
+- **Default**: `false`
+- **Description**: When enabled, loads and manages the connection's Service Account JSON securely from the operating system's native encrypted keychain via `vscode.SecretStorage` (macOS Keychain, Windows Credential Manager, Linux Secret Service). Eliminates plaintext credentials on developer workstations.
+
+### `ketrik-firestore-studio.connections[].secretUri`
+- **Type**: `string`
+- **Example**: `"projects/my-gcp-project/secrets/firestore-sa/versions/latest"`
+- **Description**: Google Cloud Secret Manager canonical resource path. When set, dynamically fetches the connection's credentials from Secret Manager in-memory upon startup without storing any files on disk.

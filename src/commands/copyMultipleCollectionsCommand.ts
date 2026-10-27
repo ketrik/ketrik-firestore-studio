@@ -13,7 +13,7 @@ import { reviveTimestamps } from "../utils/timestampUtils";
 class BatchWriter {
   private _batch: FirebaseFirestore.WriteBatch;
   private _opCount = 0;
-  private readonly _limit = 400;
+  private readonly _limit = 50;
 
   constructor(private _firestore: FirebaseFirestore.Firestore) {
     this._batch = this._firestore.batch();
@@ -66,7 +66,7 @@ async function copyDocRecursive(
       if (token.isCancellationRequested) break;
       const targetSubColl = targetDocRef.collection(subColl.id);
 
-      const pageSize = 300;
+      const pageSize = 50;
       let lastDoc: QueryDocumentSnapshot | null = null;
       let hasMore = true;
 
@@ -486,7 +486,7 @@ export async function copyMultipleCollectionsCommand(
               const sourceCollRef = sourceFirestore.collection(source);
               const targetCollRef = targetFirestore.collection(target);
 
-              const batchSize = 350;
+              const batchSize = 50;
               let lastDoc: QueryDocumentSnapshot | null = null;
               let hasMore = true;
               let collDocsCopied = 0;

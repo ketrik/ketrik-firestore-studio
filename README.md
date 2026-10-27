@@ -1,7 +1,7 @@
 # Ketrik Firestore Studio
 
 [![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Code-Extension-007acc?style=flat-square&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=ketrik.ketrik-firestore-studio)
-[![Version](https://img.shields.io/badge/Release-v1.18.0-2ecc71?style=flat-square)](ROADMAP.md)
+[![Version](https://img.shields.io/badge/Release-v1.19.0-2ecc71?style=flat-square)](ROADMAP.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 The definitive, enterprise-grade Visual Studio Code extension for exploring, querying, mutating, and managing **Google Cloud Firestore**, **Firebase Authentication**, **Security Rules**, and **Local Emulators** directly inside your IDE.
@@ -19,6 +19,7 @@ Unlike basic viewers that only render static JSON trees, **Ketrik Firestore Stud
 - 💾 **100% Offline Local JSON Store**: Connect to local `.json` mock files with full table and editor parity—zero cloud billing, zero network needed.
 - 👥 **Firebase Auth User Suite**: Bulk user explorer, avatar previews, custom claims editor (`admin: true`), JWT custom token minter, and cross-environment user cloner.
 - 🛡️ **Live Security Rules & Diff**: Virtual editor for `firestore.rules` with live deployment, AST-level permission badges (`🚨 Public`, `🔒 Locked`), and side-by-side diff.
+- 🔐 **Google Secret Manager & Field Links**: Dedicated secret tree explorer, document field secret links (`projects/.../secrets/...`), 1-click secret migration, and zero-plaintext OS Keychain credentials.
 - ⚡ **Quota & Memory Protection**: Native document storage size monitoring (bytes & limit warnings), direct 1-read document ID lookups, and auto-pausing listeners.
 
 ---
@@ -102,6 +103,15 @@ Supercharge your pair-programming with AI coding assistants (Antigravity, GitHub
 * **Auto-Sync on Save**: When enabled (`ketrik-firestore-studio.autoSyncLocalSnapshots`), saving any tracked file immediately pushes changes back to Firestore / Local JSON.
 * **Privacy & Cleanup (`$(trash) Clean All AI Scratchpads`)**: 1-click command in the Command Palette to completely wipe `.firestore/` and reset all bindings.
 
+### 11. Google Secret Manager & Field Links
+Enterprise secret governance, document field secret links, and zero-plaintext credential security:
+* **Dedicated Tree Explorer (`🔐 Google Secret Manager`)**: Inspect secrets, versions (`Version 1 [ENABLED]`, `[DISABLED]`, `[DESTROYED]`), replication policies, and metadata directly under each connection.
+* **Document Field Secret Links**: Automatically detects fields containing Google Secret Manager resource paths (`projects/.../secrets/...`), rendering dedicated `🔐 [Secret: name]` visual badges and tooltips.
+* **1-Click "Link to Google Secret..."**: Right-click any document field $\rightarrow$ search and select from existing secrets in your GCP project via QuickPick.
+* **1-Click "Migrate Field to Secret Manager (Extract & Mask)"**: Extracts plaintext API keys or tokens into a new Google Secret and atomically replaces the Firestore field with the secure secret reference path.
+* **Ephemeral In-Place Reveal & Auto-Wipe Copy**: Inspect live decrypted payloads in masked modals without writing them to disk; copy secret values with an automated **20-second security auto-wipe timer**.
+* **Zero-Plaintext Connection Credentials**: Store Service Account credentials encrypted in your OS Keychain via `vscode.SecretStorage` (`"useSecretStorage": true`), or dynamically resolve keys from Secret Manager (`"secretUri": "projects/.../secrets/.../versions/latest"`).
+
 ---
 
 ## 🛠️ Getting Started in 3 Steps
@@ -140,6 +150,12 @@ Supercharge your pair-programming with AI coding assistants (Antigravity, GitHub
 | `ketrik-firestore-studio.pullSnapshotFromFirestore` | Snapshot Editor Title (`$(cloud-download)`) | Refresh local snapshot from remote Firestore without losing bindings |
 | `ketrik-firestore-studio.deleteCollection` | Collection Context Menu | Permanently delete a collection and all nested documents/subcollections with safety confirmation |
 | `ketrik-firestore-studio.deleteMultipleCollections` | Connection & Collection Menu | Multi-select and batch-delete multiple collections with safety confirmation |
+| `ketrik-firestore-studio.createSecret` | Secret Manager Branch Menu (`$(add)`) | Provision a new secret in Google Cloud Secret Manager |
+| `ketrik-firestore-studio.addSecretVersion` | Secret Item Menu (`$(plus)`) | Add a new payload version via text or file upload |
+| `ketrik-firestore-studio.inspectSecretPayload` | Secret & Version Item (`$(eye)`) | Decrypt and inspect live secret payload with auto-wipe copy |
+| `ketrik-firestore-studio.linkFieldToSecret` | Field Context Menu (`$(key)`) | 1-Click QuickPick to bind a document field to a Google Secret |
+| `ketrik-firestore-studio.migrateFieldToSecret` | Field Context Menu (`$(shield-lock)`) | Extract sensitive plaintext field into a new Google Secret |
+| `ketrik-firestore-studio.revealFieldSecretPayload` | Secret Field Menu (`$(eye)`) | Inline inspection of linked secret values directly from document fields |
 
 ---
 

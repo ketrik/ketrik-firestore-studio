@@ -549,6 +549,7 @@ export class LocalJsonService {
 
   /**
    * Update or delete a specific field in a document.
+   * Accurately distinguishes between Object maps and Arrays when handling nested dot paths (e.g. "tags.0" or "items.1.name").
    */
   public updateField(
     config: FirestoreConnectionConfig,
@@ -562,16 +563,30 @@ export class LocalJsonService {
       const parts = fieldPath.split(".");
       let target = current;
       for (let i = 0; i < parts.length - 1; i++) {
-        if (!target[parts[i]] || typeof target[parts[i]] !== "object") {
-          target[parts[i]] = {};
+        const key = parts[i];
+        const nextKey = parts[i + 1];
+        const nextIsNumeric = /^\d+$/.test(nextKey);
+
+        if (!target[key] || typeof target[key] !== "object") {
+          target[key] = nextIsNumeric ? [] : {};
         }
-        target = target[parts[i]];
+        target = target[key];
       }
       const lastKey = parts[parts.length - 1];
-      if (isDelete) {
-        delete target[lastKey];
+      if (Array.isArray(target) && /^\d+$/.test(lastKey)) {
+        const idx = parseInt(lastKey, 10);
+        if (isDelete) {
+          target.splice(idx, 1);
+        } else {
+          target[idx] = value;
+        }
       } else {
-        target[lastKey] = value;
+        const objTarget = target as Record<string, any>;
+        if (isDelete) {
+          delete objTarget[lastKey];
+        } else {
+          objTarget[lastKey] = value;
+        }
       }
     } else {
       if (isDelete) {

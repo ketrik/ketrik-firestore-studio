@@ -184,7 +184,7 @@ export async function copyCollectionToInstanceCommand(
             const targetFirestore = await connectionManager.getFirestore(targetConn.id);
             const targetCollRef = targetFirestore.collection(targetCollName);
 
-            const batchSize = 400;
+            const batchSize = 50;
             let lastDoc: QueryDocumentSnapshot | null = null;
             let hasMore = true;
 

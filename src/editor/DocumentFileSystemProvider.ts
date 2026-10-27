@@ -679,7 +679,55 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       if (fieldPath !== undefined) {
         // Atomic partial update: only update the targeted field using FieldPath segments to handle nested paths safely
         const segments = fieldPath.includes(".") ? fieldPath.split(".") : [fieldPath];
-        writeTime = (await firestore.doc(docPath).update(new FieldPath(...segments), json)).writeTime;
+        const hasNumericIndex = segments.some((s) => /^\d+$/.test(s));
+
+        if (hasNumericIndex) {
+          // Firestore does not natively support array-index updates in FieldPath (e.g. items.0).
+          // Sending "items.0" to Firestore update() converts the parent array into a map { "0": ... },
+          // wiping out array methods and data integrity.
+          // We find the parent array, mutate the document in memory, and update the array field or doc.
+          const docSnap = await firestore.doc(docPath).get();
+          const docData = docSnap.exists ? docSnap.data() || {} : {};
+
+          // Apply nested update to docData in-memory
+          let target: any = docData;
+          let arrayRootIndex = -1;
+          for (let i = 0; i < segments.length - 1; i++) {
+            const key = segments[i];
+            const nextKey = segments[i + 1];
+            if (Array.isArray(target) && arrayRootIndex === -1) {
+              arrayRootIndex = i;
+            }
+            if (!target[key] || typeof target[key] !== "object") {
+              target[key] = /^\d+$/.test(nextKey) ? [] : {};
+            }
+            target = target[key];
+          }
+
+          const lastKey = segments[segments.length - 1];
+          if (Array.isArray(target) && /^\d+$/.test(lastKey)) {
+            target[parseInt(lastKey, 10)] = json;
+          } else {
+            target[lastKey] = json;
+          }
+
+          // If the top segment before any array index can be isolated, update just that array field
+          const firstNumericIdx = segments.findIndex((s) => /^\d+$/.test(s));
+          if (firstNumericIdx > 0) {
+            const arrayParentSegments = segments.slice(0, firstNumericIdx);
+            let arrayVal: any = docData;
+            for (const seg of arrayParentSegments) {
+              arrayVal = arrayVal?.[seg];
+            }
+            writeTime = (
+              await firestore.doc(docPath).update(new FieldPath(...arrayParentSegments), arrayVal)
+            ).writeTime;
+          } else {
+            writeTime = (await firestore.doc(docPath).set(docData, { merge: true })).writeTime;
+          }
+        } else {
+          writeTime = (await firestore.doc(docPath).update(new FieldPath(...segments), json)).writeTime;
+        }
       } else {
         writeTime = (await firestore.doc(docPath).set(json)).writeTime;
       }

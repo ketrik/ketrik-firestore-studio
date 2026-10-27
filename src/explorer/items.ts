@@ -4,6 +4,7 @@ import { FirestoreConnectionConfig } from "../connections/ConnectionManager";
 import { RulesService } from "../rules/RulesService";
 import { RulesParser } from "../rules/RulesParser";
 import { isTimestampLike, timestampToDate, formatDateTime, formatRelativeTime } from "../utils/timestampUtils";
+import { SecretMetadata, SecretVersionMetadata } from "../secrets/SecretManagerService";
 
 export abstract class Item extends vscode.TreeItem {
   abstract reference?: DocumentReference | CollectionReference;
@@ -264,6 +265,13 @@ export class DocumentFieldItem extends Item {
         ? new vscode.ThemeColor("charts.purple")
         : new vscode.ThemeColor("symbolIcon.arrayForeground");
       this.description = `[${value.length}]`;
+    } else if (typeof value === "string" && ((value.startsWith("projects/") && value.includes("/secrets/")) || value.startsWith("gcp-secret://"))) {
+      icon = "key";
+      iconColor = new vscode.ThemeColor("charts.yellow");
+      const secretName = value.startsWith("gcp-secret://")
+        ? value.replace("gcp-secret://", "").split("#")[0]
+        : value.split("/secrets/")[1]?.split("/")[0] || value;
+      this.description = `🔐 [Secret: ${secretName}]`;
     } else if (valType === "string") {
       icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-string";
       iconColor = isProtocol
@@ -300,8 +308,12 @@ export class DocumentFieldItem extends Item {
 
     this.id = `field:${connectionId}:${parentDocRef.path}#${this.fullFieldPath}`;
 
+    const isSecretRef = typeof value === "string" && ((value.startsWith("projects/") && value.includes("/secrets/")) || value.startsWith("gcp-secret://"));
+
     if (this.isArrayElement) {
-      this.contextValue = isTimestamp
+      this.contextValue = isSecretRef
+        ? "documentFieldArrayItemSecretRef"
+        : isTimestamp
         ? "documentFieldArrayItemTimestamp"
         : valType === "object"
         ? "documentFieldArrayItemMap"
@@ -311,7 +323,9 @@ export class DocumentFieldItem extends Item {
         ? "documentFieldArrayItemNull"
         : "documentFieldArrayItemScalar";
     } else {
-      this.contextValue = isTimestamp
+      this.contextValue = isSecretRef
+        ? "documentFieldSecretRef"
+        : isTimestamp
         ? "documentFieldTimestamp"
         : isVector
         ? "documentFieldVector"
@@ -328,7 +342,9 @@ export class DocumentFieldItem extends Item {
       ? " [System Envelope / Index]"
       : "";
     const typeLabel = isTimestamp ? "timestamp" : valType;
-    if (this.isArrayElement) {
+    if (isSecretRef) {
+      this.tooltip = `Field: ${this.fullFieldPath} (Google Secret Link)${tierLabel}\nSecret: ${value}\nDoc: ${parentDocRef.path}`;
+    } else if (this.isArrayElement) {
       this.tooltip = `Array Item [${this.arrayIndex}] (${typeLabel})${tierLabel}\nPath: ${this.fullFieldPath}\nDoc: ${parentDocRef.path}`;
     } else if (isTimestamp && timestampDate) {
       const epochSec = Math.floor(timestampDate.getTime() / 1000);
@@ -747,5 +763,108 @@ export class StorageFileTreeItem extends Item {
       title: "Inspect File",
       arguments: [this],
     };
+  }
+}
+
+/**
+ * A Tree View item representing the Google Secret Manager branch of a connection.
+ */
+export class SecretManagerBranchItem extends Item {
+  reference = undefined;
+
+  constructor(public connectionId: string) {
+    super("Google Secret Manager", vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `secrets:${connectionId}`;
+    this.contextValue = "secretManagerBranch";
+    this.iconPath = new vscode.ThemeIcon("key", new vscode.ThemeColor("charts.yellow"));
+    this.tooltip = "Google Cloud Secret Manager — Secrets & Version Management";
+  }
+}
+
+/**
+ * A Tree View item representing an individual Google Secret Manager secret.
+ */
+export class SecretTreeItem extends Item {
+  reference = undefined;
+
+  constructor(
+    public connectionId: string,
+    public secret: SecretMetadata
+  ) {
+    super(secret.id, vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `secret:${connectionId}:${secret.id}`;
+    this.contextValue = "secretItem";
+    this.iconPath = new vscode.ThemeIcon("shield-lock", new vscode.ThemeColor("charts.yellow"));
+    this.description = `[${secret.replicationType || "automatic"}]`;
+    this.tooltip = [
+      `Secret: ${secret.id}`,
+      `Resource: ${secret.name}`,
+      `Project: ${secret.projectId}`,
+      `Replication: ${secret.replicationType || "automatic"}`,
+      secret.locations?.length ? `Locations: ${secret.locations.join(", ")}` : undefined,
+      secret.createTime ? `Created: ${secret.createTime}` : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+}
+
+/**
+ * A Tree View item representing a specific version of a Google Secret Manager secret.
+ */
+export class SecretVersionTreeItem extends Item {
+  reference = undefined;
+
+  constructor(
+    public connectionId: string,
+    public version: SecretVersionMetadata
+  ) {
+    const label = `Version ${version.versionId}`;
+    super(label, vscode.TreeItemCollapsibleState.None);
+    this.id = `secretVersion:${connectionId}:${version.secretId}:${version.versionId}`;
+
+    const isEnabled = version.state === "ENABLED";
+    const isDisabled = version.state === "DISABLED";
+    const isDestroyed = version.state === "DESTROYED";
+
+    this.contextValue = isEnabled
+      ? "secretVersionEnabled"
+      : isDisabled
+      ? "secretVersionDisabled"
+      : "secretVersionDestroyed";
+
+    let icon = "symbol-variable";
+    let iconColor: vscode.ThemeColor | undefined;
+    if (isEnabled) {
+      icon = "pass-filled";
+      iconColor = new vscode.ThemeColor("charts.green");
+    } else if (isDisabled) {
+      icon = "circle-slash";
+      iconColor = new vscode.ThemeColor("charts.orange");
+    } else if (isDestroyed) {
+      icon = "trash";
+      iconColor = new vscode.ThemeColor("charts.red");
+    }
+
+    this.iconPath = new vscode.ThemeIcon(icon, iconColor);
+    this.description = `[${version.state}]`;
+    this.tooltip = [
+      `Secret: ${version.secretId}`,
+      `Version: ${version.versionId}`,
+      `State: ${version.state}`,
+      `Resource: ${version.name}`,
+      version.createTime ? `Created: ${version.createTime}` : undefined,
+      version.destroyTime ? `Destroyed: ${version.destroyTime}` : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    if (isEnabled) {
+      this.command = {
+        command: "ketrik-firestore-studio.inspectSecretPayload",
+        title: "Inspect Secret Payload",
+        arguments: [this],
+      };
+    }
   }
 }

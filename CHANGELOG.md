@@ -2,6 +2,28 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.19.0] - 2026-10-27
+
+### Added
+- **Google Secret Manager Suite & Dedicated Tree Explorer (`🔐 Google Secret Manager`)**:
+  * Dedicated top-level Secret Manager tree item under each active GCP / Firebase connection.
+  * Paged listing of all secrets (`projects/{projectId}/secrets`) with search, filter, and in-tree replication policy badges.
+  * Expandable secret nodes to inspect and manage individual versions (`v1 [Enabled]`, `v2 [Disabled]`, `v3 [Destroyed]`).
+  * Dedicated version lifecycle actions: Create Secret (`ketrik-firestore-studio.createSecret`), Add Version (`ketrik-firestore-studio.addSecretVersion`), Enable Version, Disable Version, and Destroy Version with enterprise confirmation.
+- **Document Field Secret Linking & Smart Badging**:
+  * Automatic detection of Google Secret Manager resource paths (`projects/.../secrets/...`) across Explorer Tree, Table View, and Virtual JSON editor.
+  * Visual in-tree & in-table `🔐` secret badges with hover metadata (secret ID, version state).
+  * 1-Click "Link Field to Google Secret..." (`ketrik-firestore-studio.linkFieldToSecret`): interactive picker to link any document field to an existing secret.
+  * 1-Click "Migrate Field to Secret Manager (Extract & Mask)" (`ketrik-firestore-studio.migrateFieldToSecret`): safely exports sensitive plaintext fields (API keys, connection strings) to Secret Manager and atomically replaces them with secure resource links.
+- **In-Place Ephemeral Secret Reveal & Secure Clipboard**:
+  * Inline `$(eye) Reveal Secret Value` (`ketrik-firestore-studio.revealFieldSecretPayload`): inspect decrypted payloads in a safe, ephemeral masked modal without writing to disk or Firestore document.
+  * 1-Click payload copy with optional automated 15-second clipboard wipe timer.
+- **Zero-Plaintext Connection Credentials & VS Code SecretStorage**:
+  * Native integration with VS Code encrypted OS Keychain (`vscode.SecretStorage` / `useSecretStorage: true`) to store service account credentials securely without saving tokens into `.vscode/settings.json`.
+  * Support for dynamic service account credential resolution directly from Google Secret Manager (`secretUri: "projects/.../secrets/..."`).
+- **Single Document Cross-Instance Replication (`ketrik-firestore-studio.copyDocumentToInstance`)**:
+  * 1-click replication of an individual document from one Firestore / Local JSON instance to another with optional deep subcollection traversal and merge/overwrite options.
+
 ## [1.18.0] - 2026-10-25
 
 ### Added

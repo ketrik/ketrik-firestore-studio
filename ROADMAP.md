@@ -20,8 +20,9 @@ timeline
         2026-10-22 : v1.16.0 Studio Overview Dashboard & Traffic Analytics Suite
         2026-10-23 : v1.17.0 Multi-Collection Batch Replication Suite, Nested Field Editor & Performance Polish
         2026-10-25 : v1.18.0 AI Scratchpad, Tree Collection Filter, Array Item Mutations & UX Overhaul
+        2026-10-27 : v1.19.0 Google Secret Manager Suite, Field Secret Links & Enterprise Credentials
     section Planned
-        Q1 2027 : v1.19.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
+        Q1 2027 : v1.20.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -56,7 +57,8 @@ timeline
 | **v1.16.0** | Shipped | 2026-10-22 | Unified Studio Overview Dashboard, Database & User Insights, Network & Traffic Analytics Suite, Storage Footprint & Quota Burn Rate Gauges |
 | **v1.17.0** | Shipped | 2026-10-23 | Multi-Collection Batch Replication Suite, Bulk Collection Deletion, Nested Field Virtual Editor, Tree Hierarchical Reveal, Overview Memory Optimization |
 | **v1.18.0** | Shipped | 2026-10-25 | AI Scratchpad (.firestore/ hierarchy), Field-Level Isolation (Token Optimization), Live Auto-Sync, Tree Collection Filter, Expandable Tree Array Item Editing, Context Menu Tiers & Field Table Fixes |
-| **v1.19.0** | Planned | Q1 2027 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
+| **v1.19.0** | Shipped | 2026-10-27 | Google Secret Manager Suite, Field Secret Links (`projects/.../secrets`), In-Place Payload Reveal, Version Lifecycle, Enterprise Credentials & Single Doc Cross-Instance Replication |
+| **v1.20.0** | Planned | Q1 2027 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
 ---
@@ -577,7 +579,40 @@ timeline
 
 ---
 
-### [v1.19.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q1 2027)
+### [v1.19.0] — Google Secret Manager Suite, Field Secret Links & Enterprise Credentials (Shipped: 2026-10-27)
+
+*Theme: Enterprise Secret Management, Document Field Secret Bindings, Ephemeral Payload Inspection, and Zero-Plaintext Credential Security.*
+
+* **Dedicated Google Secret Manager Tree Explorer (`🔐 Google Secret Manager`)**:
+  * Dedicated top-level tree node under each GCP / Firebase connection.
+  * Paged listing of all secrets in the project (`projects/{projectId}/secrets`) with filter and search.
+  * In-tree badges indicating replication policy (Automatic / User-managed), active version count, and creation date.
+  * Expandable secret nodes to browse individual versions (`v1 [Enabled]`, `v2 [Disabled]`, `v3 [Destroyed]`).
+  * Secret metadata viewer displaying timestamps, labels, rotation schedule, and expiration dates.
+* **Document Field Secret Linking & Smart Badging**:
+  * **Automatic Secret Reference Detection**: Automatically detects fields containing Google Secret Manager resource paths (`projects/.../secrets/...` or Secret IDs) across the Explorer Tree, Table View, and JSON Editor.
+  * **Visual In-Tree & In-Table Badges (`🔐`)**: Emits dedicated status badges with hover tooltips displaying secret name, version state, and replication info.
+  * **1-Click "Link Field to Google Secret..." (`ketrik-firestore-studio.linkFieldToSecret`)**:
+    * Right-click any document field in the tree or table $\rightarrow$ choose from an interactive QuickPick of existing secrets in the project.
+    * Automatically writes the canonical secret resource name into the field with atomic mutation.
+  * **1-Click "Migrate Field to Secret Manager" (`ketrik-firestore-studio.migrateFieldToSecret`)**:
+    * Right-click any existing sensitive plaintext field (e.g. `api_key: "sk-live-..."`) $\rightarrow$ creates a new secret in GCP Secret Manager, uploads the value as version 1, and atomically replaces the plaintext field with the secure secret reference link.
+  * **In-Place Ephemeral Secret Reveal & Clipboard Copy**:
+    * Inline `$(eye) Reveal Secret Value` action to safely fetch and inspect the decrypted secret payload in a masked view without writing it to disk or document.
+    * 1-Click copy secret value to clipboard with optional automated 15-second clipboard wipe timer.
+* **Secret Version Lifecycle Management**:
+  * Create new secrets directly from VS Code (`ketrik-firestore-studio.createSecret`).
+  * Add new secret version payloads (`ketrik-firestore-studio.addSecretVersion`) via text input or file selection.
+  * Disable, enable, and destroy versions with enterprise confirmation modals.
+* **Zero-Plaintext Connection Credentials & VS Code SecretStorage**:
+  * Load service account keys dynamically from Google Secret Manager (`secretUri: "projects/.../secrets/firestore-sa/versions/latest"`), eliminating plain `.json` credential files from developer workstations.
+  * Native integration with VS Code encrypted OS Keychain (`vscode.SecretStorage` / `context.secrets`) to store credentials safely instead of saving sensitive tokens into `.vscode/settings.json`.
+* **Firebase Emulator `.secret.local` & `.env` Mock Sync**:
+  * 1-Click export / pull of referenced secrets into `.secret.local` or `.env.local` for the Firebase Functions Emulator and local offline development without manual copy-pasting.
+
+---
+
+### [v1.20.0] — Cloud Functions Triggers, Logs Filter & Admin Query Shell (Target: Q1 2027)
 
 *Theme: Deep Cloud Functions developer tooling, Firestore trigger simulation, live logging, and in-editor Admin SDK scratchpads.*
 

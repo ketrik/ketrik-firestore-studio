@@ -5,6 +5,8 @@ import { Storage, getStorage } from "firebase-admin/storage";
 import * as vscode from "vscode";
 import * as fs from "fs";
 import { parseHostPort, probePort } from "../emulator/portUtils";
+import { SecretStorageService } from "../secrets/SecretStorageService";
+import { SecretManagerService } from "../secrets/SecretManagerService";
 
 export interface FirestoreConnectionConfig {
   id: string;
@@ -19,6 +21,8 @@ export interface FirestoreConnectionConfig {
   emulatorStorageHost?: string;
   isLocalJson?: boolean;
   localJsonPath?: string;
+  useSecretStorage?: boolean;
+  secretUri?: string;
 }
 
 export class ConnectionManager implements vscode.Disposable {
@@ -140,6 +144,18 @@ export class ConnectionManager implements vscode.Disposable {
         }
       } catch {}
     }
+    // Check global/workspace Google Cloud configuration setting (e.g. from Google Cloud / Data Agent Kit plugins)
+    const gcpConfig = vscode.workspace.getConfiguration("google.cloud");
+    const activeGcpProject = gcpConfig.get<string>("project");
+    if (activeGcpProject && activeGcpProject.trim() !== "") {
+      return activeGcpProject.trim();
+    }
+    if (process.env.GOOGLE_CLOUD_PROJECT && process.env.GOOGLE_CLOUD_PROJECT.trim() !== "") {
+      return process.env.GOOGLE_CLOUD_PROJECT.trim();
+    }
+    if (process.env.GCLOUD_PROJECT && process.env.GCLOUD_PROJECT.trim() !== "") {
+      return process.env.GCLOUD_PROJECT.trim();
+    }
     return undefined;
   }
 
@@ -208,6 +224,8 @@ export class ConnectionManager implements vscode.Disposable {
   public async deleteConnection(id: string): Promise<void> {
     const connections = this.getConnections().filter((c) => c.id !== id);
     await this._cleanupInstance(id);
+    await SecretStorageService.getInstance().deleteServiceAccount(id).catch(() => {});
+    SecretManagerService.getInstance().resetClient(id);
     await this.saveConnections(connections);
   }
 
@@ -367,6 +385,37 @@ export class ConnectionManager implements vscode.Disposable {
     return firestore;
   }
 
+  /**
+   * Resolve service account credentials JSON from SecretStorage, Google Secret Manager, or local file.
+   */
+  public async resolveServiceAccountJson(conn: FirestoreConnectionConfig): Promise<any> {
+    if (conn.useSecretStorage) {
+      const saJson = await SecretStorageService.getInstance().getServiceAccount(conn.id);
+      if (!saJson) {
+        throw new Error(`Service account for connection '${conn.name}' not found in VS Code SecretStorage.`);
+      }
+      return JSON.parse(saJson);
+    }
+
+    if (conn.secretUri) {
+      const payload = await SecretManagerService.getInstance().accessSecretPayload(conn.id, conn.secretUri);
+      if (!payload || !payload.trim()) {
+        throw new Error(`Secret payload empty for secret URI: ${conn.secretUri}`);
+      }
+      return JSON.parse(payload);
+    }
+
+    if (conn.serviceAccountKeyPath) {
+      if (!fs.existsSync(conn.serviceAccountKeyPath)) {
+        throw new Error(`Service account key file not found: ${conn.serviceAccountKeyPath}`);
+      }
+      const raw = await fs.promises.readFile(conn.serviceAccountKeyPath, "utf8");
+      return JSON.parse(raw);
+    }
+
+    throw new Error(`No service account credentials configured for connection '${conn.name}'.`);
+  }
+
   private async _initFirestore(conn: FirestoreConnectionConfig): Promise<Firestore> {
     const appName = `firestore-app-${conn.id}`;
     // Guard against the app already existing (e.g. after a hot-reload).
@@ -381,15 +430,7 @@ export class ConnectionManager implements vscode.Disposable {
           appName
         );
       } else {
-        if (!conn.serviceAccountKeyPath) {
-          throw new Error(`Service account key path missing for connection '${conn.name}'.`);
-        }
-        if (!fs.existsSync(conn.serviceAccountKeyPath)) {
-          throw new Error(`Service account key file not found: ${conn.serviceAccountKeyPath}`);
-        }
-
-        const serviceAccountContent = await fs.promises.readFile(conn.serviceAccountKeyPath, "utf8");
-        const serviceAccount = JSON.parse(serviceAccountContent);
+        const serviceAccount = await this.resolveServiceAccountJson(conn);
 
         const storageBucket =
           conn.storageBucket ||
@@ -432,12 +473,7 @@ export class ConnectionManager implements vscode.Disposable {
           tempAppName
         );
       } else {
-        if (!conn.serviceAccountKeyPath || !fs.existsSync(conn.serviceAccountKeyPath)) {
-          return { success: false, message: `File does not exist: ${conn.serviceAccountKeyPath}` };
-        }
-        const serviceAccount = JSON.parse(
-          await fs.promises.readFile(conn.serviceAccountKeyPath, "utf8")
-        );
+        const serviceAccount = await this.resolveServiceAccountJson(conn);
         testApp = initializeApp(
           {
             credential: cert(serviceAccount),
