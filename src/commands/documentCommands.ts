@@ -10,6 +10,7 @@ import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
 import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
+import { openDocumentAsTable } from "../webview/openDocumentAsTable";
 
 /**
  * Direct 1-read document ID lookup.
@@ -634,4 +635,79 @@ export async function clearCollectionFilterCommand(
   vscode.window.showInformationMessage(`Filter cleared for collection '${item.collectionId || item.reference.path}'`);
   explorerDataProvider.refreshNode(item);
 }
+
+/**
+ * Open a Document as an interactive Table webview.
+ */
+export async function openDocumentAsTableCommand(
+  itemOrUri?: DocumentItem | vscode.Uri | any,
+  explorerDataProvider?: ExplorerDataProvider
+) {
+  if (itemOrUri instanceof DocumentItem) {
+    await openDocumentAsTable(itemOrUri, explorerDataProvider);
+    return;
+  }
+
+  if (itemOrUri instanceof vscode.Uri) {
+    const connectionId = itemOrUri.authority || "default";
+    let rawPath = itemOrUri.path.replace(/^\//, "");
+    if (rawPath.endsWith(".json")) {
+      rawPath = rawPath.slice(0, -5);
+    }
+    await openDocumentAsTable({ connectionId, docPath: rawPath }, explorerDataProvider);
+    return;
+  }
+
+  if (itemOrUri && typeof itemOrUri === "object" && itemOrUri.reference?.path) {
+    await openDocumentAsTable(itemOrUri, explorerDataProvider);
+    return;
+  }
+
+  // Check active text editor
+  const activeEditor = vscode.window.activeTextEditor;
+  if (activeEditor && activeEditor.document.uri.scheme === "ketrik-firestore-studio") {
+    const uri = activeEditor.document.uri;
+    const connectionId = uri.authority || "default";
+    let rawPath = uri.path.replace(/^\//, "");
+    if (rawPath.endsWith(".json")) {
+      rawPath = rawPath.slice(0, -5);
+    }
+    await openDocumentAsTable({ connectionId, docPath: rawPath }, explorerDataProvider);
+    return;
+  }
+
+  // Prompt user for connection and document path
+  const connectionManager = ConnectionManager.getInstance();
+  const connections = connectionManager.getConnections();
+  if (connections.length === 0) {
+    vscode.window.showWarningMessage("No Firestore connections configured.");
+    return;
+  }
+
+  let connectionId = connections[0].id;
+  if (connections.length > 1) {
+    const pick = await vscode.window.showQuickPick(
+      connections.map((c) => ({ label: c.name, description: c.id, connectionId: c.id })),
+      { placeHolder: "Select Firestore connection" }
+    );
+    if (!pick) return;
+    connectionId = pick.connectionId;
+  }
+
+  const pathInput = await vscode.window.showInputBox({
+    prompt: "Enter Firestore document path to open as table",
+    placeHolder: "e.g. users/alice or dashboard/navigation/board/metadata",
+    validateInput: (v) => {
+      const parts = v.trim().replace(/^\//, "").split("/").filter(Boolean);
+      if (parts.length === 0) return "Document path cannot be empty";
+      if (parts.length % 2 !== 0) return "Document path must have an even number of segments (collection/doc)";
+      return undefined;
+    },
+  });
+
+  if (!pathInput) return;
+  const cleanPath = pathInput.trim().replace(/^\//, "");
+  await openDocumentAsTable({ connectionId, docPath: cleanPath }, explorerDataProvider);
+}
+
 

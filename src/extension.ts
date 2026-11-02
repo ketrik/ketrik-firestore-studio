@@ -20,6 +20,7 @@ import {
   copyDocumentJsonCommand,
   filterCollectionCommand,
   clearCollectionFilterCommand,
+  openDocumentAsTableCommand,
 } from "./commands/documentCommands";
 import {
   openFieldCommand,
@@ -526,6 +527,12 @@ export async function activate(context: vscode.ExtensionContext) {
         } else {
           await explorerDataProvider.expandItem(item);
         }
+      }
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openDocumentAsTable",
+      async (itemOrUri?: any) => {
+        await openDocumentAsTableCommand(itemOrUri, explorerDataProvider);
       }
     )
   );

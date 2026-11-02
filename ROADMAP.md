@@ -21,6 +21,7 @@ timeline
         2026-10-23 : v1.17.0 Multi-Collection Batch Replication Suite, Nested Field Editor & Performance Polish
         2026-10-25 : v1.18.0 AI Scratchpad, Tree Collection Filter, Array Item Mutations & UX Overhaul
         2026-10-27 : v1.19.0 Google Secret Manager Suite, Field Secret Links & Enterprise Credentials
+        2026-11-02 : v1.19.1 Document Table View, Field Table SSR Hydration & Reliability Fixes
     section Planned
         Q1 2027 : v1.20.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
@@ -58,6 +59,7 @@ timeline
 | **v1.17.0** | Shipped | 2026-10-23 | Multi-Collection Batch Replication Suite, Bulk Collection Deletion, Nested Field Virtual Editor, Tree Hierarchical Reveal, Overview Memory Optimization |
 | **v1.18.0** | Shipped | 2026-10-25 | AI Scratchpad (.firestore/ hierarchy), Field-Level Isolation (Token Optimization), Live Auto-Sync, Tree Collection Filter, Expandable Tree Array Item Editing, Context Menu Tiers & Field Table Fixes |
 | **v1.19.0** | Shipped | 2026-10-27 | Google Secret Manager Suite, Field Secret Links (`projects/.../secrets`), In-Place Payload Reveal, Version Lifecycle, Enterprise Credentials & Single Doc Cross-Instance Replication |
+| **v1.19.1** | Shipped | 2026-11-02 | Interactive Document-as-Table webview (Property Sheet & Record view), Field Table SSR hydration, error handling & parsing fixes |
 | **v1.20.0** | Planned | Q1 2027 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
@@ -609,6 +611,29 @@ timeline
   * Native integration with VS Code encrypted OS Keychain (`vscode.SecretStorage` / `context.secrets`) to store credentials safely instead of saving sensitive tokens into `.vscode/settings.json`.
 * **Firebase Emulator `.secret.local` & `.env` Mock Sync**:
   * 1-Click export / pull of referenced secrets into `.secret.local` or `.env.local` for the Firebase Functions Emulator and local offline development without manual copy-pasting.
+
+---
+
+### [v1.19.1] — Document Table View, Field Table SSR Hydration & Reliability (Shipped: 2026-11-02)
+
+*Theme: Interactive single-document table representations, server-side rendered field tables, and error resilience.*
+
+* **Interactive Document-as-Table Webview (`ketrik-firestore-studio.openDocumentAsTable`)**:
+  * Dedicated command and UI entry points:
+    * Inline action (`$(table)`) and context menu on document items in the Explorer Tree.
+    * Editor title toolbar action on virtual JSON document tabs (`editor/title`).
+    * Interactive path prompt from the command palette.
+  * **Dual-View Layout**:
+    * **Vertical Property Sheet (Fields View)**: Inspect all fields in a structured key-type-value view with inline cell editing, field type badges, and atomic property deletion.
+    * **Horizontal Record View**: Single-row spreadsheet layout matching collection grid column semantics.
+  * **Direct Breadcrumbs & Field Drill-Down**: 1-click jump to parent collection table (`openCollectionAsTable`) and nested field tables (`openFieldAsTable`) for Maps and Arrays.
+  * **Atomic Partial Updates**: Double-click cell editing writes partial updates via `FieldPath` without rewriting or downloading the entire document.
+* **Field Table View Initial Data Hydration & SSR (`openFieldAsTable`)**:
+  * Pre-renders table headers and rows server-side (`renderHeaderRowHtml`, `renderRowsHtml`) directly into initial HTML, resolving client-side rendering race conditions on open.
+  * Robust parsing for stringified JSON payloads and scalar fallback rows.
+  * Webview-level error banner displays when snapshot retrieval or JSON parsing encounters an error.
+* **Performance & Memory Optimization**:
+  * Clean zero-allocation iterations in HTML generation routines and optimized type deduction.
 
 ---
 

@@ -81,6 +81,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     : fieldSegments;
 
   let rawData = item.value;
+  let fetchError = "";
 
   // Attempt JSON parse if rawData is a string
   if (typeof rawData === "string") {
@@ -156,11 +157,13 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
       }
     } catch (err: any) {
       console.warn("Could not fetch fresh document snapshot for field table:", err);
+      fetchError = `Could not fetch fresh snapshot: ${err.message}`;
     }
   }
 
-  function parseRows(data: any): { rows: any[]; headers: string[] } {
+  function parseRows(data: any): { rows: any[]; headers: string[]; error?: string } {
     let targetData = data;
+    let parseErr = "";
     if (typeof targetData === "string") {
       const trimmed = targetData.trim();
       if (
@@ -169,7 +172,9 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
       ) {
         try {
           targetData = JSON.parse(trimmed);
-        } catch {}
+        } catch (err: any) {
+          parseErr = `JSON Parse Error: ${err.message}`;
+        }
       }
     }
 
@@ -178,7 +183,8 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     const safeData = sanitizeFirestoreValue(targetData);
 
     if (Array.isArray(safeData)) {
-      safeData.forEach((entry, index) => {
+      for (let index = 0; index < safeData.length; index++) {
+        const entry = safeData[index];
         let rowObj: any = {};
         let rowId = String(index);
 
@@ -206,7 +212,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         });
 
         parsedRows.push(rowObj);
-      });
+      }
     } else if (safeData !== null && typeof safeData === "object") {
       Object.entries(safeData).forEach(([key, val]) => {
         let rowObj: any = {};
@@ -231,6 +237,13 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
 
         parsedRows.push(rowObj);
       });
+    } else if (safeData !== undefined && safeData !== null) {
+      parsedRows.push({
+        __id: "0",
+        value: safeData,
+        __path: `${item.parentDocRef?.path || ""}/${targetFieldPath}`,
+      });
+      headerSet.add("value");
     }
 
     // Fallback: If rows exist but no properties were found (e.g. array of empty objects [{}]), add a placeholder header
@@ -241,12 +254,14 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     return {
       rows: parsedRows,
       headers: sortHeaders(Array.from(headerSet)),
+      error: parseErr || undefined,
     };
   }
 
   const parsed = parseRows(rawData);
   const rows = parsed.rows;
   const headers = parsed.headers;
+  const initialErrorMessage = fetchError || parsed.error;
 
   const panelKey = `${item.connectionId}:${item.parentDocRef?.path || ""}:${targetFieldPath}`;
   const isArray = Array.isArray(rawData);
@@ -269,6 +284,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
       docPath: item.parentDocRef?.path || "",
       isArray,
       initialData: { headers, rows },
+      errorMessage: initialErrorMessage,
     });
     existingCtx.panel.reveal(vscode.ViewColumn.One);
     existingCtx.panel.webview.postMessage({
@@ -424,6 +440,10 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         });
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to update entry '${rowId}': ${err.message}`);
+        panel.webview.postMessage({
+          type: "error",
+          message: `Failed to update entry '${rowId}': ${err.message}`,
+        });
       }
       return;
     }
@@ -499,6 +519,10 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         vscode.window.showInformationMessage(`Entry '${rowId}' deleted!`);
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to delete entry '${rowId}': ${err.message}`);
+        panel.webview.postMessage({
+          type: "error",
+          message: `Failed to delete entry '${rowId}': ${err.message}`,
+        });
       }
       return;
     }
@@ -643,6 +667,10 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         );
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to add entry: ${err.message}`);
+        panel.webview.postMessage({
+          type: "error",
+          message: `Failed to add entry: ${err.message}`,
+        });
       }
       return;
     }
@@ -656,6 +684,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     docPath: item.parentDocRef.path,
     isArray,
     initialData: { headers, rows },
+    errorMessage: initialErrorMessage,
   });
 
   // Immediate postMessage fallback in case client is already active

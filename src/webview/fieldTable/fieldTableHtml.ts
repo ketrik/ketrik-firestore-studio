@@ -1,5 +1,71 @@
 import { getSharedTableStyles } from "../common/tableStyles";
 
+export function escapeHtml(val: any): string {
+  if (val === null || val === undefined) return "";
+  return String(val)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function formatCellHtml(val: any): string {
+  if (val === null || val === undefined) {
+    return '<span style="opacity:0.4; font-style:italic;">null</span>';
+  }
+  if (typeof val === "boolean") {
+    return `<span class="chip" style="font-weight:600;">${val ? "true" : "false"}</span>`;
+  }
+  if (typeof val === "object") {
+    if (val._seconds !== undefined && val._nanoseconds !== undefined) {
+      try {
+        const d = new Date(val._seconds * 1000);
+        return `<span class="chip" title="${escapeHtml(d.toISOString())}">🕒 ${escapeHtml(d.toLocaleString())}</span>`;
+      } catch {}
+    }
+    return `<span class="chip">${escapeHtml(JSON.stringify(val))}</span>`;
+  }
+  return escapeHtml(String(val));
+}
+
+export function getValType(val: any): string {
+  if (val === null || val === undefined) return "null";
+  if (typeof val === "boolean") return "boolean";
+  if (typeof val === "number") return "number";
+  if (typeof val === "object") {
+    if (val._seconds !== undefined && val._nanoseconds !== undefined) return "timestamp";
+    if (Array.isArray(val)) return "array";
+    return "object";
+  }
+  return "string";
+}
+
+export function renderHeaderRowHtml(headers: string[], rowIdHeader: string): string {
+  return `<th class="id-header">${escapeHtml(rowIdHeader)}</th>` +
+    headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("") +
+    `<th class="sticky-actions" style="width:70px; text-align:center;">Actions</th>`;
+}
+
+export function renderRowsHtml(rows: any[], headers: string[]): string {
+  return rows.map((row) => {
+    const rowId = row.__id !== undefined && row.__id !== null ? String(row.__id) : "";
+    const rowIndex = row.__index !== undefined ? String(row.__index) : "";
+    const idCell = `<td class="sticky-col"><div class="row-id-cell">` +
+      `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1h8l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm7 1v3h3L11 2z"/></svg>` +
+      `<span>${escapeHtml(rowId)}</span></div></td>`;
+    const dataCells = headers.map((h) => {
+      const val = row[h];
+      const type = getValType(val);
+      return `<td class="editable-cell" data-field="${escapeHtml(h)}" data-type="${type}" data-row-id="${escapeHtml(rowId)}" data-index="${rowIndex}" title="Double-click to edit">${formatCellHtml(val)}</td>`;
+    }).join("");
+    const actionsCell = `<td class="sticky-actions" style="text-align:center;">` +
+      `<button class="row-action-btn delete-btn" title="Delete entry" data-row-id="${escapeHtml(rowId)}" data-index="${rowIndex}">🗑️</button>` +
+      `</td>`;
+    return `<tr data-id="${escapeHtml(rowId)}" data-index="${rowIndex}">${idCell}${dataCells}${actionsCell}</tr>`;
+  }).join("");
+}
+
 export function getFieldTableHtml(params: {
   panelTitle: string;
   fieldName: string;
@@ -7,10 +73,19 @@ export function getFieldTableHtml(params: {
   docPath: string;
   isArray: boolean;
   initialData?: { headers: string[]; rows: any[] };
+  errorMessage?: string;
 }): string {
-  const { panelTitle, fieldName, connectionId, docPath, isArray, initialData } = params;
+  const { panelTitle, fieldName, connectionId, docPath, isArray, initialData, errorMessage } = params;
   const substrateType = isArray ? "Sequence (Array)" : "Registry (Keyed Map)";
   const rowIdHeader = isArray ? "Index / ID" : "Key / ID";
+  const initialRowCount = initialData?.rows?.length ?? 0;
+  const hasInitialRows = initialRowCount > 0;
+  const initialHeaders = initialData?.headers ?? [];
+  const initialRows = initialData?.rows ?? [];
+
+  const initialHeadHtml = hasInitialRows ? renderHeaderRowHtml(initialHeaders, rowIdHeader) : "";
+  const initialBodyHtml = hasInitialRows ? renderRowsHtml(initialRows, initialHeaders) : "";
+
   const safeInitialData = initialData
     ? JSON.stringify(initialData)
         .replace(/<\/script/gi, '<\\/script')
@@ -26,33 +101,38 @@ export function getFieldTableHtml(params: {
       <meta charset="UTF-8">
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:; font-src data:;">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${panelTitle}</title>
+      <title>${escapeHtml(panelTitle)}</title>
       <style>
         ${getSharedTableStyles()}
+        .error-banner {
+          background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+          color: var(--vscode-inputValidation-errorForeground, #ffffff);
+          border: 1px solid var(--vscode-inputValidation-errorBorder, #f44336);
+          border-radius: 4px;
+          padding: 10px 14px;
+          margin-bottom: 12px;
+          font-family: var(--vscode-editor-font-family, monospace);
+          font-size: 12px;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
       </style>
     </head>
     <body>
+      <div id="errorBanner" class="error-banner" style="${errorMessage ? 'display:block;' : 'display:none;'}">${errorMessage ? escapeHtml(errorMessage) : ''}</div>
+
       <div class="toolbar">
         <div class="title-area">
           <h1>
             <span>${isArray ? "📑" : "🗂️"}</span>
-            <span class="field-name">${fieldName}</span>
+            <span class="field-name">${escapeHtml(fieldName)}</span>
           </h1>
           <span class="badge badge-substrate">${substrateType}</span>
-          <span class="badge" title="Connection ID">${connectionId}</span>
+          <span class="badge" title="Connection ID">${escapeHtml(connectionId)}</span>
         </div>
         <div class="toolbar-actions" id="toolbarActions">
           <button id="addEntryBtn" class="primary toggle-btn" title="Add a new entry to this field">
             <span>➕</span> Add Entry
-          </button>
-          <button id="toggleProtoBtn" class="secondary toggle-btn" title="Toggle visibility of Operational Protocol (__) columns" style="display:none;">
-            <span>🛡️</span> __ Protocol
-          </button>
-          <button id="toggleEnvBtn" class="secondary toggle-btn" title="Toggle visibility of System Envelope (_) columns" style="display:none;">
-            <span>🏷️</span> _ Envelope
-          </button>
-          <button id="toggleTimeTravelBtn" class="secondary toggle-btn" title="Simulate time-travel to preview live, scheduled, or expired items" style="display:none;">
-            <span>⏱️</span> Simulate Time
           </button>
           <div class="search-wrapper" id="searchWrapper">
             <input id="searchInput" type="text" placeholder="Search rows..." />
@@ -68,46 +148,23 @@ export function getFieldTableHtml(params: {
         </div>
       </div>
 
-      <div id="timeTravelPanel" class="time-travel-panel" style="display:none;">
-        <div class="time-travel-title">
-          <span>⏱️ Time-Travel Lifecycle Simulation</span>
-          <span style="font-size:0.85em; opacity:0.8; font-weight:normal;">(Evaluating __.from & __.exp against virtual time)</span>
-        </div>
-        <div class="time-travel-controls">
-          <label style="font-size:0.88em;">Virtual Time:</label>
-          <input id="virtualTimeInput" type="datetime-local" style="padding:4px 8px; font-size:0.9em;" />
-          <button id="timePresetNowBtn" class="secondary" style="font-size:0.82em; padding:3px 8px;">Now</button>
-          <button id="timePresetPlus1hBtn" class="secondary" style="font-size:0.82em; padding:3px 8px;">+1h</button>
-          <button id="timePresetPlus1dBtn" class="secondary" style="font-size:0.82em; padding:3px 8px;">+1d</button>
-          <button id="timePresetPlus7dBtn" class="secondary" style="font-size:0.82em; padding:3px 8px;">+7d</button>
-          <button id="timePresetPlus30dBtn" class="secondary" style="font-size:0.82em; padding:3px 8px;">+30d</button>
-          <span style="border-left:1px solid rgba(128,128,128,0.3); height:18px; margin:0 4px;"></span>
-          <label style="font-size:0.88em;">Filter Status:</label>
-          <select id="lifecycleFilterSelect" style="padding:4px 8px; font-size:0.9em;">
-            <option value="all">All States</option>
-            <option value="active">Active Only 🟢</option>
-            <option value="scheduled">Scheduled 🟡</option>
-            <option value="expired">Expired 🔴</option>
-            <option value="inactive">Inactive ⚪</option>
-          </select>
-        </div>
-      </div>
       <div class="info-bar" id="infoBar">
         <div class="info-text">
-          Parent doc: <span class="doc-parent-link" id="parentDocLink">${docPath}</span> &nbsp;|&nbsp;
-          Showing <b id="row-count">0</b> items
+          Parent doc: <span class="doc-parent-link" id="parentDocLink">${escapeHtml(docPath)}</span> &nbsp;|&nbsp;
+          Showing <b id="row-count">${initialRowCount}</b> items
           <span id="search-note" style="display:none; font-style:italic; opacity:0.85;">
             — (Filtered)
           </span>
         </div>
         <div>Double-click any cell to edit | Click row ID to open in VS Code</div>
       </div>
+
       <div class="table-container">
-        <table>
-          <thead id="table-head"><tr></tr></thead>
-          <tbody id="table-body"></tbody>
+        <table id="dataTable" style="${hasInitialRows ? '' : 'display:none;'}">
+          <thead id="table-head"><tr>${initialHeadHtml}</tr></thead>
+          <tbody id="table-body">${initialBodyHtml}</tbody>
         </table>
-        <div id="empty-state" class="empty-state" style="display:none;">
+        <div id="empty-state" class="empty-state" style="${hasInitialRows ? 'display:none;' : 'display:block;'}">
           <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4; margin-bottom:10px;">
             <path d="M4 4h16v16H4zM4 9h16M9 4v16"/>
           </svg>
@@ -138,17 +195,31 @@ export function getFieldTableHtml(params: {
 }
 
 export function getFieldTableClientScript(rowIdHeader: string): string {
+  const safeRowIdHeader = escapeHtml(rowIdHeader);
   return `
     (function() {
+      // 1. Visual Error Boundary
+      function showError(msg) {
+        var el = document.getElementById('errorBanner');
+        if (el) {
+          el.style.display = 'block';
+          el.textContent = '⚠️ ' + msg;
+        }
+      }
+
+      window.onerror = function(msg, url, line, col, error) {
+        showError('Script Error: ' + msg + ' (Line ' + line + ':' + col + ')' + (error && error.stack ? '\\n' + error.stack : ''));
+      };
+
+      window.addEventListener('unhandledrejection', function(e) {
+        showError('Unhandled Rejection: ' + (e.reason ? (e.reason.stack || e.reason) : e));
+      });
+
       const vscode = acquireVsCodeApi();
 
       let allRows = [];
       let currentRows = [];
       let currentHeaders = [];
-
-      let isTimeTravelOpen = false;
-      let simulatedTime = Date.now();
-      let lifecycleFilter = 'all';
 
       function escapeHtml(val) {
         if (val === null || val === undefined) { return ''; }
@@ -158,67 +229,6 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
           .replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#39;');
-      }
-
-      function parseTimeVal(val) {
-        if (!val) return null;
-        if (typeof val === 'number') {
-          return val < 1e11 ? val * 1000 : val;
-        }
-        if (typeof val === 'string') {
-          const t = Date.parse(val);
-          return isNaN(t) ? null : t;
-        }
-        if (typeof val === 'object' && val._seconds !== undefined) {
-          return val._seconds * 1000;
-        }
-        return null;
-      }
-
-      function computeLifecycleStatus(row, refTime) {
-        const proto = row.__ && typeof row.__ === 'object' ? row.__ : {};
-        const active = proto.active !== undefined ? proto.active : row['__.active'];
-        const fromVal = proto.from !== undefined ? proto.from : row['__.from'];
-        const expVal = proto.exp !== undefined ? proto.exp : row['__.exp'];
-
-        if (active === false || active === 'false') {
-          return { status: 'inactive', label: 'Inactive', cls: 'pill-inactive', icon: '⚪' };
-        }
-
-        const fromMs = parseTimeVal(fromVal);
-        const expMs = parseTimeVal(expVal);
-
-        if (fromMs !== null && refTime < fromMs) {
-          return { status: 'scheduled', label: 'Scheduled', cls: 'pill-scheduled', icon: '🟡' };
-        }
-        if (expMs !== null && refTime > expMs) {
-          return { status: 'expired', label: 'Expired', cls: 'pill-expired', icon: '🔴' };
-        }
-
-        if (active === true || active === 'true' || fromMs !== null || expMs !== null) {
-          return { status: 'active', label: 'Active', cls: 'pill-active', icon: '🟢' };
-        }
-
-        return null;
-      }
-
-      function renderHeaderCell(h) {
-        const isProto = h.startsWith('__');
-        const isEnv = h.startsWith('_') && !isProto;
-        let cls = isProto ? 'protocol-header col-proto' : isEnv ? 'envelope-header col-env' : '';
-        let badge = isProto ? '<span class="th-tag protocol">protocol</span>' : isEnv ? '<span class="th-tag envelope">envelope</span>' : '';
-        return '<th class="' + cls + '">' + badge + escapeHtml(h) + '</th>';
-      }
-
-      function renderHeaderRow(headers) {
-        return '<th class="id-header">${rowIdHeader}</th>' +
-          headers.map(h => renderHeaderCell(h)).join('') +
-          '<th class="sticky-actions" style="width: 70px; text-align: center;">Actions</th>';
-      }
-
-      function reRenderCurrentTable() {
-        document.getElementById('table-head').innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
-        document.getElementById('table-body').innerHTML = renderRows(currentRows, currentHeaders);
       }
 
       function getValType(val) {
@@ -237,7 +247,10 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         if (value === null || value === undefined) {
           return '<span style="opacity:0.4; font-style:italic;">null</span>';
         }
-        if (typeof value === "object") {
+        if (typeof value === 'boolean') {
+          return '<span class="chip" style="font-weight:600;">' + (value ? 'true' : 'false') + '</span>';
+        }
+        if (typeof value === 'object') {
           if (value._seconds !== undefined && value._nanoseconds !== undefined) {
             try {
               const date = new Date(value._seconds * 1000);
@@ -246,55 +259,43 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
           }
           return '<span class="chip">' + escapeHtml(JSON.stringify(value)) + '</span>';
         }
-        if (typeof value === "boolean") {
-          return '<span class="chip" style="font-weight:600;">' + (value ? 'true' : 'false') + '</span>';
-        }
         return escapeHtml(String(value));
+      }
+
+      function renderHeaderRow(headers) {
+        return '<th class="id-header">${safeRowIdHeader}</th>' +
+          headers.map(h => '<th>' + escapeHtml(h) + '</th>').join('') +
+          '<th class="sticky-actions" style="width: 70px; text-align: center;">Actions</th>';
       }
 
       function renderRows(rows, headers) {
         return rows.map(row => {
-          const rowId = row.__id || '';
-          const rowIndex = row.__index !== undefined ? row.__index : '';
-          const lc = computeLifecycleStatus(row, simulatedTime);
-          const pillHtml = lc
-            ? '<span class="lifecycle-pill ' + lc.cls + '" title="Virtual Status: ' + lc.label + '">' + lc.icon + ' ' + lc.label + '</span>'
-            : '';
+          const rowId = row.__id !== undefined && row.__id !== null ? String(row.__id) : '';
+          const rowIndex = row.__index !== undefined ? String(row.__index) : '';
 
           const idCell = '<td class="sticky-col"><div class="row-id-cell">' +
             '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1h8l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm7 1v3h3L11 2z"/></svg>' +
-            '<span>' + escapeHtml(rowId) + '</span>' + pillHtml + '</div></td>';
+            '<span>' + escapeHtml(rowId) + '</span></div></td>';
 
           const dataCells = headers.map(h => {
-            const isProto = h.startsWith('__');
-            const isEnv = h.startsWith('_') && !isProto;
-            const tdCls = isProto ? 'col-proto' : isEnv ? 'col-env' : '';
             const val = row[h];
             const type = getValType(val);
-            return '<td class="' + tdCls + ' editable-cell" data-field="' + escapeHtml(h) + '" data-type="' + type + '" data-row-id="' + escapeHtml(rowId) + '" data-index="' + rowIndex + '" title="Double-click to edit">' + formatCell(val) + '</td>';
+            return '<td class="editable-cell" data-field="' + escapeHtml(h) + '" data-type="' + type + '" data-row-id="' + escapeHtml(rowId) + '" data-index="' + rowIndex + '" title="Double-click to edit">' + formatCell(val) + '</td>';
           }).join('');
 
           const actionsCell = '<td class="sticky-actions" style="text-align: center;">' +
-            '<button class="row-action-btn delete-btn" title="Delete entry \'' + escapeHtml(rowId) + '\'" data-row-id="' + escapeHtml(rowId) + '" data-index="' + rowIndex + '">🗑️</button>' +
+            '<button class="row-action-btn delete-btn" title="Delete entry" data-row-id="' + escapeHtml(rowId) + '" data-index="' + rowIndex + '">🗑️</button>' +
             '</td>';
 
           return '<tr data-id="' + escapeHtml(rowId) + '" data-index="' + rowIndex + '">' + idCell + dataCells + actionsCell + '</tr>';
         }).join('');
       }
 
-      function updateContextualButtons() {
-        const hasProto = currentHeaders.some(h => h.startsWith('__'));
-        const hasEnv = currentHeaders.some(h => h.startsWith('_') && !h.startsWith('__'));
-        const hasLifecycle = allRows.some(d => d && (d.__ !== undefined || d['__.active'] !== undefined || d['__.from'] !== undefined || d['__.exp'] !== undefined));
-
-        const protoBtn = document.getElementById('toggleProtoBtn');
-        if (protoBtn) protoBtn.style.display = hasProto ? 'inline-flex' : 'none';
-
-        const envBtn = document.getElementById('toggleEnvBtn');
-        if (envBtn) envBtn.style.display = hasEnv ? 'inline-flex' : 'none';
-
-        const timeBtn = document.getElementById('toggleTimeTravelBtn');
-        if (timeBtn) timeBtn.style.display = hasLifecycle ? 'inline-flex' : 'none';
+      function reRenderCurrentTable() {
+        const thead = document.getElementById('table-head');
+        const tbody = document.getElementById('table-body');
+        if (thead) thead.innerHTML = '<tr>' + renderHeaderRow(currentHeaders) + '</tr>';
+        if (tbody) tbody.innerHTML = renderRows(currentRows, currentHeaders);
       }
 
       function updateEmptyState(count) {
@@ -303,48 +304,30 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         const msgEl = document.getElementById('empty-state-msg');
         const emptyActions = document.getElementById('empty-state-actions');
         const emptyFilterActions = document.getElementById('empty-state-filter-actions');
-        const searchWrapper = document.getElementById('searchWrapper');
-        const searchBtn = document.getElementById('searchBtn');
-        const exportBtn = document.getElementById('exportBtn');
-        const infoBar = document.getElementById('infoBar');
-        const tableContainerTable = document.querySelector('.table-container table');
+        const table = document.getElementById('dataTable');
 
-        updateContextualButtons();
-
-        const isFiltered = (document.getElementById('searchInput').value || '').trim() || lifecycleFilter !== 'all';
+        const isFiltered = !!((document.getElementById('searchInput').value || '').trim());
 
         if (count === 0) {
-          emptyState.style.display = 'block';
-          if (tableContainerTable) tableContainerTable.style.display = 'none';
+          if (emptyState) emptyState.style.display = 'block';
+          if (table) table.style.display = 'none';
 
           if (isFiltered) {
             if (titleEl) titleEl.textContent = 'No matching items';
             if (msgEl) msgEl.textContent = 'No items in this field matched your search filter.';
             if (emptyActions) emptyActions.style.display = 'none';
             if (emptyFilterActions) emptyFilterActions.style.display = 'flex';
-            if (searchWrapper) searchWrapper.style.display = 'flex';
-            if (searchBtn) searchBtn.style.display = '';
-            if (exportBtn) exportBtn.style.display = '';
-            if (infoBar) infoBar.style.display = 'flex';
           } else {
             if (titleEl) titleEl.textContent = 'This field is empty';
             if (msgEl) msgEl.textContent = 'No items found in this field.';
             if (emptyActions) emptyActions.style.display = 'flex';
             if (emptyFilterActions) emptyFilterActions.style.display = 'none';
-            if (searchWrapper) searchWrapper.style.display = 'none';
-            if (searchBtn) searchBtn.style.display = 'none';
-            if (exportBtn) exportBtn.style.display = 'none';
-            if (infoBar) infoBar.style.display = 'flex';
           }
         } else {
-          emptyState.style.display = 'none';
-          if (tableContainerTable) tableContainerTable.style.display = 'table';
+          if (emptyState) emptyState.style.display = 'none';
+          if (table) table.style.display = 'table';
           if (emptyActions) emptyActions.style.display = 'none';
           if (emptyFilterActions) emptyFilterActions.style.display = 'none';
-          if (searchWrapper) searchWrapper.style.display = 'flex';
-          if (searchBtn) searchBtn.style.display = '';
-          if (exportBtn) exportBtn.style.display = '';
-          if (infoBar) infoBar.style.display = 'flex';
         }
       }
 
@@ -367,58 +350,40 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
 
       function filterCurrentRows() {
         const searchTerm = (document.getElementById('searchInput').value || '').trim().toLowerCase();
-        let list = allRows;
-
-        if (searchTerm) {
-          list = list.filter(row => rowMatchesSearch(row, searchTerm));
-        }
-
-        if (lifecycleFilter !== 'all') {
-          list = list.filter(row => {
-            const lc = computeLifecycleStatus(row, simulatedTime);
-            return lc && lc.status === lifecycleFilter;
-          });
-        }
-
-        currentRows = list;
-        document.getElementById('table-body').innerHTML = renderRows(currentRows, currentHeaders);
-        document.getElementById('row-count').textContent = currentRows.length;
-        const isFiltering = !!searchTerm || lifecycleFilter !== 'all';
-        document.getElementById('search-note').style.display = isFiltering ? '' : 'none';
-        document.getElementById('clearSearchBtn').style.display = isFiltering ? '' : 'none';
+        currentRows = searchTerm ? allRows.filter(row => rowMatchesSearch(row, searchTerm)) : allRows;
+        const tbody = document.getElementById('table-body');
+        if (tbody) tbody.innerHTML = renderRows(currentRows, currentHeaders);
+        const countEl = document.getElementById('row-count');
+        if (countEl) countEl.textContent = currentRows.length;
+        const searchNote = document.getElementById('search-note');
+        if (searchNote) searchNote.style.display = searchTerm ? '' : 'none';
+        const clearBtn = document.getElementById('clearSearchBtn');
+        if (clearBtn) clearBtn.style.display = searchTerm ? '' : 'none';
         updateEmptyState(currentRows.length);
-      }
-
-      function applyClientSearch(term) {
-        filterCurrentRows();
-      }
-
-      function updateTimeInputValue() {
-        const d = new Date(simulatedTime);
-        const pad = n => String(n).padStart(2, '0');
-        const formatted = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-        const el = document.getElementById('virtualTimeInput');
-        if (el) el.value = formatted;
-      }
-
-      function setSimulatedTime(newMs) {
-        simulatedTime = newMs;
-        updateTimeInputValue();
-        filterCurrentRows();
       }
 
       window.addEventListener('message', function(event) {
         const msg = event.data;
+        if (!msg) return;
+
+        if (msg.type === 'error') {
+          showError(msg.message || 'An error occurred');
+          return;
+        }
 
         if (msg.type === 'init' || msg.type === 'clearSearch') {
           currentHeaders = msg.headers || [];
           allRows = msg.rows || [];
           currentRows = allRows;
           reRenderCurrentTable();
-          document.getElementById('row-count').textContent = allRows.length;
-          document.getElementById('search-note').style.display = 'none';
-          document.getElementById('clearSearchBtn').style.display = 'none';
-          document.getElementById('searchInput').value = '';
+          const countEl = document.getElementById('row-count');
+          if (countEl) countEl.textContent = allRows.length;
+          const searchNote = document.getElementById('search-note');
+          if (searchNote) searchNote.style.display = 'none';
+          const clearBtn = document.getElementById('clearSearchBtn');
+          if (clearBtn) clearBtn.style.display = 'none';
+          const searchInput = document.getElementById('searchInput');
+          if (searchInput) searchInput.value = '';
           updateEmptyState(allRows.length);
         }
 
@@ -446,99 +411,84 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         }
       });
 
-      const tableEl = document.querySelector('table');
+      // Search listeners
+      const searchBtn = document.getElementById('searchBtn');
+      if (searchBtn) {
+        searchBtn.onclick = function() { filterCurrentRows(); };
+      }
 
-      document.getElementById('toggleProtoBtn').onclick = function() {
-        const isHidden = tableEl.classList.toggle('hide-proto');
-        this.classList.toggle('active', isHidden);
-      };
-
-      document.getElementById('toggleEnvBtn').onclick = function() {
-        const isHidden = tableEl.classList.toggle('hide-env');
-        this.classList.toggle('active', isHidden);
-      };
-
-      document.getElementById('toggleTimeTravelBtn').onclick = function() {
-        const panel = document.getElementById('timeTravelPanel');
-        isTimeTravelOpen = !isTimeTravelOpen;
-        panel.style.display = isTimeTravelOpen ? 'flex' : 'none';
-        this.classList.toggle('active', isTimeTravelOpen);
-      };
-
-      document.getElementById('virtualTimeInput').onchange = function() {
-        const val = this.value;
-        if (val) {
-          const t = new Date(val).getTime();
-          if (!isNaN(t)) {
-            setSimulatedTime(t);
-          }
-        }
-      };
-
-      document.getElementById('timePresetNowBtn').onclick = function() {
-        setSimulatedTime(Date.now());
-      };
-
-      document.getElementById('timePresetPlus1hBtn').onclick = function() {
-        setSimulatedTime(simulatedTime + 3600 * 1000);
-      };
-
-      document.getElementById('timePresetPlus1dBtn').onclick = function() {
-        setSimulatedTime(simulatedTime + 24 * 3600 * 1000);
-      };
-
-      document.getElementById('timePresetPlus7dBtn').onclick = function() {
-        setSimulatedTime(simulatedTime + 7 * 24 * 3600 * 1000);
-      };
-
-      document.getElementById('timePresetPlus30dBtn').onclick = function() {
-        setSimulatedTime(simulatedTime + 30 * 24 * 3600 * 1000);
-      };
-
-      document.getElementById('lifecycleFilterSelect').onchange = function() {
-        lifecycleFilter = this.value;
-        filterCurrentRows();
-      };
-
-      document.getElementById('exportBtn').onclick = function() {
-        const sourceRows = (currentRows && currentRows.length > 0) ? currentRows : allRows;
-        const data = sourceRows.map(r => {
-          const { __path, __index, ...rest } = r;
-          return rest;
+      const searchInput = document.getElementById('searchInput');
+      if (searchInput) {
+        let debounce = null;
+        searchInput.addEventListener('input', function() {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(filterCurrentRows, 150);
         });
-        vscode.postMessage({ command: 'exportJson', data });
-      };
+        searchInput.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') {
+            if (debounce) clearTimeout(debounce);
+            filterCurrentRows();
+          }
+        });
+      }
 
-      document.getElementById('searchBtn').onclick = function() {
-        const value = document.getElementById('searchInput').value;
-        applyClientSearch(value);
-      };
+      const clearSearchBtn = document.getElementById('clearSearchBtn');
+      if (clearSearchBtn) {
+        clearSearchBtn.onclick = function() {
+          if (searchInput) searchInput.value = '';
+          filterCurrentRows();
+        };
+      }
 
-      let searchDebounceTimer = null;
-      document.getElementById('searchInput').addEventListener('input', function() {
-        if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-        const val = this.value;
-        searchDebounceTimer = setTimeout(() => {
-          applyClientSearch(val);
-        }, 150);
-      });
+      const emptyClearFilterBtn = document.getElementById('emptyClearFilterBtn');
+      if (emptyClearFilterBtn) {
+        emptyClearFilterBtn.onclick = function() {
+          if (clearSearchBtn) clearSearchBtn.click();
+        };
+      }
 
-      document.getElementById('clearSearchBtn').onclick = function() {
-        document.getElementById('searchInput').value = '';
-        lifecycleFilter = 'all';
-        const filterEl = document.getElementById('lifecycleFilterSelect');
-        if (filterEl) filterEl.value = 'all';
-        applyClientSearch('');
-      };
+      // Action buttons
+      const exportBtn = document.getElementById('exportBtn');
+      if (exportBtn) {
+        exportBtn.onclick = function() {
+          const sourceRows = (currentRows && currentRows.length > 0) ? currentRows : allRows;
+          const data = sourceRows.map(r => {
+            const { __path, __index, ...rest } = r;
+            return rest;
+          });
+          vscode.postMessage({ command: 'exportJson', data });
+        };
+      }
 
-      document.getElementById('openInEditorBtn').onclick = function() {
-        vscode.postMessage({ command: 'openFieldInEditor' });
-      };
+      const openInEditorBtn = document.getElementById('openInEditorBtn');
+      if (openInEditorBtn) {
+        openInEditorBtn.onclick = function() {
+          vscode.postMessage({ command: 'openFieldInEditor' });
+        };
+      }
 
-      document.getElementById('parentDocLink').onclick = function() {
-        vscode.postMessage({ command: 'openParentDoc' });
-      };
+      const emptyEditJsonBtn = document.getElementById('emptyEditJsonBtn');
+      if (emptyEditJsonBtn) {
+        emptyEditJsonBtn.onclick = function() {
+          vscode.postMessage({ command: 'openFieldInEditor' });
+        };
+      }
 
+      const parentDocLink = document.getElementById('parentDocLink');
+      if (parentDocLink) {
+        parentDocLink.onclick = function() {
+          vscode.postMessage({ command: 'openParentDoc' });
+        };
+      }
+
+      const addEntryBtn = document.getElementById('addEntryBtn');
+      if (addEntryBtn) {
+        addEntryBtn.onclick = function() {
+          vscode.postMessage({ command: 'addFieldEntry' });
+        };
+      }
+
+      // Inline Cell Editing
       let selectedCell = null;
       let activeEditingCell = null;
 
@@ -631,7 +581,7 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
               newVal = true;
             } else if (raw === 'false') {
               newVal = false;
-            } else if (type === 'number' || (!isNaN(Number(raw)) && raw !== '' && (type !== 'string' || !isNaN(Number(raw))))) {
+            } else if (type === 'number' || (!isNaN(Number(raw)) && raw !== '' && type !== 'string')) {
               newVal = Number(raw);
             } else {
               newVal = input.value;
@@ -673,40 +623,44 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         };
       }
 
-      document.getElementById('table-body').addEventListener('click', function(event) {
-        const delBtn = event.target.closest('.delete-btn');
-        if (delBtn) {
-          event.stopPropagation();
-          const rowId = delBtn.getAttribute('data-row-id');
-          const idxStr = delBtn.getAttribute('data-index');
-          vscode.postMessage({
-            command: 'deleteFieldEntry',
-            rowId,
-            index: idxStr !== '' ? Number(idxStr) : undefined
-          });
-          return;
-        }
+      // Table delegation listeners
+      const tbody = document.getElementById('table-body');
+      if (tbody) {
+        tbody.addEventListener('click', function(event) {
+          const delBtn = event.target.closest('.delete-btn');
+          if (delBtn) {
+            event.stopPropagation();
+            const rowId = delBtn.getAttribute('data-row-id');
+            const idxStr = delBtn.getAttribute('data-index');
+            vscode.postMessage({
+              command: 'deleteFieldEntry',
+              rowId,
+              index: idxStr !== '' ? Number(idxStr) : undefined
+            });
+            return;
+          }
 
-        const td = event.target.closest('.editable-cell');
-        if (td) {
-          clearSelectedCell();
-          selectedCell = td;
-          td.classList.add('selected');
-          return;
-        }
+          const td = event.target.closest('.editable-cell');
+          if (td) {
+            clearSelectedCell();
+            selectedCell = td;
+            td.classList.add('selected');
+            return;
+          }
 
-        const rowIdCell = event.target.closest('.row-id-cell');
-        if (rowIdCell) {
-          vscode.postMessage({ command: 'openFieldInEditor' });
-        }
-      });
+          const rowIdCell = event.target.closest('.row-id-cell');
+          if (rowIdCell) {
+            vscode.postMessage({ command: 'openFieldInEditor' });
+          }
+        });
 
-      document.getElementById('table-body').addEventListener('dblclick', function(event) {
-        const td = event.target.closest('.editable-cell');
-        if (td) {
-          startCellEdit(td);
-        }
-      });
+        tbody.addEventListener('dblclick', function(event) {
+          const td = event.target.closest('.editable-cell');
+          if (td) {
+            startCellEdit(td);
+          }
+        });
+      }
 
       document.addEventListener('keydown', function(event) {
         if (!selectedCell || activeEditingCell) return;
@@ -716,46 +670,18 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         }
       });
 
-      const addEntryBtn = document.getElementById('addEntryBtn');
-      if (addEntryBtn) {
-        addEntryBtn.onclick = function() {
-          vscode.postMessage({ command: 'addFieldEntry' });
-        };
-      }
-
-      document.getElementById('searchInput').addEventListener('keydown', function(event) {
-        if (event.key === 'Enter') {
-          if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-          document.getElementById('searchBtn').click();
-        }
-      });
-
-      const emptyEditJsonBtn = document.getElementById('emptyEditJsonBtn');
-      if (emptyEditJsonBtn) {
-        emptyEditJsonBtn.onclick = function() {
-          document.getElementById('openInEditorBtn').click();
-        };
-      }
-
-      const emptyClearFilterBtn = document.getElementById('emptyClearFilterBtn');
-      if (emptyClearFilterBtn) {
-        emptyClearFilterBtn.onclick = function() {
-          document.getElementById('clearSearchBtn').click();
-        };
-      }
-
+      // Hydration from server-rendered initial data
       try {
         if (window.__INITIAL_DATA__ && Array.isArray(window.__INITIAL_DATA__.rows)) {
           currentHeaders = window.__INITIAL_DATA__.headers || [];
           allRows = window.__INITIAL_DATA__.rows || [];
           currentRows = allRows;
-          reRenderCurrentTable();
           const countEl = document.getElementById('row-count');
           if (countEl) countEl.textContent = allRows.length;
           updateEmptyState(allRows.length);
         }
       } catch (err) {
-        console.error('Initial table hydration error:', err);
+        showError('Hydration Error: ' + err.message);
       }
 
       vscode.postMessage({ command: 'ready' });

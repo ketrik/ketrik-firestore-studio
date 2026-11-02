@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.19.0",
+  "version": "1.19.1",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -632,6 +632,12 @@
         "title": "Open Document"
       },
       {
+        "command": "ketrik-firestore-studio.openDocumentAsTable",
+        "category": "Firestore Studio",
+        "title": "Open Document as Table",
+        "icon": "$(table)"
+      },
+      {
         "command": "ketrik-firestore-studio.clickField",
         "category": "Firestore Studio",
         "title": "Open Field"
@@ -1052,14 +1058,19 @@
     "menus": {
       "editor/title": [
         {
-          "command": "ketrik-firestore-studio.revealActiveDocumentInTree",
+          "command": "ketrik-firestore-studio.openDocumentAsTable",
           "when": "resourceScheme == ketrik-firestore-studio",
           "group": "navigation@0"
         },
         {
-          "command": "ketrik-firestore-studio.openAiScratchpad",
+          "command": "ketrik-firestore-studio.revealActiveDocumentInTree",
           "when": "resourceScheme == ketrik-firestore-studio",
           "group": "navigation@0a"
+        },
+        {
+          "command": "ketrik-firestore-studio.openAiScratchpad",
+          "when": "resourceScheme == ketrik-firestore-studio",
+          "group": "navigation@0b"
         },
         {
           "command": "ketrik-firestore-studio.deleteMultipleFields",
@@ -1713,24 +1724,34 @@
           "group": "9_danger@2"
         },
         {
-          "command": "ketrik-firestore-studio.openAiScratchpad",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
-          "group": "inline@0"
-        },
-        {
-          "command": "ketrik-firestore-studio.addField",
+          "command": "ketrik-firestore-studio.openDocumentAsTable",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "inline@1"
         },
         {
-          "command": "ketrik-firestore-studio.duplicateDocument",
+          "command": "ketrik-firestore-studio.openAiScratchpad",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "inline@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.addField",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "inline@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.duplicateDocument",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "inline@4"
         },
         {
           "command": "ketrik-firestore-studio.clickDocument",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "1_open@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.openDocumentAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_open@2"
         },
         {
           "command": "ketrik-firestore-studio.openAiScratchpad",

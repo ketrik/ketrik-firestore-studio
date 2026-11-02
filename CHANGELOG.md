@@ -2,6 +2,25 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.19.1] - 2026-11-02
+
+### Added
+- **Interactive Document-as-Table Webview (`ketrik-firestore-studio.openDocumentAsTable`)**:
+  * Open any Firestore or Local JSON document directly as an interactive webview table from the Explorer Tree (`inline@1` or context menu `1_open@2`), editor title bar (`$(table)` on virtual document tabs), or command palette with interactive connection & path pickers.
+  * **Dual-View Substrate**:
+    * **Vertical Property Sheet (Fields View)**: Inspect all fields in a structured key-type-value view with inline cell editing, field type badges, and atomic property deletion.
+    * **Horizontal Record View**: Single-row spreadsheet layout matching collection grid column semantics.
+  * **Direct Breadcrumb & Field Drill-Down**: 1-click navigation to parent collection table (`openCollectionAsTable`) and nested field tables (`openFieldAsTable`) for Maps and Arrays.
+  * **Atomic Partial Updates**: Double-click cell editing writes partial updates via `FieldPath` without rewriting or downloading the entire document.
+
+### Fixed & Improved
+- **Field Table View Initial Data Hydration & SSR (`openFieldAsTable`)**:
+  * Fixed empty table render race conditions on first open: pre-renders initial table header and rows server-side (`renderHeaderRowHtml`, `renderRowsHtml`) embedded directly in the webview HTML.
+  * Added resilient stringified JSON parsing for string-encoded maps/arrays.
+  * Added error banner reporting directly inside the webview when snapshot retrieval or JSON parsing encounters an error.
+- **Resource & Memory Optimization**:
+  * Replaced object iterations with indexed loops and reusable escaping utilities in table webview renderers.
+
 ## [1.19.0] - 2026-10-27
 
 ### Added
