@@ -360,6 +360,24 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       }
     }
 
+    function matchesSearchTermClient(val, term, depth) {
+      if (!val || (depth || 0) > 6) return false;
+      if (typeof val === 'string') return val.toLowerCase().includes(term);
+      if (typeof val === 'number' || typeof val === 'boolean') return String(val).toLowerCase().includes(term);
+      if (Array.isArray(val)) {
+        for (let i = 0; i < val.length; i++) {
+          if (matchesSearchTermClient(val[i], term, (depth || 0) + 1)) return true;
+        }
+        return false;
+      }
+      for (const k in val) {
+        if (Object.prototype.hasOwnProperty.call(val, k)) {
+          if (k.toLowerCase().includes(term) || matchesSearchTermClient(val[k], term, (depth || 0) + 1)) return true;
+        }
+      }
+      return false;
+    }
+
     function renderTable() {
       // Filter by text search & provider
       const selectedProv = providerFilter ? providerFilter.value : '';
@@ -380,10 +398,15 @@ export function getAuthUsersTableHtml(connectionId: string): string {
         const q = currentFilter.toLowerCase().trim();
         filtered = filtered.filter(u => {
           const email = (u.email || '').toLowerCase();
+          if (email.includes(q)) return true;
           const name = (u.displayName || '').toLowerCase();
+          if (name.includes(q)) return true;
           const uid = (u.uid || '').toLowerCase();
-          const claims = JSON.stringify(u.customClaims || {}).toLowerCase();
-          return email.includes(q) || name.includes(q) || uid.includes(q) || claims.includes(q);
+          if (uid.includes(q)) return true;
+          if (u.customClaims && typeof u.customClaims === 'object') {
+            return matchesSearchTermClient(u.customClaims, q, 0);
+          }
+          return false;
         });
       }
 

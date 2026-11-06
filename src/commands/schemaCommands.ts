@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { CollectionItem, DocumentItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
+import { getDefaultExportUri } from "../webview/common/tableUtils";
 
 export interface InferredField {
   name: string;
@@ -391,7 +392,7 @@ export async function generateSchemaCommand(item?: CollectionItem | DocumentItem
   } else if (destChoice.action === "save") {
     const suggestedFileName = `${collectionName}.${extension}`;
     const uri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(suggestedFileName),
+      defaultUri: getDefaultExportUri(suggestedFileName),
       filters: { TypeScript: [extension.replace(".", ""), "ts"] },
     });
     if (uri) {

@@ -531,6 +531,16 @@ export class LocalJsonService {
       const collMap = this.getCollectionData(config, collectionId);
       for (const id of docIds) {
         delete collMap[id];
+        const exactDocFile = path.join(config.localJsonPath!, collectionId, `${id}.json`);
+        if (fs.existsSync(exactDocFile)) {
+          fs.unlinkSync(exactDocFile);
+          this._fileCache.delete(exactDocFile);
+        }
+        const standaloneDocFile = path.join(config.localJsonPath!, `${id}.json`);
+        if (fs.existsSync(standaloneDocFile)) {
+          fs.unlinkSync(standaloneDocFile);
+          this._fileCache.delete(standaloneDocFile);
+        }
       }
       this._writeJsonFile(filePath, collMap);
       return;
@@ -596,5 +606,12 @@ export class LocalJsonService {
       }
     }
     this.setDocument(config, docPath, current);
+  }
+
+  /**
+   * Delete a field from a document in Local JSON store.
+   */
+  public deleteField(config: FirestoreConnectionConfig, docPath: string, fieldPath: string): void {
+    this.updateField(config, docPath, fieldPath, null, true);
   }
 }

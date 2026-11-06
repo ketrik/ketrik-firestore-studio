@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { CostService, SPARK_FREE_QUOTA, BLAZE_PRICING } from "../cost/costService";
 import { getCostSimulatorHtml } from "./costSimulator/costSimulatorHtml";
+import { getDefaultExportUri } from "./common/tableUtils";
 
 // Active cost simulator panels registry to avoid duplicate webviews and memory retention
 const activeCostPanels = new Map<string, vscode.WebviewPanel>();
@@ -190,7 +191,7 @@ ${scenarioSection}
 `;
 
       const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(`firestore-cost-report-${conn.id}.md`),
+        defaultUri: getDefaultExportUri(`firestore-cost-report-${conn.id}.md`),
         filters: { Markdown: ["md"] },
       });
       if (uri) {
@@ -223,7 +224,7 @@ ${scenarioSection}
       };
 
       const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(`firestore-cost-report-${conn.id}.json`),
+        defaultUri: getDefaultExportUri(`firestore-cost-report-${conn.id}.json`),
         filters: { JSON: ["json"] },
       });
       if (uri) {

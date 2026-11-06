@@ -7,7 +7,7 @@ import { CostService } from "../cost/costService";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import { getDocumentSizeInfo } from "../utils/documentSizeUtils";
-import { sanitizeFirestoreValue } from "./common/tableUtils";
+import { sanitizeFirestoreValue, getDefaultExportUri } from "./common/tableUtils";
 import { openFieldAsTable } from "./openFieldAsTable";
 import { openCollectionAsTable } from "./openCollectionAsTable";
 import {
@@ -33,6 +33,19 @@ interface DocumentPanelContext {
 }
 
 const activeDocumentPanels = new Map<string, DocumentPanelContext>();
+
+function parseFields(data: any): DocumentFieldInfo[] {
+  if (!data || typeof data !== "object") return [];
+  const keys = Object.keys(data).sort((a, b) => a.localeCompare(b));
+  return keys.map((key) => {
+    const val = data[key];
+    return {
+      field: key,
+      type: getValType(val),
+      value: sanitizeFirestoreValue(val),
+    };
+  });
+}
 
 /**
  * Open a Firestore Document as an interactive, dual-view Table webview.
@@ -66,8 +79,11 @@ export async function openDocumentAsTable(
   }
 
   // Normalize path
-  docPath = docPath.replace(/^\//, "");
+  docPath = docPath.replace(/^\//, "").replace(/\.json$/, "");
   const pathSegments = docPath.split("/").filter(Boolean);
+  if (!documentId || documentId.endsWith(".json")) {
+    documentId = pathSegments[pathSegments.length - 1] || "document";
+  }
   const parentCollectionPath =
     pathSegments.length > 1
       ? pathSegments.slice(0, pathSegments.length - 1).join("/")
@@ -77,6 +93,17 @@ export async function openDocumentAsTable(
   const existingCtx = activeDocumentPanels.get(panelKey);
   if (existingCtx) {
     existingCtx.panel.reveal(vscode.ViewColumn.One);
+    if ((target as any).docData) {
+      existingCtx.docData = (target as any).docData;
+      existingCtx.fields = parseFields(existingCtx.docData);
+      existingCtx.panel.webview.postMessage({
+        type: "init",
+        documentId,
+        docPath,
+        parentCollectionPath,
+        fields: existingCtx.fields,
+      });
+    }
     return;
   }
 
@@ -121,19 +148,6 @@ export async function openDocumentAsTable(
       fetchError = `Failed to load document: ${err.message}`;
       docData = {};
     }
-  }
-
-  function parseFields(data: any): DocumentFieldInfo[] {
-    if (!data || typeof data !== "object") return [];
-    const keys = Object.keys(data).sort((a, b) => a.localeCompare(b));
-    return keys.map((key) => {
-      const val = data[key];
-      return {
-        field: key,
-        type: getValType(val),
-        value: sanitizeFirestoreValue(val),
-      };
-    });
   }
 
   let fields = parseFields(docData);
@@ -225,12 +239,17 @@ export async function openDocumentAsTable(
         const collectionId =
           parentCollectionPath.substring(parentCollectionPath.lastIndexOf("/") + 1) ||
           parentCollectionPath;
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-        const colRef = firestore.collection(parentCollectionPath);
+        const conn = ConnectionManager.getInstance().getConnection(connectionId);
+        let colRef: any = { path: parentCollectionPath };
+        if (!conn?.isLocalJson) {
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          colRef = firestore.collection(parentCollectionPath);
+        }
         await openCollectionAsTable(
           {
             collectionId,
             connectionId,
+            collectionPath: parentCollectionPath,
             reference: colRef,
           } as any,
           false,
@@ -261,7 +280,7 @@ export async function openDocumentAsTable(
 
     if (message.command === "exportJson") {
       const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(`${documentId}.json`),
+        defaultUri: getDefaultExportUri(`${documentId}.json`),
         filters: { JSON: ["json"] },
       });
       if (uri) {
@@ -297,7 +316,16 @@ export async function openDocumentAsTable(
           LocalJsonService.getInstance().updateField(conn, docPath, field, writeVal);
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-          await firestore.doc(docPath).update(new FieldPath(field), writeVal);
+          const docRef = firestore.doc(docPath);
+          try {
+            await docRef.update(new FieldPath(field), writeVal);
+          } catch (updateErr: any) {
+            if (updateErr.code === 5 || (updateErr.message && updateErr.message.includes("NOT_FOUND"))) {
+              await docRef.set({ [field]: writeVal }, { merge: true });
+            } else {
+              throw updateErr;
+            }
+          }
           CostService.getInstance().recordOperation(connectionId, "write", 1);
         }
 
@@ -345,7 +373,7 @@ export async function openDocumentAsTable(
         delete ctx.docData[field];
         ctx.fields = parseFields(ctx.docData);
 
-        DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docPath);
+        DocumentFileSystemProvider.getInstance().invalidateAndNotifyFieldDeleted(connectionId, docPath, field);
 
         panel.webview.postMessage({
           type: "fieldDeleted",
@@ -450,7 +478,16 @@ export async function openDocumentAsTable(
           LocalJsonService.getInstance().updateField(conn, docPath, newFieldName, entryVal);
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-          await firestore.doc(docPath).update(new FieldPath(newFieldName), entryVal);
+          const docRef = firestore.doc(docPath);
+          try {
+            await docRef.update(new FieldPath(newFieldName), entryVal);
+          } catch (updateErr: any) {
+            if (updateErr.code === 5 || (updateErr.message && updateErr.message.includes("NOT_FOUND"))) {
+              await docRef.set({ [newFieldName]: entryVal }, { merge: true });
+            } else {
+              throw updateErr;
+            }
+          }
           CostService.getInstance().recordOperation(connectionId, "write", 1);
         }
 
@@ -496,7 +533,10 @@ export async function openDocumentAsTable(
           CostService.getInstance().recordOperation(connectionId, "delete", 1);
         }
 
-        DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docPath);
+        DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(connectionId, docPath);
+        if (explorerDataProvider) {
+          explorerDataProvider.refresh();
+        }
         panel.dispose();
         vscode.window.showInformationMessage(`Document '${documentId}' deleted!`);
       } catch (err: any) {
@@ -527,9 +567,51 @@ export async function openDocumentAsTable(
     fields,
   });
 
+  // Listen to file changes from DocumentFileSystemProvider to keep open table in live sync
+  let fileChangeDebounce: NodeJS.Timeout | undefined;
+  const fileChangeSubscription = DocumentFileSystemProvider.getInstance().onDidChangeFile((events) => {
+    for (const ev of events) {
+      if (ev.type === vscode.FileChangeType.Changed && ev.uri.scheme === "ketrik-firestore-studio" && ev.uri.authority === connectionId) {
+        const parsed = DocumentFileSystemProvider.getInstance().parseUri(ev.uri);
+        if (parsed.docPath === docPath) {
+          if (fileChangeDebounce) clearTimeout(fileChangeDebounce);
+          fileChangeDebounce = setTimeout(async () => {
+            try {
+              const conn = ConnectionManager.getInstance().getConnection(connectionId);
+              let freshData: any = {};
+              if (conn?.isLocalJson) {
+                freshData = LocalJsonService.getInstance().getDocument(conn, docPath) || {};
+              } else {
+                const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+                const snap = await firestore.doc(docPath).get();
+                if (snap.exists) {
+                  freshData = snap.data() || {};
+                }
+              }
+              ctx.docData = freshData;
+              ctx.fields = parseFields(freshData);
+              panel.webview.postMessage({
+                type: "init",
+                documentId,
+                docPath,
+                parentCollectionPath,
+                fields: ctx.fields,
+              });
+            } catch {}
+          }, 150);
+        }
+      }
+    }
+  });
+
   panel.onDidDispose(() => {
     activeDocumentPanels.delete(panelKey);
     messageSubscription.dispose();
+    fileChangeSubscription.dispose();
+    if (fileChangeDebounce) {
+      clearTimeout(fileChangeDebounce);
+      fileChangeDebounce = undefined;
+    }
     ctx.fields = [];
     ctx.docData = null;
   });

@@ -183,6 +183,9 @@ export async function activate(context: vscode.ExtensionContext) {
   const snapshotSyncService = SnapshotSyncService.getInstance();
   context.subscriptions.push(snapshotSyncService);
 
+  // Initialize SecretManagerService singleton
+  context.subscriptions.push(SecretManagerService.getInstance());
+
   // Auto-reveal active Firestore document or field in Tree View when switching tabs or opening docs
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {

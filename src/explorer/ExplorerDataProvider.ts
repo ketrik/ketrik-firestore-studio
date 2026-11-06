@@ -39,7 +39,7 @@ import { parseHostPort, probePort } from "../emulator/portUtils";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { isTimestampLike } from "../utils/timestampUtils";
 import { CostService } from "../cost/costService";
-
+import { matchesSearchTerm } from "../webview/common/tableUtils";
 
 /** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
 const MAX_MAP_SIZE = 200;
@@ -57,40 +57,6 @@ function evictIfNeeded<K, V>(map: Map<K, V>, maxSize: number): void {
       map.delete(oldest);
     }
   }
-}
-
-/**
- * Fast zero-allocation recursive matcher to test if a document's keys or values
- * match an active lowercase search term without allocating large JSON strings.
- */
-function matchesSearchTerm(val: any, term: string, depth = 0): boolean {
-  if (val === null || val === undefined || depth > 8) {
-    return false;
-  }
-  if (typeof val === "string") {
-    return val.toLowerCase().includes(term);
-  }
-  if (typeof val === "number" || typeof val === "boolean") {
-    return String(val).toLowerCase().includes(term);
-  }
-  if (Array.isArray(val)) {
-    for (let i = 0; i < val.length; i++) {
-      if (matchesSearchTerm(val[i], term, depth + 1)) {
-        return true;
-      }
-    }
-    return false;
-  }
-  if (typeof val === "object") {
-    for (const k in val) {
-      if (Object.prototype.hasOwnProperty.call(val, k)) {
-        if (k.toLowerCase().includes(term) || matchesSearchTerm(val[k], term, depth + 1)) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
 }
 
 /**
@@ -284,6 +250,14 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       // Invalidate the document node cache
       this._treeCache.delete(`doc:${connectionId}:${docPath}`);
 
+      // Invalidate any subfield cache keys for this document
+      const fieldPrefix = `field:${connectionId}:${docPath}#`;
+      for (const k of this._treeCache.keys()) {
+        if (k.startsWith(fieldPrefix)) {
+          this._treeCache.delete(k);
+        }
+      }
+
       invalidatedDocs.push({ connectionId, docPath });
 
       // Invalidate the parent collection node cache
@@ -348,6 +322,15 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       this._onDidChangeTreeData.fire(element);
     } else if (element instanceof DocumentFieldItem) {
       this._treeCache.delete(`doc:${element.connectionId}:${element.parentDocRef.path}`);
+      if (element.id) {
+        this._treeCache.delete(element.id);
+      }
+      const fieldPrefix = `field:${element.connectionId}:${element.parentDocRef.path}#`;
+      for (const k of this._treeCache.keys()) {
+        if (k.startsWith(fieldPrefix)) {
+          this._treeCache.delete(k);
+        }
+      }
       
       // Look up the existing DocumentItem instance in cached collection results
       let targetDocItem: DocumentItem | undefined;
@@ -571,6 +554,8 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         ? `secrets:${element.connectionId}`
         : element instanceof SecretTreeItem
         ? `secretVersions:${element.connectionId}:${element.secret.id}`
+        : element instanceof DocumentFieldItem
+        ? (element.id || `field:${element.connectionId}:${element.parentDocRef.path}#${element.fullFieldPath}`)
         : undefined
       : "root";
 
@@ -994,7 +979,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
               isExpanded
             );
           });
-          return items;
+          return storeAndReturn(items);
         }
       }
       return [];

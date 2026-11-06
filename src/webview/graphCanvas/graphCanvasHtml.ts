@@ -730,7 +730,12 @@ export function getGraphCanvasHtml(graphData: GraphData): string {
       panY = mouseY - (mouseY - panY) * (newZoom / zoom);
       zoom = newZoom;
 
-      updateTransform();
+      if (!animFrameId) {
+        animFrameId = requestAnimationFrame(() => {
+          updateTransform();
+          animFrameId = null;
+        });
+      }
     }, { passive: false });
 
     // Toolbar controls

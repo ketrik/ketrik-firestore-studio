@@ -200,6 +200,25 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   public invalidateAndNotifyMany(entries: Array<{ connectionId: string; docPath: string }>): void {
     if (!entries.length) return;
     const events: vscode.FileChangeEvent[] = [];
+
+    // Pre-collect open virtual field editor tabs once across all entries rather than re-scanning per-entry
+    const openFieldUris: vscode.Uri[] = [];
+    try {
+      const tabGroups = vscode.window.tabGroups;
+      if (tabGroups && tabGroups.all) {
+        for (const group of tabGroups.all) {
+          for (const tab of group.tabs) {
+            if (tab.input instanceof vscode.TabInputText) {
+              const u = tab.input.uri;
+              if (u.scheme === scheme && u.path.endsWith(".json")) {
+                openFieldUris.push(u);
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
     for (const { connectionId, docPath } of entries) {
       const key = `${connectionId}:${docPath}`;
       this._evictSnapshot(key);
@@ -211,28 +230,16 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       });
       events.push({ type: vscode.FileChangeType.Changed, uri: docUri });
 
-      // Also notify any open field editor tabs under this document
-      try {
-        const tabGroups = vscode.window.tabGroups;
-        if (tabGroups && tabGroups.all) {
-          const prefix = `/${docPath}/`;
-          for (const group of tabGroups.all) {
-            for (const tab of group.tabs) {
-              if (tab.input instanceof vscode.TabInputText) {
-                const u = tab.input.uri;
-                if (
-                  u.scheme === scheme &&
-                  u.authority === connectionId &&
-                  u.path.startsWith(prefix) &&
-                  u.path.endsWith(".json")
-                ) {
-                  events.push({ type: vscode.FileChangeType.Changed, uri: u });
-                }
-              }
-            }
+      // Notify any open field editor tabs under this document
+      if (openFieldUris.length > 0) {
+        const prefix = `/${docPath}/`;
+        for (let i = 0; i < openFieldUris.length; i++) {
+          const u = openFieldUris[i];
+          if (u.authority === connectionId && u.path.startsWith(prefix)) {
+            events.push({ type: vscode.FileChangeType.Changed, uri: u });
           }
         }
-      } catch {}
+      }
     }
     this._emitter.fire(events);
   }
@@ -726,7 +733,15 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
             writeTime = (await firestore.doc(docPath).set(docData, { merge: true })).writeTime;
           }
         } else {
-          writeTime = (await firestore.doc(docPath).update(new FieldPath(...segments), json)).writeTime;
+          try {
+            writeTime = (await firestore.doc(docPath).update(new FieldPath(...segments), json)).writeTime;
+          } catch (updateErr: any) {
+            if ((updateErr.code === 5 || updateErr.code === "NOT_FOUND" || String(updateErr.message).includes("NOT_FOUND")) && segments.length === 1) {
+              writeTime = (await firestore.doc(docPath).set({ [segments[0]]: json }, { merge: true })).writeTime;
+            } else {
+              throw updateErr;
+            }
+          }
         }
       } else {
         writeTime = (await firestore.doc(docPath).set(json)).writeTime;

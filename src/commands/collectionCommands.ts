@@ -7,6 +7,7 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { LocalJsonService } from "../services/LocalJsonService";
+import { CostService } from "../cost/costService";
 
 /**
  * Open collection in table view.
@@ -160,27 +161,21 @@ export async function addCollectionCommand(
   item: ConnectionTreeItem | DocumentItem,
   explorerDataProvider: ExplorerDataProvider
 ) {
-  let firestore: import("firebase-admin/firestore").Firestore;
   let connectionId: string;
   let parentPath: string | null;
 
-  try {
-    if (item instanceof ConnectionTreeItem) {
-      firestore = await ConnectionManager.getInstance().getFirestore(item.config.id);
-      connectionId = item.config.id;
-      parentPath = null;
-    } else if (item instanceof DocumentItem) {
-      firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-      connectionId = item.connectionId;
-      parentPath = item.reference.path;
-    } else {
-      vscode.window.showErrorMessage("Select a connection or a document to add a collection under.");
-      return;
-    }
-  } catch (err: any) {
-    vscode.window.showErrorMessage("Failed to connect: " + err.message);
+  if (item instanceof ConnectionTreeItem) {
+    connectionId = item.config.id;
+    parentPath = null;
+  } else if (item instanceof DocumentItem) {
+    connectionId = item.connectionId;
+    parentPath = item.reference.path;
+  } else {
+    vscode.window.showErrorMessage("Select a connection or a document to add a collection under.");
     return;
   }
+
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
 
   const collectionId = await vscode.window.showInputBox({
     prompt: "Enter Collection ID",
@@ -216,12 +211,31 @@ export async function addCollectionCommand(
     return;
   }
 
+  if (conn?.isLocalJson) {
+    const collId = collectionId.trim();
+    const finalDocId = docId.trim() || `doc_${Date.now()}`;
+    const fullCollPath = parentPath ? `${parentPath}/${collId}` : collId;
+    const docPath = `${fullCollPath}/${finalDocId}`;
+    try {
+      LocalJsonService.getInstance().setDocument(conn, docPath, data);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docPath);
+      vscode.window.showInformationMessage(`Collection '${collId}' created!`);
+      await openPath(docPath, connectionId);
+      explorerDataProvider.refreshNode(item);
+    } catch (err: any) {
+      vscode.window.showErrorMessage("Failed to create local collection: " + err.message);
+    }
+    return;
+  }
+
   try {
+    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
     const collRef = parentPath
       ? firestore.doc(parentPath).collection(collectionId.trim())
       : firestore.collection(collectionId.trim());
     const docRef = docId.trim() ? collRef.doc(docId.trim()) : collRef.doc();
     await docRef.set(data);
+    CostService.getInstance().recordOperation(connectionId, "write", 1);
     DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
     vscode.window.showInformationMessage(`Collection '${collectionId.trim()}' created!`);
     await openPath(docRef.path, connectionId);
@@ -274,10 +288,11 @@ export async function deleteCollectionCommand(
     async () => {
       try {
         if (conn?.isLocalJson) {
-          LocalJsonService.getInstance().deleteCollection(conn, item.collectionId);
+          LocalJsonService.getInstance().deleteCollection(conn, collPath);
         } else {
           const firestore = await connectionManager.getFirestore(item.connectionId);
           await firestore.recursiveDelete(item.reference);
+          CostService.getInstance().recordOperation(item.connectionId, "delete", 1);
         }
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotifyCollectionDeleted(item.connectionId, collPath);

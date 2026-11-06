@@ -22,6 +22,7 @@ timeline
         2026-10-25 : v1.18.0 AI Scratchpad, Tree Collection Filter, Array Item Mutations & UX Overhaul
         2026-10-27 : v1.19.0 Google Secret Manager Suite, Field Secret Links & Enterprise Credentials
         2026-11-02 : v1.19.1 Document Table View, Field Table SSR Hydration & Reliability Fixes
+        2026-11-06 : v1.19.2 Performance, Local JSON Parity & Bug Fixes
     section Planned
         Q1 2027 : v1.20.0 Cloud Functions Triggers, AST Scanner & Admin Query Shell
         Q2 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
@@ -60,6 +61,7 @@ timeline
 | **v1.18.0** | Shipped | 2026-10-25 | AI Scratchpad (.firestore/ hierarchy), Field-Level Isolation (Token Optimization), Live Auto-Sync, Tree Collection Filter, Expandable Tree Array Item Editing, Context Menu Tiers & Field Table Fixes |
 | **v1.19.0** | Shipped | 2026-10-27 | Google Secret Manager Suite, Field Secret Links (`projects/.../secrets`), In-Place Payload Reveal, Version Lifecycle, Enterprise Credentials & Single Doc Cross-Instance Replication |
 | **v1.19.1** | Shipped | 2026-11-02 | Interactive Document-as-Table webview (Property Sheet & Record view), Field Table SSR hydration, error handling & parsing fixes |
+| **v1.19.2** | Shipped | 2026-11-06 | Memory/CPU optimizations, zero-allocation search, Local JSON table parity, array index safety & reliability fixes |
 | **v1.20.0** | Planned | Q1 2027 | Cloud Functions Trigger Scanner (⚡), Trigger Simulation, Live Logs & Admin Query Shell |
 | **v2.0.0** | Future | Q2 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
@@ -634,6 +636,25 @@ timeline
   * Webview-level error banner displays when snapshot retrieval or JSON parsing encounters an error.
 * **Performance & Memory Optimization**:
   * Clean zero-allocation iterations in HTML generation routines and optimized type deduction.
+
+---
+
+### [v1.19.2] — Performance, Local JSON Parity & Reliability Fixes (Shipped: 2026-11-06)
+
+*Theme: Substrate-level zero-allocation optimizations, full Local JSON table parity, and edge-case reliability.*
+
+* **Zero-Allocation Search Substrate**: Replaced client-side stringified JSON filtering in table webviews with recursive tree matcher, eliminating GC pressure and input latency.
+* **Explorer Tree Subfield Caching**: Granular caching for nested Map items with targeted branch invalidation on document mutations.
+* **$O(1)$ Tabgroup Evaluation**: Pre-collects open virtual field editor tabs once during batch invalidations.
+* **Live Reactive Table Sync**: Subscribed Document & Field Table webviews to virtual file system events with debounced live reload.
+* **Resource Lifecycle**: Implemented disposable lifecycle for SecretManagerService and RAF-debounced graph canvas wheel zooming.
+* **In-Cell Typing Preservation**: Preserved string types (`"true"`, `"false"`, `"null"`, numeric strings) across all table cell editors without unintended type coercion.
+* **macOS Root Save Fix (`EROFS`)**: Centralized `getDefaultExportUri` across export dialogs to anchor saves to workspace folders instead of root `/`.
+* **Local JSON Full Parity**: Added Local JSON support to collection table (`createDoc`, `jumpToId`, `openFieldAsTable`, `countCollection`, `estimateQueryCost`, `calculateAggregates`, batch updates/deletes).
+* **Subcollection Path Safety**: Fixed subcollection path truncation in document & collection commands.
+* **Array Index Protection**: Protected nested array indices from map conversion during field table updates.
+* **Document Deletion Lifecycle**: Emitted `FileChangeType.Deleted` on document deletes so open virtual tabs close cleanly.
+* **CostService Accounting**: Added operation tracking across batch replications, document pastes, and synthetic generation.
 
 ---
 

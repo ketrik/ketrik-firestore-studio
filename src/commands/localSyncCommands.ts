@@ -5,6 +5,7 @@ import { LocalJsonService } from "../services/LocalJsonService";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { reviveTimestamps } from "../utils/timestampUtils";
+import { getDefaultExportUri } from "../webview/common/tableUtils";
 
 /**
  * Command: Push / Seed a local JSON collection into a Firestore database (Cloud or Emulator).
@@ -188,7 +189,7 @@ export async function snapshotFirestoreToLocalJsonCommand(
 
   if (pick.isNew) {
     const saveUri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(`${sourceCollName}_snapshot.json`),
+      defaultUri: getDefaultExportUri(`${sourceCollName}_snapshot.json`),
       filters: { "JSON Files": ["json"] },
       title: "Save Snapshot as Local JSON Database",
     });
@@ -389,7 +390,7 @@ export async function snapshotDocumentToLocalJsonCommand(
 
   if (pick.isNew) {
     const saveUri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(`${item.documentId}_snapshot.json`),
+      defaultUri: getDefaultExportUri(`${item.documentId}_snapshot.json`),
       filters: { "JSON Files": ["json"] },
       title: "Save Snapshot as Local JSON Database",
     });

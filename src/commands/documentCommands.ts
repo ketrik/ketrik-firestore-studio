@@ -11,6 +11,7 @@ import { CostService } from "../cost/costService";
 import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 import { openDocumentAsTable } from "../webview/openDocumentAsTable";
+import { SnapshotSyncService } from "../services/SnapshotSyncService";
 
 /**
  * Direct 1-read document ID lookup.
@@ -38,11 +39,12 @@ export async function jumpToDocumentCommand(
   const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
 
   if (conn?.isLocalJson) {
-    const docPath = `${item.collectionId}/${trimmedId}`;
+    const colPath = item.reference?.path || item.collectionId;
+    const docPath = `${colPath}/${trimmedId}`;
     const doc = LocalJsonService.getInstance().getDocument(conn, docPath);
     if (!doc) {
       const createChoice = await vscode.window.showWarningMessage(
-        `Document '${trimmedId}' does not exist in local collection '${item.collectionId}'. Would you like to create it?`,
+        `Document '${trimmedId}' does not exist in local collection '${colPath}'. Would you like to create it?`,
         "Create",
         "Cancel"
       );
@@ -148,7 +150,8 @@ export async function createDocumentCommand(
   const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
   if (conn?.isLocalJson) {
     const finalDocId = docId && docId.trim() ? docId.trim() : `doc_${Date.now()}`;
-    const docPath = `${item.collectionId}/${finalDocId}`;
+    const colPath = item.reference?.path || item.collectionId;
+    const docPath = `${colPath}/${finalDocId}`;
     try {
       LocalJsonService.getInstance().setDocument(conn, docPath, data);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, docPath);
@@ -197,10 +200,12 @@ export async function deleteDocumentCommand(
 
     try {
       LocalJsonService.getInstance().deleteDocument(conn, item.reference.path);
-      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.reference.path);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(item.connectionId, item.reference.path);
       vscode.window.showInformationMessage(`Deleted local document "${item.documentId}".`);
-      const collId = item.reference.path.split("/")[0];
-      const parentItem = new CollectionItem(collId, { id: collId, path: collId } as any, item.connectionId);
+      const lastSlash = item.reference.path.lastIndexOf("/");
+      const collPath = lastSlash > 0 ? item.reference.path.substring(0, lastSlash) : item.reference.path;
+      const collId = collPath.split("/").pop() || collPath;
+      const parentItem = new CollectionItem(collId, { id: collId, path: collPath } as any, item.connectionId);
       explorerDataProvider.refreshNode(parentItem);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to delete local document: ${err.message}`);
@@ -306,16 +311,18 @@ export async function duplicateDocumentCommand(
   }
 
   if (conn?.isLocalJson) {
-    const collId = item.reference.path.split("/")[0];
+    const lastSlash = item.reference.path.lastIndexOf("/");
+    const collPath = lastSlash > 0 ? item.reference.path.substring(0, lastSlash) : item.reference.path;
+    const collId = collPath.split("/").pop() || collPath;
     const finalDocId = newDocId.trim() || `doc_${Date.now()}`;
-    const targetDocPath = `${collId}/${finalDocId}`;
+    const targetDocPath = `${collPath}/${finalDocId}`;
     try {
       const data = LocalJsonService.getInstance().getDocument(conn, item.reference.path) || {};
       LocalJsonService.getInstance().setDocument(conn, targetDocPath, JSON.parse(JSON.stringify(data)));
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, targetDocPath);
       vscode.window.showInformationMessage(`Local document duplicated as "${finalDocId}"!`);
       await openPath(targetDocPath, item.connectionId);
-      const parentItem = new CollectionItem(collId, { id: collId, path: collId } as any, item.connectionId);
+      const parentItem = new CollectionItem(collId, { id: collId, path: collPath } as any, item.connectionId);
       explorerDataProvider.refreshNode(parentItem);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to duplicate local document: ${err.message}`);
@@ -335,6 +342,7 @@ export async function duplicateDocumentCommand(
       : item.reference.parent.doc();
 
     await targetRef.set(snapshot.data() || {});
+    CostService.getInstance().recordOperation(item.connectionId, "write", 1);
     DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, targetRef.path);
     vscode.window.showInformationMessage(`Document duplicated as "${targetRef.id}"!`);
     await openPath(targetRef.path, item.connectionId);
@@ -473,6 +481,7 @@ export async function pasteDocumentCommand(
           new FieldPath(...segments),
           FieldValue.arrayUnion(clipboard.data)
         );
+        CostService.getInstance().recordOperation(item.connectionId, "write", 1);
         vscode.window.showInformationMessage(
           `Appended document to Array "${fullFieldPath}"!`
         );
@@ -481,6 +490,7 @@ export async function pasteDocumentCommand(
           new FieldPath(...segments, key),
           clipboard.data
         );
+        CostService.getInstance().recordOperation(item.connectionId, "write", 1);
         vscode.window.showInformationMessage(
           `Pasted document as key "${key}" into Map "${fullFieldPath}"!`
         );
@@ -511,14 +521,15 @@ export async function pasteDocumentCommand(
   }
 
   const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  const colPath = item.reference?.path || item.collectionId;
   if (conn?.isLocalJson) {
     const finalDocId = targetDocId.trim() || `doc_${Date.now()}`;
-    const docPath = `${item.collectionId}/${finalDocId}`;
+    const docPath = `${colPath}/${finalDocId}`;
     try {
       LocalJsonService.getInstance().setDocument(conn, docPath, clipboard.data);
       documentFileSystemProvider.invalidateAndNotify(item.connectionId, docPath);
       vscode.window.showInformationMessage(
-        `Pasted local document "${finalDocId}" into "${item.collectionId}"!`
+        `Pasted local document "${finalDocId}" into "${colPath}"!`
       );
       await openPath(docPath, item.connectionId);
       explorerDataProvider.refreshNode(item);
@@ -534,6 +545,7 @@ export async function pasteDocumentCommand(
       : item.reference.doc();
 
     await targetRef.set(clipboard.data);
+    CostService.getInstance().recordOperation(item.connectionId, "write", 1);
     DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, targetRef.path);
     vscode.window.showInformationMessage(
       `Pasted document "${targetRef.id}" into "${item.collectionId}"!`
@@ -649,6 +661,18 @@ export async function openDocumentAsTableCommand(
   }
 
   if (itemOrUri instanceof vscode.Uri) {
+    if (itemOrUri.scheme === "file" || itemOrUri.fsPath) {
+      const binding = SnapshotSyncService.getInstance().getBinding(itemOrUri.fsPath);
+      if (binding) {
+        await openDocumentAsTable({ connectionId: binding.connectionId, docPath: binding.docPath }, explorerDataProvider);
+        return;
+      }
+    }
+    if (itemOrUri.scheme === "ketrik-firestore-studio") {
+      const parsed = DocumentFileSystemProvider.getInstance().parseUri(itemOrUri);
+      await openDocumentAsTable({ connectionId: parsed.connectionId, docPath: parsed.docPath }, explorerDataProvider);
+      return;
+    }
     const connectionId = itemOrUri.authority || "default";
     let rawPath = itemOrUri.path.replace(/^\//, "");
     if (rawPath.endsWith(".json")) {
@@ -665,15 +689,18 @@ export async function openDocumentAsTableCommand(
 
   // Check active text editor
   const activeEditor = vscode.window.activeTextEditor;
-  if (activeEditor && activeEditor.document.uri.scheme === "ketrik-firestore-studio") {
+  if (activeEditor) {
     const uri = activeEditor.document.uri;
-    const connectionId = uri.authority || "default";
-    let rawPath = uri.path.replace(/^\//, "");
-    if (rawPath.endsWith(".json")) {
-      rawPath = rawPath.slice(0, -5);
+    if (uri.scheme === "ketrik-firestore-studio") {
+      const parsed = DocumentFileSystemProvider.getInstance().parseUri(uri);
+      await openDocumentAsTable({ connectionId: parsed.connectionId, docPath: parsed.docPath }, explorerDataProvider);
+      return;
     }
-    await openDocumentAsTable({ connectionId, docPath: rawPath }, explorerDataProvider);
-    return;
+    const binding = SnapshotSyncService.getInstance().getBinding(uri.fsPath);
+    if (binding) {
+      await openDocumentAsTable({ connectionId: binding.connectionId, docPath: binding.docPath }, explorerDataProvider);
+      return;
+    }
   }
 
   // Prompt user for connection and document path

@@ -10,6 +10,8 @@ import {
 } from "../services/mockDataGenerators";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { WriteBatch } from "firebase-admin/firestore";
+import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
+import { CostService } from "../cost/costService";
 
 /**
  * Generate 20-character alphanumeric Firestore Auto-ID.
@@ -231,12 +233,15 @@ export async function generateSyntheticDataCommand(
 
           if (batchOps >= BATCH_SIZE || i === docCount - 1) {
             await batch.commit();
+            CostService.getInstance().recordOperation(item.connectionId, "write", batchOps);
             progress.report({ increment: (batchOps / docCount) * 100 });
             batch = firestore.batch();
             batchOps = 0;
           }
         }
       }
+
+      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, collectionPath);
 
       vscode.window.showInformationMessage(
         `Successfully generated and seeded ${totalCreated} synthetic documents into '${collectionPath}'.`

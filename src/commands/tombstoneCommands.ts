@@ -326,8 +326,9 @@ export async function purgeCollectionTombstonesCommand(
             batch.delete(t.ref);
           }
           await batch.commit();
+          CostService.getInstance().recordOperation(item.connectionId, "delete", chunk.length);
           for (const t of chunk) {
-            documentFileSystemProvider.invalidateAndNotify(item.connectionId, t.ref.path);
+            documentFileSystemProvider.invalidateAndNotifyDocumentDeleted(item.connectionId, t.ref.path);
           }
           deletedCount += chunk.length;
           progress.report({

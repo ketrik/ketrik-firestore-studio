@@ -379,8 +379,9 @@ export async function consolidateCollectionCommand(
               batch.delete(d.ref);
             });
             await batch.commit();
+            CostService.getInstance().recordOperation(item.connectionId, "delete", chunk.length);
             chunk.forEach((d) => {
-              documentFileSystemProvider.invalidateAndNotify(item.connectionId, d.ref.path);
+              documentFileSystemProvider.invalidateAndNotifyDocumentDeleted(item.connectionId, d.ref.path);
             });
           }
         }

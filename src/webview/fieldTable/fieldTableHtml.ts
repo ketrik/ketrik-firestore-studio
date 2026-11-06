@@ -331,18 +331,37 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         }
       }
 
+      function matchesSearchTermClient(val, term, depth) {
+        if (!val || (depth || 0) > 6) return false;
+        if (typeof val === 'string') return val.toLowerCase().includes(term);
+        if (typeof val === 'number' || typeof val === 'boolean') return String(val).toLowerCase().includes(term);
+        if (Array.isArray(val)) {
+          for (let i = 0; i < val.length; i++) {
+            if (matchesSearchTermClient(val[i], term, (depth || 0) + 1)) return true;
+          }
+          return false;
+        }
+        for (const k in val) {
+          if (Object.prototype.hasOwnProperty.call(val, k)) {
+            if (k.toLowerCase().includes(term) || matchesSearchTermClient(val[k], term, (depth || 0) + 1)) return true;
+          }
+        }
+        return false;
+      }
+
       function rowMatchesSearch(row, term) {
         if (!term) return true;
         for (const k in row) {
           if (k === '__path' || k === '__index') continue;
+          if (k.toLowerCase().includes(term)) return true;
           const v = row[k];
           if (v === null || v === undefined) continue;
-          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          if (typeof v === 'string') {
+            if (v.toLowerCase().includes(term)) return true;
+          } else if (typeof v === 'number' || typeof v === 'boolean') {
             if (String(v).toLowerCase().includes(term)) return true;
           } else if (typeof v === 'object') {
-            try {
-              if (JSON.stringify(v).toLowerCase().includes(term)) return true;
-            } catch (e) {}
+            if (matchesSearchTermClient(v, term, 0)) return true;
           }
         }
         return false;
@@ -571,17 +590,20 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
           let newVal;
           if (forcedVal !== undefined) {
             newVal = forcedVal;
+          } else if (type === 'string') {
+            newVal = input.value;
+          } else if (type === 'number') {
+            const raw = input.value.trim();
+            newVal = raw === '' ? null : Number(raw);
           } else {
             const raw = input.value.trim();
-            if (raw === '' && type !== 'string') {
-              newVal = null;
-            } else if (raw === 'null') {
+            if (raw === '' || raw === 'null') {
               newVal = null;
             } else if (raw === 'true') {
               newVal = true;
             } else if (raw === 'false') {
               newVal = false;
-            } else if (type === 'number' || (!isNaN(Number(raw)) && raw !== '' && type !== 'string')) {
+            } else if (!isNaN(Number(raw)) && raw !== '') {
               newVal = Number(raw);
             } else {
               newVal = input.value;

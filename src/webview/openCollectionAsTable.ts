@@ -4,7 +4,7 @@ import { CollectionItem, DocumentFieldItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import openPath from "../commands/openPath";
-import { QueryClause, sortHeaders, parseFilterValue } from "./common/tableUtils";
+import { QueryClause, sortHeaders, parseFilterValue, sanitizeFirestoreValue, getDefaultExportUri } from "./common/tableUtils";
 import { getCollectionTableHtml } from "./collectionTable/collectionTableHtml";
 import { openFieldAsTable } from "./openFieldAsTable";
 import { LocalJsonService } from "../services/LocalJsonService";
@@ -22,39 +22,6 @@ export interface CollectionTableTarget {
   isCollectionGroup?: boolean;
 }
 
-function sanitizeFirestoreValue(val: any): any {
-  if (val === null || val === undefined) return val;
-  if (typeof val !== "object") return val;
-  if (val instanceof Date) return val.toISOString();
-  if (typeof val._seconds === "number" && typeof val._nanoseconds === "number") {
-    return { _seconds: val._seconds, _nanoseconds: val._nanoseconds };
-  }
-  if (typeof val._latitude === "number" && typeof val._longitude === "number") {
-    return { _latitude: val._latitude, _longitude: val._longitude };
-  }
-  if (typeof val.path === "string" && (val._firestore || val.constructor?.name === "DocumentReference")) {
-    return `[Ref: ${val.path}]`;
-  }
-  if (Buffer.isBuffer(val) || val instanceof Uint8Array) {
-    return `[Blob: ${val.length} bytes]`;
-  }
-  if (val.constructor?.name === "VectorValue" || (Array.isArray(val._values) && typeof val.isEqual === "function")) {
-    const arr = typeof val.toArray === "function" ? val.toArray() : val._values;
-    return {
-      __type: "VectorValue",
-      values: arr,
-      dimensions: arr.length,
-    };
-  }
-  if (Array.isArray(val)) {
-    return val.map(sanitizeFirestoreValue);
-  }
-  const result: Record<string, any> = {};
-  for (const k of Object.keys(val)) {
-    result[k] = sanitizeFirestoreValue(val[k]);
-  }
-  return result;
-}
 
 // Active collection table panels registry to avoid duplicate webview allocation and memory retention
 const activeCollectionPanels = new Map<string, vscode.WebviewPanel>();
@@ -71,6 +38,8 @@ export async function openCollectionAsTable(
     (item as any).reference?.path ||
     (item as any).collectionPath ||
     collectionId;
+
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
 
   const panelKey = `${connectionId}:${collectionPath}:${isGroup}`;
   const existingPanel = activeCollectionPanels.get(panelKey);
@@ -159,9 +128,8 @@ export async function openCollectionAsTable(
     const effectiveLimit = Math.min(requestedCount && requestedCount > 0 ? requestedCount : limit, 1000);
     // If the user explicitly asks for a larger batch (e.g. 100 or 1000), allow expanding up to 1,000 max
     const effectiveMaxRows = requestedCount && requestedCount > limit ? Math.min(1000, Math.max(maxRows, requestedCount)) : maxRows;
-    const conn = ConnectionManager.getInstance().getConnection(connectionId);
     if (conn?.isLocalJson) {
-      const rawDocs = LocalJsonService.getInstance().listDocuments(conn, collectionId);
+      const rawDocs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
       const offset = loadedDocs.length;
       const targetCount = Math.min(rawDocs.length, effectiveMaxRows);
       const pageSize = Math.min(effectiveLimit, targetCount - offset);
@@ -172,7 +140,7 @@ export async function openCollectionAsTable(
 
       const docs = rawDocs.slice(offset, offset + pageSize).map((d) => ({
         ...sanitizeFirestoreValue(d.data),
-        __path: `${collectionId}/${d.id}`,
+        __path: `${collectionPath}/${d.id}`,
         __id: d.id,
         __parentPath: null,
       }));
@@ -453,8 +421,6 @@ export async function openCollectionAsTable(
 
     if (message.command === "createDoc") {
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-        const collRef = firestore.collection(collectionPath);
         const docId = await vscode.window.showInputBox({
           prompt: "Enter Document ID (leave blank for auto-generated ID)",
           placeHolder: "Document ID",
@@ -479,10 +445,22 @@ export async function openCollectionAsTable(
           }
         }
 
-        const docRef = docId.trim() ? collRef.doc(docId.trim()) : collRef.doc();
-        await docRef.set(data);
-        DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
-        vscode.window.showInformationMessage(`Document '${docRef.id}' created!`);
+        const finalDocId = docId.trim() || `doc_${Date.now()}`;
+        const newDocPath = `${collectionPath}/${finalDocId}`;
+
+        if (conn?.isLocalJson) {
+          LocalJsonService.getInstance().setDocument(conn, newDocPath, data);
+          DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, newDocPath);
+          vscode.window.showInformationMessage(`Local document '${finalDocId}' created!`);
+        } else {
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          const collRef = firestore.collection(collectionPath);
+          const docRef = docId.trim() ? collRef.doc(docId.trim()) : collRef.doc();
+          await docRef.set(data);
+          CostService.getInstance().recordOperation(connectionId, "write", 1);
+          DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
+          vscode.window.showInformationMessage(`Document '${docRef.id}' created!`);
+        }
 
         // Reload collection table to show new document
         loadedDocs = [];
@@ -521,13 +499,27 @@ export async function openCollectionAsTable(
           writeVal = new Timestamp(value._seconds, value._nanoseconds);
         }
 
-        const conn = ConnectionManager.getInstance().getConnection(connectionId);
         if (conn?.isLocalJson) {
           LocalJsonService.getInstance().updateField(conn, docPath, field, writeVal);
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
           const docRef = firestore.doc(docPath);
-          await docRef.update(new FieldPath(field), writeVal);
+          const segments = field.split(".");
+          const fieldPathObj = new FieldPath(...segments);
+          try {
+            await docRef.update(fieldPathObj, writeVal);
+          } catch (updateErr: any) {
+            if (updateErr.code === 5 || updateErr.code === "NOT_FOUND" || String(updateErr.message).includes("NOT_FOUND")) {
+              if (segments.length === 1) {
+                await docRef.set({ [field]: writeVal }, { merge: true });
+              } else {
+                throw updateErr;
+              }
+            } else {
+              throw updateErr;
+            }
+          }
+          CostService.getInstance().recordOperation(connectionId, "write", 1);
         }
 
         // Invalidate DocumentFileSystemProvider cache so open JSON editors sync immediately
@@ -559,11 +551,32 @@ export async function openCollectionAsTable(
 
     if (message.command === "openFieldAsTable" && message.docPath && message.field) {
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-        const docSnap = await firestore.doc(message.docPath).get();
-        if (docSnap.exists) {
+        let fieldVal: any;
+        let parentRef: any;
+        if (conn?.isLocalJson) {
+          const docData = LocalJsonService.getInstance().getDocument(conn, message.docPath);
+          if (!docData) return;
+          fieldVal = docData[message.field];
+          if (fieldVal === undefined && typeof message.field === "string" && message.field.includes(".")) {
+            let cur: any = docData;
+            const segments = message.field.split(".");
+            for (const seg of segments) {
+              if (cur && typeof cur === "object") {
+                cur = cur[seg];
+              } else {
+                cur = undefined;
+                break;
+              }
+            }
+            fieldVal = cur;
+          }
+          parentRef = { id: message.docPath.split("/").pop(), path: message.docPath } as any;
+        } else {
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          const docSnap = await firestore.doc(message.docPath).get();
+          if (!docSnap.exists) return;
           const data = docSnap.data() || {};
-          let fieldVal = data[message.field];
+          fieldVal = data[message.field];
           if (fieldVal === undefined && typeof message.field === "string" && message.field.includes(".")) {
             let cur: any = data;
             const segments = message.field.split(".");
@@ -577,14 +590,15 @@ export async function openCollectionAsTable(
             }
             fieldVal = cur;
           }
-          const fieldItem = new DocumentFieldItem(
-            message.field,
-            fieldVal,
-            docSnap.ref,
-            connectionId
-          );
-          await openFieldAsTable(fieldItem);
+          parentRef = docSnap.ref;
         }
+        const fieldItem = new DocumentFieldItem(
+          message.field,
+          fieldVal,
+          parentRef,
+          connectionId
+        );
+        await openFieldAsTable(fieldItem);
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to open field table: ${err.message}`);
       }
@@ -593,7 +607,7 @@ export async function openCollectionAsTable(
 
     if (message.command === "exportJson") {
       const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(`${isGroup ? "group_" : ""}${collectionId}_export.json`),
+        defaultUri: getDefaultExportUri(`${isGroup ? "group_" : ""}${collectionId}_export.json`),
         filters: { JSON: ["json"] },
       });
       if (uri) {
@@ -615,6 +629,45 @@ export async function openCollectionAsTable(
         return;
       }
       try {
+        if (conn?.isLocalJson) {
+          const fullDocPath = `${collectionPath}/${docId}`;
+          const rawData = LocalJsonService.getInstance().getDocument(conn, fullDocPath);
+          if (!rawData) {
+            panel.webview.postMessage({
+              type: "lookupNotFound",
+              docId,
+            });
+            return;
+          }
+          const lastSlash = fullDocPath.lastIndexOf("/");
+          const parentCol = lastSlash > 0 ? fullDocPath.substring(0, lastSlash) : "";
+          const grandParentSlash = parentCol.lastIndexOf("/");
+          const parentDocPath = grandParentSlash > 0 ? parentCol.substring(0, grandParentSlash) : null;
+
+          const docData = {
+            ...sanitizeFirestoreValue(rawData),
+            __path: fullDocPath,
+            __id: docId,
+            __parentPath: parentDocPath,
+          };
+
+          const docKeys = Object.keys(rawData || {});
+          const headerSet = new Set<string>(headers);
+          for (const k of docKeys) {
+            if (k !== "__path" && k !== "__id" && k !== "__parentPath") {
+              headerSet.add(k);
+            }
+          }
+          headers = sortHeaders(Array.from(headerSet));
+
+          panel.webview.postMessage({
+            type: "lookupResult",
+            headers,
+            doc: docData,
+          });
+          return;
+        }
+
         const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
         let snapshot: QueryDocumentSnapshot | import("firebase-admin/firestore").DocumentSnapshot | null = null;
 
@@ -878,6 +931,19 @@ export async function openCollectionAsTable(
 
     if (message.command === "countCollection") {
       try {
+        if (conn?.isLocalJson) {
+          const docs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
+          const count = docs.length;
+          panel.webview.postMessage({
+            type: "countResult",
+            count,
+          });
+          vscode.window.showInformationMessage(
+            `Local Collection '${collectionId}' has ${count.toLocaleString()} document(s).`
+          );
+          return;
+        }
+
         const query = await buildBaseQuery();
         const countSnapshot = await query.count().get();
         const count = countSnapshot.data().count;
@@ -895,6 +961,21 @@ export async function openCollectionAsTable(
 
     if (message.command === "estimateQueryCost") {
       try {
+        if (conn?.isLocalJson) {
+          const docs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
+          const count = docs.length;
+          panel.webview.postMessage({
+            type: "queryCostEstimateResult",
+            count,
+            cost: 0,
+            warning: undefined,
+          });
+          vscode.window.showInformationMessage(
+            `💰 Estimated Query Cost: $0.00 for ${count.toLocaleString()} local documents (Local JSON mode has no cloud charges).`
+          );
+          return;
+        }
+
         const query = await buildBaseQuery();
         const countSnapshot = await query.count().get();
         const count = countSnapshot.data().count;
@@ -970,6 +1051,42 @@ export async function openCollectionAsTable(
 
       try {
         panel.webview.postMessage({ type: "aggregateStart" });
+
+        if (conn?.isLocalJson) {
+          const docs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
+          const cleanField = field.trim();
+          let sum = 0;
+          let validCount = 0;
+          for (const docItem of docs) {
+            const doc = docItem.data;
+            let val = (doc as any)[cleanField];
+            if (val === undefined && cleanField.includes(".")) {
+              let cur: any = doc;
+              for (const s of cleanField.split(".")) {
+                if (cur && typeof cur === "object") cur = cur[s];
+                else { cur = undefined; break; }
+              }
+              val = cur;
+            }
+            if (typeof val === "number" && !isNaN(val)) {
+              sum += val;
+              validCount++;
+            }
+          }
+          const avg = validCount > 0 ? sum / validCount : null;
+          panel.webview.postMessage({
+            type: "aggregateResult",
+            field: cleanField,
+            count: docs.length,
+            sum,
+            avg,
+          });
+          vscode.window.showInformationMessage(
+            `Local Aggregates for '${cleanField}': Count = ${docs.length.toLocaleString()}, Sum = ${sum}, Average = ${avg !== null ? Number(avg).toFixed(2) : "N/A"}`
+          );
+          return;
+        }
+
         const query = await buildBaseQuery();
         const aggSnapshot = await query.aggregate({
           count: AggregateField.count(),
@@ -1037,7 +1154,6 @@ export async function openCollectionAsTable(
       if (confirm !== "Proceed with Batch Update") return;
 
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
         const docPathMap = new Map<string, string>();
         loadedDocs.forEach((d) => {
           if (d.__id && d.__path) {
@@ -1045,21 +1161,34 @@ export async function openCollectionAsTable(
           }
         });
 
-        const chunkSize = 400;
-
-        for (let i = 0; i < docIds.length; i += chunkSize) {
-          const chunk = docIds.slice(i, i + chunkSize);
-          const batch = firestore.batch();
-          for (const id of chunk) {
+        if (conn?.isLocalJson) {
+          for (const id of docIds) {
             const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
-            const docRef = firestore.doc(targetPath);
             if (isDeleteField) {
-              batch.update(docRef, { [fieldName.trim()]: FieldValue.delete() });
+              LocalJsonService.getInstance().deleteField(conn, targetPath, fieldName.trim());
             } else {
-              batch.update(docRef, { [fieldName.trim()]: parsedValue });
+              LocalJsonService.getInstance().updateField(conn, targetPath, fieldName.trim(), parsedValue);
             }
           }
-          await batch.commit();
+        } else {
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          const chunkSize = 400;
+
+          for (let i = 0; i < docIds.length; i += chunkSize) {
+            const chunk = docIds.slice(i, i + chunkSize);
+            const batch = firestore.batch();
+            for (const id of chunk) {
+              const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
+              const docRef = firestore.doc(targetPath);
+              if (isDeleteField) {
+                batch.update(docRef, { [fieldName.trim()]: FieldValue.delete() });
+              } else {
+                batch.update(docRef, { [fieldName.trim()]: parsedValue });
+              }
+            }
+            await batch.commit();
+          }
+          CostService.getInstance().recordOperation(connectionId, "write", docIds.length);
         }
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
@@ -1112,7 +1241,6 @@ export async function openCollectionAsTable(
       if (confirm !== "Delete Permanently") return;
 
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
         const docPathMap = new Map<string, string>();
         loadedDocs.forEach((d) => {
           if (d.__id && d.__path) {
@@ -1120,24 +1248,36 @@ export async function openCollectionAsTable(
           }
         });
 
-        const chunkSize = 400;
-
-        for (let i = 0; i < docIds.length; i += chunkSize) {
-          const chunk = docIds.slice(i, i + chunkSize);
-          const batch = firestore.batch();
-          for (const id of chunk) {
+        if (conn?.isLocalJson) {
+          for (const id of docIds) {
             const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
-            batch.delete(firestore.doc(targetPath));
+            LocalJsonService.getInstance().deleteDocument(conn, targetPath);
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(connectionId, targetPath);
           }
-          await batch.commit();
+        } else {
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          const chunkSize = 400;
+
+          for (let i = 0; i < docIds.length; i += chunkSize) {
+            const chunk = docIds.slice(i, i + chunkSize);
+            const batch = firestore.batch();
+            for (const id of chunk) {
+              const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
+              batch.delete(firestore.doc(targetPath));
+            }
+            await batch.commit();
+          }
+          CostService.getInstance().recordOperation(connectionId, "delete", docIds.length);
+
+          for (const id of docIds) {
+            const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(connectionId, targetPath);
+          }
         }
 
-        DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
-          docIds.map((id) => ({
-            connectionId,
-            docPath: docPathMap.get(id) || `${collectionPath}/${id}`,
-          }))
-        );
+        if (explorerDataProvider) {
+          explorerDataProvider.refresh();
+        }
 
         vscode.window.showInformationMessage(`Successfully deleted ${docIds.length} document(s)!`);
         const delDocIdSet = new Set(docIds);

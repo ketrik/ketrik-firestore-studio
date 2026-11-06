@@ -4,6 +4,9 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { getDefaultExportUri } from "../webview/common/tableUtils";
+import { LocalJsonService } from "../services/LocalJsonService";
+import { CostService } from "../cost/costService";
 
 /**
  * Basic CSV Parser supporting quoted fields and commas.
@@ -140,13 +143,15 @@ export async function exportCollectionCommand(item: CollectionItem) {
   // 2. Select save path
   const defaultFileName = `${collectionName}_export.${formatChoice.ext}`;
   const saveUri = await vscode.window.showSaveDialog({
-    defaultUri: vscode.Uri.file(defaultFileName),
+    defaultUri: getDefaultExportUri(defaultFileName),
     filters: {
       [formatChoice.label]: [formatChoice.ext],
     },
   });
 
   if (!saveUri) return;
+
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
 
   await vscode.window.withProgress(
     {
@@ -156,36 +161,49 @@ export async function exportCollectionCommand(item: CollectionItem) {
     },
     async (progress, token) => {
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-        const collRef = firestore.collection(collectionPath);
-
         const allDocs: Record<string, any>[] = [];
-        let lastDoc: QueryDocumentSnapshot | null = null;
-        let hasMore = true;
-        const batchSize = 250;
 
-        while (hasMore && !token.isCancellationRequested) {
-          let query = collRef.limit(batchSize);
-          if (lastDoc) {
-            query = query.startAfter(lastDoc);
-          }
-          const snapshot = await query.get();
-          if (snapshot.empty) {
-            hasMore = false;
-            break;
-          }
-
-          for (const doc of snapshot.docs) {
+        if (conn?.isLocalJson) {
+          const rawDocs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
+          for (const d of rawDocs) {
             allDocs.push({
-              id: doc.id,
-              ...doc.data(),
+              id: d.id,
+              ...d.data,
             });
           }
+        } else {
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          const collRef = firestore.collection(collectionPath);
 
-          lastDoc = snapshot.docs[snapshot.docs.length - 1];
-          progress.report({ message: `Fetched ${allDocs.length} documents...` });
-          if (snapshot.docs.length < batchSize) {
-            hasMore = false;
+          let lastDoc: QueryDocumentSnapshot | null = null;
+          let hasMore = true;
+          const batchSize = 250;
+
+          while (hasMore && !token.isCancellationRequested) {
+            let query = collRef.limit(batchSize);
+            if (lastDoc) {
+              query = query.startAfter(lastDoc);
+            }
+            const snapshot = await query.get();
+            if (snapshot.empty) {
+              hasMore = false;
+              break;
+            }
+
+            CostService.getInstance().recordOperation(connectionId, "read", snapshot.docs.length);
+
+            for (const doc of snapshot.docs) {
+              allDocs.push({
+                id: doc.id,
+                ...doc.data(),
+              });
+            }
+
+            lastDoc = snapshot.docs[snapshot.docs.length - 1];
+            progress.report({ message: `Fetched ${allDocs.length} documents...` });
+            if (snapshot.docs.length < batchSize) {
+              hasMore = false;
+            }
           }
         }
 
@@ -297,12 +315,14 @@ export async function importCollectionCommand(
 
   // 3. Confirmation
   const confirm = await vscode.window.showWarningMessage(
-    `Import ${records.length} document(s) into '${collectionName}'? This will write to Firestore.`,
+    `Import ${records.length} document(s) into '${collectionName}'?`,
     { modal: true },
     "Proceed with Import"
   );
 
   if (confirm !== "Proceed with Import") return;
+
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
 
   // 4. Batch import with progress
   await vscode.window.withProgress(
@@ -313,33 +333,53 @@ export async function importCollectionCommand(
     },
     async (progress, token) => {
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-        const collRef = firestore.collection(collectionPath);
-        const batchLimit = 400; // Under Firestore 500 limit for safety
         let importedCount = 0;
 
-        for (let i = 0; i < records.length; i += batchLimit) {
-          if (token.isCancellationRequested) {
-            vscode.window.showWarningMessage(`Import stopped. ${importedCount} documents imported.`);
-            break;
+        if (conn?.isLocalJson) {
+          for (const rec of records) {
+            if (token.isCancellationRequested) {
+              vscode.window.showWarningMessage(`Import stopped. ${importedCount} documents imported.`);
+              break;
+            }
+            const docId = idField && rec[idField] ? String(rec[idField]).trim() : `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            const { id, _id, __id, __path, ...cleanData } = rec;
+            const docPath = `${collectionPath}/${docId}`;
+            LocalJsonService.getInstance().setDocument(conn, docPath, cleanData);
+            importedCount++;
+            progress.report({
+              message: `${importedCount} / ${records.length} written...`,
+              increment: (1 / records.length) * 100,
+            });
           }
+        } else {
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          const collRef = firestore.collection(collectionPath);
+          const batchLimit = 400; // Under Firestore 500 limit for safety
 
-          const batch = firestore.batch();
-          const chunk = records.slice(i, i + batchLimit);
+          for (let i = 0; i < records.length; i += batchLimit) {
+            if (token.isCancellationRequested) {
+              vscode.window.showWarningMessage(`Import stopped. ${importedCount} documents imported.`);
+              break;
+            }
 
-          for (const item of chunk) {
-            const docId = idField && item[idField] ? String(item[idField]).trim() : null;
-            const docRef = docId ? collRef.doc(docId) : collRef.doc();
-            const { id, _id, __id, __path, ...cleanData } = item;
-            batch.set(docRef, cleanData);
+            const batch = firestore.batch();
+            const chunk = records.slice(i, i + batchLimit);
+
+            for (const item of chunk) {
+              const docId = idField && item[idField] ? String(item[idField]).trim() : null;
+              const docRef = docId ? collRef.doc(docId) : collRef.doc();
+              const { id, _id, __id, __path, ...cleanData } = item;
+              batch.set(docRef, cleanData);
+            }
+
+            await batch.commit();
+            CostService.getInstance().recordOperation(connectionId, "write", chunk.length);
+            importedCount += chunk.length;
+            progress.report({
+              message: `${importedCount} / ${records.length} written...`,
+              increment: (chunk.length / records.length) * 100,
+            });
           }
-
-          await batch.commit();
-          importedCount += chunk.length;
-          progress.report({
-            message: `${importedCount} / ${records.length} written...`,
-            increment: (chunk.length / records.length) * 100,
-          });
         }
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, collectionPath);

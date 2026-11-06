@@ -50,6 +50,11 @@ function findTimestampsInDocument(document: vscode.TextDocument): TimestampMatch
     return cached.matches;
   }
 
+  // Large file safeguard: Skip decoration scanning if document exceeds 15,000 lines
+  if (document.lineCount > 15000) {
+    return [];
+  }
+
   const text = document.getText();
 
   // Fast-path: If document doesn't contain both required timestamp keys, skip regex processing entirely
@@ -110,7 +115,8 @@ function isSupportedDocument(document: vscode.TextDocument): boolean {
       return true;
     }
     const connections = ConnectionManager.getInstance().getConnections();
-    for (const c of connections) {
+    for (let i = 0; i < connections.length; i++) {
+      const c = connections[i];
       if (c.isLocalJson && c.localJsonPath && (filePath === c.localJsonPath || filePath.startsWith(c.localJsonPath))) {
         return true;
       }

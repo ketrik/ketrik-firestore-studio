@@ -2,6 +2,24 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.19.2] - 2026-11-06
+
+### Optimized & Performance
+- **Zero-Allocation Search Substrate**: Replaced client-side stringified JSON filtering in table webviews with recursive tree matcher, eliminating GC pressure and input latency.
+- **Explorer Tree Subfield Caching**: Added targeted caching for nested Map items with granular branch invalidation on document mutations.
+- **$O(1)$ Tabgroup Evaluation**: Optimized virtual file system batch invalidation to pre-collect open editor tabs once.
+- **Live Reactive Table Sync**: Subscribed Document & Field Table webviews to virtual file system events with debounced live reload.
+- **Resource Lifecycle Management**: Implemented disposable lifecycle for SecretManagerService and RAF-debounced graph canvas wheel zooming.
+
+### Fixed & Improved
+- **In-Cell Typing Preservation**: Preserved string types (`"true"`, `"false"`, `"null"`, numeric strings) across all table cell editors without unintended type coercion.
+- **macOS Root Save Fix (`EROFS`)**: Centralized `getDefaultExportUri` across export dialogs to anchor saves to workspace folders instead of root `/`.
+- **Local JSON Full Parity**: Added Local JSON support to collection table (`createDoc`, `jumpToId`, `openFieldAsTable`, `countCollection`, `estimateQueryCost`, `calculateAggregates`, batch updates/deletes).
+- **Subcollection Path Safety**: Fixed subcollection path truncation in document & collection commands.
+- **Array Index Protection**: Protected nested array indices from map conversion during field table updates.
+- **Document Deletion Lifecycle**: Emitted `FileChangeType.Deleted` on document deletes so open virtual tabs close cleanly.
+- **CostService Accounting**: Added operation tracking across batch replications, document pastes, and synthetic generation.
+
 ## [1.19.1] - 2026-11-02
 
 ### Added

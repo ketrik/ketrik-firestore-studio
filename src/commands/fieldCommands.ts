@@ -375,6 +375,11 @@ export async function renameFieldCommand(
     return;
   }
 
+  if (item.isArrayElement) {
+    vscode.window.showWarningMessage("Array elements cannot be renamed. They are indexed by position.");
+    return;
+  }
+
   const currentSegments = item.pathSegments && item.pathSegments.length > 0 ? item.pathSegments : [item.fieldName];
   const parentSegments = currentSegments.slice(0, -1);
   const oldPathStr = currentSegments.join(".");
@@ -1130,6 +1135,11 @@ export async function duplicateFieldCommand(
   explorerDataProvider: ExplorerDataProvider
 ) {
   if (!item?.parentDocRef || !item?.fieldName) {
+    return;
+  }
+
+  if (item.isArrayElement) {
+    vscode.window.showWarningMessage("Array elements cannot be duplicated by name. Use Add Array Item instead.");
     return;
   }
 

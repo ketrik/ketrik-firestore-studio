@@ -29,7 +29,7 @@ export interface SecretVersionMetadata {
  * SecretManagerService coordinates Google Cloud Secret Manager API operations
  * for connections configured in Ketrik Firestore Studio.
  */
-export class SecretManagerService {
+export class SecretManagerService implements vscode.Disposable {
   private static instance: SecretManagerService;
   private clientMap = new Map<string, SecretManagerServiceClient>();
 
@@ -46,14 +46,34 @@ export class SecretManagerService {
    * Reset client cache for a connection (e.g. after editing credentials)
    */
   public resetClient(connectionId: string): void {
-    this.clientMap.delete(connectionId);
+    for (const key of [`${connectionId}_gcpUser`, connectionId]) {
+      const client = this.clientMap.get(key);
+      if (client) {
+        try {
+          client.close();
+        } catch {}
+        this.clientMap.delete(key);
+      }
+    }
   }
 
   /**
-   * Clear all cached client instances
+   * Clear all cached client instances and terminate open gRPC channels
    */
   public clearAll(): void {
+    for (const client of this.clientMap.values()) {
+      try {
+        client.close();
+      } catch {}
+    }
     this.clientMap.clear();
+  }
+
+  /**
+   * Clean up resources on extension deactivation
+   */
+  public dispose(): void {
+    this.clearAll();
   }
 
   /**

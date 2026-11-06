@@ -8,6 +8,7 @@ import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { reviveTimestamps } from "../utils/timestampUtils";
+import { calculateDocumentSize } from "../utils/documentSizeUtils";
 import { SnapshotSyncService } from "../services/SnapshotSyncService";
 import { scheme } from "../constants";
 import openPath from "./openPath";
@@ -70,7 +71,7 @@ class BatchWriter {
   private _estimateBytes(data: any): number {
     try {
       if (typeof data === "string") return data.length;
-      return JSON.stringify(data).length;
+      return calculateDocumentSize(data);
     } catch {
       return 1024;
     }

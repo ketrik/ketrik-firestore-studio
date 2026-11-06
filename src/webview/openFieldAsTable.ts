@@ -1,13 +1,12 @@
 import * as vscode from "vscode";
 import { DocumentFieldItem } from "../explorer/items";
 import openPath from "../commands/openPath";
-import { sortHeaders, sanitizeFirestoreValue } from "./common/tableUtils";
+import { sortHeaders, sanitizeFirestoreValue, getDefaultExportUri, safeFirestoreFieldUpdate } from "./common/tableUtils";
 import { getFieldTableHtml } from "./fieldTable/fieldTableHtml";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { CostService } from "../cost/costService";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
-import { FieldPath } from "firebase-admin/firestore";
 
 interface FieldPanelContext {
   panel: vscode.WebviewPanel;
@@ -277,15 +276,6 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     existingCtx.rawData = rawData;
     existingCtx.isArray = isArray;
     existingCtx.panel.title = panelTitle;
-    existingCtx.panel.webview.html = getFieldTableHtml({
-      panelTitle,
-      fieldName: targetFieldPath,
-      connectionId: item.connectionId,
-      docPath: item.parentDocRef?.path || "",
-      isArray,
-      initialData: { headers, rows },
-      errorMessage: initialErrorMessage,
-    });
     existingCtx.panel.reveal(vscode.ViewColumn.One);
     existingCtx.panel.webview.postMessage({
       type: "init",
@@ -339,7 +329,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
 
     if (message.command === "exportJson") {
       const uri = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(`${item.fieldName}_export.json`),
+        defaultUri: getDefaultExportUri(`${item.fieldName}_export.json`),
         filters: { JSON: ["json"] },
       });
       if (uri) {
@@ -391,7 +381,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             );
           } else {
             const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-            await firestore.doc(item.parentDocRef.path).update(new FieldPath(...fieldSegments), currentArr);
+            await safeFirestoreFieldUpdate(firestore, item.parentDocRef.path, fieldSegments, currentArr);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
           ctx.rawData = currentArr;
@@ -413,7 +403,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             );
           } else {
             const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-            await firestore.doc(item.parentDocRef.path).update(new FieldPath(...targetSegments), writeVal);
+            await safeFirestoreFieldUpdate(firestore, item.parentDocRef.path, targetSegments, writeVal);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
 
@@ -477,7 +467,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             );
           } else {
             const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-            await firestore.doc(item.parentDocRef.path).update(new FieldPath(...fieldSegments), currentArr);
+            await safeFirestoreFieldUpdate(firestore, item.parentDocRef.path, fieldSegments, currentArr);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
           ctx.rawData = currentArr;
@@ -494,10 +484,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             );
           } else {
             const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-            const { FieldValue } = await import("firebase-admin/firestore");
-            await firestore
-              .doc(item.parentDocRef.path)
-              .update(new FieldPath(...targetSegments), FieldValue.delete());
+            await safeFirestoreFieldUpdate(firestore, item.parentDocRef.path, targetSegments, undefined, true);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
           if (ctx.rawData && typeof ctx.rawData === "object") {
@@ -628,7 +615,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             );
           } else {
             const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-            await firestore.doc(item.parentDocRef.path).update(new FieldPath(...fieldSegments), currentArr);
+            await safeFirestoreFieldUpdate(firestore, item.parentDocRef.path, fieldSegments, currentArr);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
           ctx.rawData = currentArr;
@@ -643,7 +630,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             );
           } else {
             const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-            await firestore.doc(item.parentDocRef.path).update(new FieldPath(...targetSegments), entryVal);
+            await safeFirestoreFieldUpdate(firestore, item.parentDocRef.path, targetSegments, entryVal);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
           }
           if (ctx.rawData && typeof ctx.rawData === "object") {
@@ -694,9 +681,57 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     rows,
   });
 
+  // Listen to file changes from DocumentFileSystemProvider to keep open field table in live sync
+  let fileChangeDebounce: NodeJS.Timeout | undefined;
+  const parentDocPath = item.parentDocRef?.path || "";
+  const fileChangeSubscription = DocumentFileSystemProvider.getInstance().onDidChangeFile((events) => {
+    for (const ev of events) {
+      if (ev.type === vscode.FileChangeType.Changed && ev.uri.scheme === "ketrik-firestore-studio" && ev.uri.authority === item.connectionId) {
+        const parsed = DocumentFileSystemProvider.getInstance().parseUri(ev.uri);
+        if (parsed.docPath === parentDocPath) {
+          if (fileChangeDebounce) clearTimeout(fileChangeDebounce);
+          fileChangeDebounce = setTimeout(async () => {
+            try {
+              const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+              let freshRawData: any;
+              if (conn?.isLocalJson) {
+                const localDoc = LocalJsonService.getInstance().getDocument(conn, parentDocPath);
+                if (localDoc) {
+                  freshRawData = extractNestedValue(localDoc, targetFieldPath, normalizedSegments);
+                }
+              } else {
+                const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
+                const snap = await firestore.doc(parentDocPath).get();
+                if (snap.exists) {
+                  freshRawData = extractNestedValue(snap.data() || {}, targetFieldPath, normalizedSegments);
+                }
+              }
+              if (freshRawData !== undefined) {
+                ctx.rawData = freshRawData;
+                const freshParsed = parseRows(freshRawData);
+                ctx.rows = freshParsed.rows;
+                ctx.headers = freshParsed.headers;
+                panel.webview.postMessage({
+                  type: "init",
+                  headers: ctx.headers,
+                  rows: ctx.rows,
+                });
+              }
+            } catch {}
+          }, 150);
+        }
+      }
+    }
+  });
+
   panel.onDidDispose(() => {
     activeFieldPanels.delete(panelKey);
     messageSubscription.dispose();
+    fileChangeSubscription.dispose();
+    if (fileChangeDebounce) {
+      clearTimeout(fileChangeDebounce);
+      fileChangeDebounce = undefined;
+    }
     ctx.rows = [];
     ctx.headers = [];
     ctx.rawData = null;
