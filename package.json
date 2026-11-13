@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.19.2",
+  "version": "1.20.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -333,6 +333,30 @@
         "category": "Firestore Studio",
         "title": "Delete Connection",
         "icon": "$(trash)"
+      },
+      {
+        "command": "ketrik-firestore-studio.openDatabaseConfiguration",
+        "category": "Firestore Studio",
+        "title": "Database Configuration & PITR Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "ketrik-firestore-studio.openTimeTravel",
+        "category": "Firestore Studio",
+        "title": "Open Time-Travel Explorer (PITR)",
+        "icon": "$(history)"
+      },
+      {
+        "command": "ketrik-firestore-studio.restoreDocumentFromHistory",
+        "category": "Firestore Studio",
+        "title": "Restore Document from History",
+        "icon": "$(reply)"
+      },
+      {
+        "command": "ketrik-firestore-studio.compareDocumentWithLive",
+        "category": "Firestore Studio",
+        "title": "Compare Historical Snapshot with Live State",
+        "icon": "$(diff)"
       },
       {
         "command": "ketrik-firestore-studio.testConnection",
@@ -1194,6 +1218,11 @@
           "group": "inline@1"
         },
         {
+          "command": "ketrik-firestore-studio.openDatabaseConfiguration",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "inline@2"
+        },
+        {
           "command": "ketrik-firestore-studio.openOverviewDashboard",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_open@1"
@@ -1204,9 +1233,19 @@
           "group": "1_open@2"
         },
         {
-          "command": "ketrik-firestore-studio.queryCollectionGroup",
+          "command": "ketrik-firestore-studio.openDatabaseConfiguration",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
           "group": "1_open@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.openTimeTravel",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_open@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.queryCollectionGroup",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "group": "1_open@5"
         },
         {
           "command": "ketrik-firestore-studio.addCollection",
@@ -1634,6 +1673,11 @@
           "group": "1_open@6"
         },
         {
+          "command": "ketrik-firestore-studio.openTimeTravel",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'collectionFiltered')",
+          "group": "1_open@7"
+        },
+        {
           "command": "ketrik-firestore-studio.createDocument",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'collectionFiltered')",
           "group": "2_create@1"
@@ -1752,6 +1796,11 @@
           "command": "ketrik-firestore-studio.openDocumentAsTable",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
           "group": "1_open@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.openTimeTravel",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'document'",
+          "group": "1_open@3"
         },
         {
           "command": "ketrik-firestore-studio.openAiScratchpad",
@@ -2181,8 +2230,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@google-cloud/secret-manager": "^7.2.0",
-    "firebase-admin": "^14.5.0"
+    "@google-cloud/secret-manager": "^8.0.0",
+    "firebase-admin": "14.5.1"
   },
   "overrides": {
     "uuid": "^11.1.1"

@@ -11,6 +11,9 @@ import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { openSchemaAnalyzer } from "../schema/openSchemaAnalyzer";
+import { PitrService } from "../pitr/PitrService";
+import { restoreDocumentFromHistoryCommand, compareDocumentWithLiveCommand } from "../pitr/pitrCommands";
+import { PITR_PRESETS } from "../pitr/types";
 
 export { QueryClause };
 
@@ -20,6 +23,7 @@ export interface CollectionTableTarget {
   collectionPath?: string;
   reference?: import("firebase-admin/firestore").CollectionReference;
   isCollectionGroup?: boolean;
+  readTime?: Date;
 }
 
 
@@ -70,6 +74,7 @@ export async function openCollectionAsTable(
   let activeQueryClauses: QueryClause[] = [];
   let activeMatchMode: "and" | "or" = "and";
   let isLoading = false;
+  let activeReadTime: Date | undefined = (item as any).readTime;
 
   /**
    * Resolve the collection or collection group query target through the live connection.
@@ -169,6 +174,50 @@ export async function openCollectionAsTable(
     const pageSize = Math.min(effectiveLimit, effectiveMaxRows - loadedDocs.length);
     if (pageSize <= 0) {
       return { newDocs: [], hasMore: false };
+    }
+
+    if (activeReadTime) {
+      try {
+        const historicalDocs = await PitrService.getInstance().getCollectionAtTimestamp(
+          connectionId,
+          collectionPath,
+          activeReadTime,
+          {
+            limit: pageSize,
+            offset: loadedDocs.length,
+          }
+        );
+        const docs = historicalDocs.map((h) => ({
+          ...sanitizeFirestoreValue(h.data),
+          __path: h.path,
+          __id: h.id,
+          __parentPath: null,
+          __isHistorical: true,
+          __readTime: activeReadTime!.toISOString(),
+        }));
+
+        if (docs.length > 0) {
+          const headerSet = new Set<string>(headers);
+          docs.forEach((doc: any) => {
+            Object.keys(doc).forEach((k) => {
+              if (k !== "__path" && k !== "__id" && k !== "__parentPath" && k !== "__isHistorical" && k !== "__readTime") {
+                headerSet.add(k);
+              }
+            });
+          });
+          if (headerSet.size !== headers.length) {
+            headers = sortHeaders(Array.from(headerSet));
+          }
+        }
+
+        loadedDocs = loadedDocs.concat(docs);
+        const reachedCap = loadedDocs.length >= effectiveMaxRows;
+        const hasMore = docs.length === pageSize && !reachedCap;
+        return { newDocs: docs, hasMore };
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to load historical PITR snapshot: ${err?.message || err}`);
+        return { newDocs: [], hasMore: false };
+      }
     }
 
     try {
@@ -301,6 +350,70 @@ export async function openCollectionAsTable(
   panel.webview.html = getCollectionTableHtml({ collectionId, connectionId }, isGroup);
 
   const messageSubscription = panel.webview.onDidReceiveMessage(async (message) => {
+    if (activeReadTime && (message.command === "createDoc" || message.command === "updateField" || message.command === "deleteField" || message.command === "promptBatchUpdate" || message.command === "promptBatchDelete")) {
+      vscode.window.showWarningMessage("Historical Point-in-Time Recovery snapshots are read-only. Use 'Restore to Live' to roll back changes into the live database.");
+      return;
+    }
+
+    if (message.command === "setTimeTravel") {
+      const preset = message.preset;
+      if (preset === "live") {
+        activeReadTime = undefined;
+      } else if (preset === "custom") {
+        if (!message.timestamp) return;
+        activeReadTime = new Date(message.timestamp);
+      } else {
+        const found = PITR_PRESETS.find((p) => p.id === preset);
+        if (found) {
+          activeReadTime = new Date(Date.now() - found.durationMs);
+        } else {
+          return;
+        }
+      }
+
+      loadedDocs = [];
+      lastDoc = null;
+      headers = [];
+      isLoading = true;
+
+      try {
+        const { newDocs, hasMore } = await loadMoreDocs();
+        hasMoreState = hasMore;
+        panel.webview.postMessage({
+          type: "queryResult",
+          isActive: false,
+          headers,
+          docs: newDocs,
+          hasMore,
+          activeReadTime: activeReadTime ? activeReadTime.toISOString() : null,
+        });
+      } finally {
+        isLoading = false;
+      }
+      return;
+    }
+
+    if (message.command === "compareDocWithLive") {
+      if (!message.docPath || !activeReadTime) return;
+      await compareDocumentWithLiveCommand({
+        connectionId,
+        docPath: message.docPath,
+        readTime: activeReadTime,
+      });
+      return;
+    }
+
+    if (message.command === "restoreDocFromHistory") {
+      if (!message.docPath || !activeReadTime) return;
+      await restoreDocumentFromHistoryCommand({
+        connectionId,
+        docPath: message.docPath,
+        readTime: activeReadTime,
+        historicalData: message.data,
+      });
+      return;
+    }
+
     if (message.command === "ready") {
       // Sent on every (re)load of the webview, e.g. when a hidden tab becomes visible again.
       try {
@@ -313,6 +426,7 @@ export async function openCollectionAsTable(
         docs: loadedDocs,
         hasMore: hasMoreState,
         bookmarks,
+        activeReadTime: activeReadTime ? activeReadTime.toISOString() : null,
       });
       return;
     }

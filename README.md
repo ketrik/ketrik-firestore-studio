@@ -1,7 +1,7 @@
 # Ketrik Firestore Studio
 
 [![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Code-Extension-007acc?style=flat-square&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=ketrik.ketrik-firestore-studio)
-[![Version](https://img.shields.io/badge/Release-v1.19.2-2ecc71?style=flat-square)](ROADMAP.md)
+[![Version](https://img.shields.io/badge/Release-v1.20.0-2ecc71?style=flat-square)](ROADMAP.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 The definitive, enterprise-grade Visual Studio Code extension for exploring, querying, mutating, and managing **Google Cloud Firestore**, **Firebase Authentication**, **Security Rules**, and **Local Emulators** directly inside your IDE.
@@ -19,6 +19,8 @@ Unlike basic viewers that only render static JSON trees, **Ketrik Firestore Stud
 - 💾 **100% Offline Local JSON Store**: Connect to local `.json` mock files with full table and editor parity—zero cloud billing, zero network needed.
 - 👥 **Firebase Auth User Suite**: Bulk user explorer, avatar previews, custom claims editor (`admin: true`), JWT custom token minter, and cross-environment user cloner.
 - 🛡️ **Live Security Rules & Diff**: Virtual editor for `firestore.rules` with live deployment, AST-level permission badges (`🚨 Public`, `🔒 Locked`), and side-by-side diff.
+- 🕒 **Point-in-Time Recovery (PITR) & Time Travel**: 7-day historical database state browsing, side-by-side historical diffs, and 1-click document rollbacks.
+- ⚙️ **Database Configuration & Safeguards**: 1-click PITR toggles, delete protection, and optimistic/pessimistic concurrency controls.
 - 🔐 **Google Secret Manager & Field Links**: Dedicated secret tree explorer, document field secret links (`projects/.../secrets/...`), 1-click secret migration, and zero-plaintext OS Keychain credentials.
 - ⚡ **Quota & Memory Protection**: Native document storage size monitoring (bytes & limit warnings), direct 1-read document ID lookups, and auto-pausing listeners.
 
@@ -112,6 +114,14 @@ Enterprise secret governance, document field secret links, and zero-plaintext cr
 * **Ephemeral In-Place Reveal & Auto-Wipe Copy**: Inspect live decrypted payloads in masked modals without writing them to disk; copy secret values with an automated **20-second security auto-wipe timer**.
 * **Zero-Plaintext Connection Credentials**: Store Service Account credentials encrypted in your OS Keychain via `vscode.SecretStorage` (`"useSecretStorage": true`), or dynamically resolve keys from Secret Manager (`"secretUri": "projects/.../secrets/.../versions/latest"`).
 
+### 12. Point-in-Time Recovery (PITR), Time Travel & Database Configuration
+Enterprise disaster recovery, historical state exploration, and accidental mutation rollback:
+* **Interactive Database Configuration (`ketrik-firestore-studio.openDatabaseConfiguration`)**: Manage database settings via Connection context menu (`$(gear) Database Configuration & PITR Settings...`) or table toolbar.
+* **1-Click Safety Toggles**: Enable/disable Point-in-Time Recovery (PITR), toggle Delete Protection to prevent catastrophic database deletion, and configure Concurrency Mode (Optimistic vs. Pessimistic).
+* **Time-Travel Explorer (`$(history) Open Time-Travel Explorer`)**: Browse historical snapshots of documents and collections at any microsecond in the past 7 days (`readTime`) with quick preset buttons (*15m, 1h, 6h, 24h, 3d, 7d*).
+* **Historical Diff Viewer**: Side-by-side visual comparison between historical snapshots and current live database state.
+* **1-Click Rollback & Deleted Document Recovery**: Atomically restore previous document states or revive deleted documents directly from history.
+
 ---
 
 ## 🛠️ Getting Started in 3 Steps
@@ -156,6 +166,10 @@ Enterprise secret governance, document field secret links, and zero-plaintext cr
 | `ketrik-firestore-studio.linkFieldToSecret` | Field Context Menu (`$(key)`) | 1-Click QuickPick to bind a document field to a Google Secret |
 | `ketrik-firestore-studio.migrateFieldToSecret` | Field Context Menu (`$(shield-lock)`) | Extract sensitive plaintext field into a new Google Secret |
 | `ketrik-firestore-studio.revealFieldSecretPayload` | Secret Field Menu (`$(eye)`) | Inline inspection of linked secret values directly from document fields |
+| `ketrik-firestore-studio.openDatabaseConfiguration` | Connection Menu / Toolbar (`$(gear)`) | Database configuration, PITR management & delete protection |
+| `ketrik-firestore-studio.openTimeTravel` | Connection / Table Toolbar (`$(history)`) | Explore historical collection & document state at microsecond timestamp |
+| `ketrik-firestore-studio.compareDocumentWithLive` | History Table Action (`$(diff)`) | Side-by-side visual diff between historical snapshot and live state |
+| `ketrik-firestore-studio.restoreDocumentFromHistory` | History Table Action (`$(reply)`) | 1-Click atomic restore of historical document snapshot to live database |
 
 ---
 

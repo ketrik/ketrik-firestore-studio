@@ -8,6 +8,7 @@ import { RulesService } from "../rules/RulesService";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
 import { SnapshotSyncService } from "../services/SnapshotSyncService";
+import { PitrService } from "../pitr/PitrService";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -17,6 +18,7 @@ export interface ParsedDocumentUri {
   docPath: string;
   fieldPath?: string;
   isRules?: boolean;
+  readTime?: Date;
 }
 
 /**
@@ -370,10 +372,24 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       }
     }
 
+    let readTime: Date | undefined;
+    if (uri.query) {
+      try {
+        const queryParams = new URLSearchParams(uri.query);
+        const readTimeParam = queryParams.get("readTime");
+        if (readTimeParam) {
+          const parsedDate = new Date(readTimeParam);
+          if (!isNaN(parsedDate.getTime())) {
+            readTime = parsedDate;
+          }
+        }
+      } catch {}
+    }
+
     const segments = pathStr.split("/").filter(Boolean);
 
     if (uri.fragment) {
-      return { connectionId, docPath: segments.join("/"), fieldPath: decodeURIComponent(uri.fragment) };
+      return { connectionId, docPath: segments.join("/"), fieldPath: decodeURIComponent(uri.fragment), readTime };
     }
 
     // Firestore doc paths always have an even number of segments (coll/doc or coll/doc/subcoll/subdoc).
@@ -381,10 +397,10 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     if (segments.length % 2 === 1 && segments.length >= 3) {
       const fieldPath = decodeURIComponent(segments.pop()!);
       const docPath = segments.join("/");
-      return { connectionId, docPath, fieldPath };
+      return { connectionId, docPath, fieldPath, readTime };
     }
 
-    return { connectionId, docPath: segments.join("/") };
+    return { connectionId, docPath: segments.join("/"), readTime };
   }
 
   private serializeDoc(data: any): Uint8Array {
@@ -421,7 +437,13 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
    */
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
     const parsed = this.parseUri(uri);
-    const { connectionId, docPath, fieldPath, isRules } = parsed;
+    const { connectionId, docPath, fieldPath, isRules, readTime } = parsed;
+
+    if (readTime) {
+      throw vscode.FileSystemError.NoPermissions(
+        "Historical Point-in-Time Recovery snapshots are strictly read-only. Use 'Restore from History' to roll back live documents."
+      );
+    }
     const now = Date.now();
 
     if (isRules) {
@@ -431,6 +453,23 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
         ctime: now,
         mtime: now,
         size: Buffer.byteLength(content, "utf8"),
+      };
+    }
+
+    if (parsed.readTime) {
+      const historical = await PitrService.getInstance().getDocumentAtTimestamp(connectionId, docPath, parsed.readTime);
+      if (!historical || !historical.exists) {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
+      if (fieldPath !== undefined && !this.getNestedFieldValue(historical.data, fieldPath).found) {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
+      return {
+        type: vscode.FileType.File,
+        ctime: historical.createTime ? historical.createTime.getTime() : parsed.readTime.getTime(),
+        mtime: historical.updateTime ? historical.updateTime.getTime() : parsed.readTime.getTime(),
+        size: 0,
+        permissions: vscode.FilePermission.Readonly,
       };
     }
 
@@ -498,11 +537,33 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
     const parsed = this.parseUri(uri);
-    const { connectionId, docPath, fieldPath, isRules } = parsed;
+    const { connectionId, docPath, fieldPath, isRules, readTime } = parsed;
+
+    if (readTime) {
+      throw vscode.FileSystemError.NoPermissions(
+        "Historical Point-in-Time Recovery snapshots are strictly read-only. Use 'Restore from History' to roll back live documents."
+      );
+    }
 
     if (isRules) {
       const text = RulesService.getInstance().getRulesContent(connectionId);
       return encoder.encode(text);
+    }
+
+    if (parsed.readTime) {
+      const historical = await PitrService.getInstance().getDocumentAtTimestamp(connectionId, docPath, parsed.readTime);
+      if (!historical || !historical.exists) {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
+      let data = historical.data;
+      if (fieldPath !== undefined) {
+        const nested = this.getNestedFieldValue(data, fieldPath);
+        if (!nested.found) {
+          throw vscode.FileSystemError.FileNotFound(uri);
+        }
+        data = nested.value;
+      }
+      return this.serializeDoc(data);
     }
 
     const conn = ConnectionManager.getInstance().getConnection(connectionId);
@@ -636,7 +697,13 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     _options: { readonly create: boolean; readonly overwrite: boolean }
   ): Promise<void> {
     const parsed = this.parseUri(uri);
-    const { connectionId, docPath, fieldPath, isRules } = parsed;
+    const { connectionId, docPath, fieldPath, isRules, readTime } = parsed;
+
+    if (readTime) {
+      throw vscode.FileSystemError.NoPermissions(
+        "Historical Point-in-Time Recovery snapshots are strictly read-only. Use 'Restore from History' to roll back live documents."
+      );
+    }
 
     if (isRules) {
       const text = decoder.decode(content);

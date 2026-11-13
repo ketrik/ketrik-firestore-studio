@@ -264,6 +264,104 @@ export function getCollectionTableStyles(): string {
       opacity: 1;
       background: rgba(128, 128, 128, 0.2);
     }
+
+    /* PITR Time-Travel Styles */
+    .pitr-banner {
+      background: rgba(204, 167, 0, 0.15);
+      border: 1px solid rgba(204, 167, 0, 0.4);
+      color: #e5c07b;
+      padding: 8px 16px;
+      margin-bottom: 12px;
+      border-radius: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.9em;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    }
+    .pitr-banner-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-pitr-exit {
+      background: var(--vscode-button-background, #0e639c);
+      color: var(--vscode-button-foreground, #fff);
+      border: none;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.85em;
+      font-weight: 500;
+    }
+    .btn-pitr-exit:hover {
+      background: var(--vscode-button-hoverBackground, #1177bb);
+    }
+    .pitr-menu-container {
+      position: relative;
+      display: inline-block;
+    }
+    .pitr-dropdown-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      margin-top: 4px;
+      background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+      border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, #454545));
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      z-index: 100;
+      min-width: 230px;
+      padding: 4px 0;
+    }
+    .pitr-item {
+      padding: 6px 14px;
+      font-size: 0.88em;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--vscode-menu-foreground, var(--vscode-foreground));
+    }
+    .pitr-item:hover {
+      background: var(--vscode-menu-selectionBackground, #094771);
+      color: var(--vscode-menu-selectionForeground, #ffffff);
+    }
+    .pitr-item.active {
+      font-weight: 600;
+      color: #4ec9b0;
+    }
+    .pitr-divider {
+      height: 1px;
+      background: var(--vscode-menu-separatorBackground, rgba(128, 128, 128, 0.2));
+      margin: 4px 0;
+    }
+    .pitr-header-label {
+      padding: 4px 14px;
+      font-size: 0.75em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--vscode-descriptionForeground, #888);
+    }
+    .btn-row-action {
+      background: transparent;
+      border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+      color: var(--vscode-foreground);
+      padding: 2px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.78em;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin-left: 4px;
+      opacity: 0.85;
+    }
+    .btn-row-action:hover {
+      opacity: 1;
+      background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+      border-color: var(--vscode-textLink-foreground, #3794ff);
+    }
     td.data-cell {
       position: relative;
       cursor: pointer;
@@ -651,9 +749,24 @@ export function getCollectionTableHtml(
           <button id="toggleVectorSearchBtn" class="secondary toggle-btn" title="Run kNN similarity vector search (findNearest) against embeddings">
             <span>🧠</span> Vector Search (kNN)
           </button>
-          <button id="toggleTimeTravelBtn" class="secondary toggle-btn" title="Simulate time-travel to preview live, scheduled, or expired documents" style="display:none;">
-            <span>⏱️</span> Simulate Time
-          </button>
+          <div class="pitr-menu-container">
+            <button id="btnPitrMenu" class="secondary toggle-btn" title="Point-in-Time Recovery: Query historical snapshots (past 7 days) or return to live state">
+              <span id="pitrIndicator">🟢</span> <span id="pitrButtonLabel">Live State</span> ▾
+            </button>
+            <div id="pitrMenuDropdown" class="pitr-dropdown-menu" style="display:none;">
+              <div class="pitr-item active" data-preset="live">🟢 Live State (Current)</div>
+              <div class="pitr-divider"></div>
+              <div class="pitr-header-label">PITR Presets (Past 7 Days)</div>
+              <div class="pitr-item" data-preset="15m">⏱ 15 minutes ago</div>
+              <div class="pitr-item" data-preset="1h">⏱ 1 hour ago</div>
+              <div class="pitr-item" data-preset="6h">⏱ 6 hours ago</div>
+              <div class="pitr-item" data-preset="24h">⏱ 24 hours ago (Yesterday)</div>
+              <div class="pitr-item" data-preset="3d">⏱ 3 days ago</div>
+              <div class="pitr-item" data-preset="7d">⏱ 7 days ago (Earliest Available)</div>
+              <div class="pitr-divider"></div>
+              <div class="pitr-item" data-preset="custom">📅 Custom Date & Time...</div>
+            </div>
+          </div>
           <button id="toggleLiveWatchBtn" class="secondary toggle-btn live-watch-btn" title="Toggle Real-Time Live Watch mode (listens to Firestore onSnapshot with mutation flash)">
             <span class="live-watch-indicator"></span> 📡 Live Watch
           </button>
@@ -681,6 +794,16 @@ export function getCollectionTableHtml(
           <button id="exportBtn" class="secondary" title="Export current view as JSON">
             <span>⬇</span> Export JSON
           </button>
+        </div>
+      </div>
+
+      <div id="pitrBanner" class="pitr-banner" style="display:none;">
+        <div class="pitr-banner-info">
+          <span>🟡</span>
+          <span>HISTORICAL SNAPSHOT at <strong id="pitrBannerTimestamp">...</strong> (Read-Only Mode)</span>
+        </div>
+        <div class="pitr-banner-actions">
+          <button id="btnPitrExit" class="btn-pitr-exit">✕ Return to Live State</button>
         </div>
       </div>
 
@@ -1081,9 +1204,15 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           const isChecked = selectedDocIds.has(docId);
           const selectCell = '<td class="select-col"><input type="checkbox" class="row-checkbox row-select-checkbox" data-id="' + escapeHtml(docId) + '"' + (isChecked ? ' checked' : '') + ' /></td>';
 
+          const isHistorical = !!doc.__isHistorical || (typeof isPitrActive !== 'undefined' && isPitrActive);
+          const pitrPill = isHistorical
+            ? '<button class="btn-row-action btn-row-diff" data-path="' + escapeHtml(doc.__path || '') + '" title="Compare historical snapshot with live document">🔍 Diff</button>' +
+              '<button class="btn-row-action btn-row-restore" data-path="' + escapeHtml(doc.__path || '') + '" title="Restore this historical snapshot back to live Firestore">↩️ Restore</button>'
+            : '';
+
           const idCell = '<td class="sticky-col"><div class="doc-id-cell">' +
             '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1h8l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm7 1v3h3L11 2z"/></svg>' +
-            '<span class="doc-id-link" title="Click to view raw JSON document in editor">' + escapeHtml(docId) + '</span>' + pillHtml +
+            '<span class="doc-id-link" title="Click to view raw JSON document in editor">' + escapeHtml(docId) + '</span>' + pillHtml + pitrPill +
             '<span class="doc-open-btn" title="Open JSON document">📄</span>' +
             '</div></td>';
 
@@ -1445,6 +1574,9 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           setLoadMoreButtonsDisabled(false);
           updateEmptyState(lastDocs.length);
           updateBatchToolbar();
+          if (typeof updatePitrUi === 'function') {
+            updatePitrUi(msg.activeReadTime);
+          }
         }
 
         if (msg.type === 'queryCostEstimateResult') {
@@ -1667,6 +1799,9 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           document.getElementById('query-note').style.display = isServerQueryMode ? '' : 'none';
           document.getElementById('clearSearchBtn').style.display = isServerQueryMode ? '' : 'none';
           updateEmptyState(lastDocs.length, isServerQueryMode ? "No documents match the specified where clauses." : undefined);
+          if (msg.activeReadTime !== undefined && typeof updatePitrUi === 'function') {
+            updatePitrUi(msg.activeReadTime);
+          }
         }
 
         if (msg.type === 'fieldUpdated') {
@@ -2363,6 +2498,9 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
 
       function startCellEdit(td) {
         if (!td || activeEditingCell) return;
+        if (typeof isPitrActive !== 'undefined' && isPitrActive) {
+          return;
+        }
         const field = td.getAttribute('data-field');
         const type = td.getAttribute('data-type');
         const tr = td.closest('tr');
@@ -2491,6 +2629,27 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
 
       document.getElementById('table-body').addEventListener('click', function(event) {
         if (event.target.closest('.select-col') || event.target.closest('.row-checkbox')) {
+          return;
+        }
+
+        // PITR Historical Diff action
+        const diffBtn = event.target.closest('.btn-row-diff');
+        if (diffBtn) {
+          const docPath = diffBtn.getAttribute('data-path');
+          if (docPath) {
+            vscode.postMessage({ command: 'compareDocWithLive', docPath: docPath });
+          }
+          return;
+        }
+
+        // PITR Historical Restore action
+        const restoreBtn = event.target.closest('.btn-row-restore');
+        if (restoreBtn) {
+          const docPath = restoreBtn.getAttribute('data-path');
+          const targetDoc = allLoadedDocs.find(d => d.__path === docPath);
+          if (docPath && targetDoc) {
+            vscode.postMessage({ command: 'restoreDocFromHistory', docPath: docPath, data: targetDoc });
+          }
           return;
         }
 
@@ -2680,6 +2839,81 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         emptyClearFilterBtn.onclick = function() {
           document.getElementById('clearSearchBtn').click();
         };
+      }
+
+      // ── PITR Time-Travel Controls ──────────────────────────────────
+      var isPitrActive = false;
+      const btnPitrMenu = document.getElementById('btnPitrMenu');
+      const pitrDropdown = document.getElementById('pitrMenuDropdown');
+      const pitrBanner = document.getElementById('pitrBanner');
+      const pitrBannerTimestamp = document.getElementById('pitrBannerTimestamp');
+      const pitrIndicator = document.getElementById('pitrIndicator');
+      const pitrButtonLabel = document.getElementById('pitrButtonLabel');
+      const btnPitrExit = document.getElementById('btnPitrExit');
+
+      if (btnPitrMenu && pitrDropdown) {
+        btnPitrMenu.addEventListener('click', function(e) {
+          e.stopPropagation();
+          const isHidden = pitrDropdown.style.display === 'none';
+          pitrDropdown.style.display = isHidden ? 'block' : 'none';
+        });
+
+        document.addEventListener('click', function() {
+          pitrDropdown.style.display = 'none';
+        });
+
+        pitrDropdown.querySelectorAll('.pitr-item').forEach(function(item) {
+          item.addEventListener('click', function(e) {
+            e.stopPropagation();
+            pitrDropdown.style.display = 'none';
+            const preset = this.getAttribute('data-preset');
+            if (preset === 'custom') {
+              const customVal = prompt('Enter historical date & time in UTC or local (e.g. 2026-11-10 14:30):');
+              if (customVal && customVal.trim()) {
+                vscode.postMessage({ command: 'setTimeTravel', preset: 'custom', timestamp: customVal.trim() });
+              }
+            } else {
+              vscode.postMessage({ command: 'setTimeTravel', preset: preset });
+            }
+          });
+        });
+      }
+
+      if (btnPitrExit) {
+        btnPitrExit.addEventListener('click', function() {
+          vscode.postMessage({ command: 'setTimeTravel', preset: 'live' });
+        });
+      }
+
+      function updatePitrUi(activeReadTime) {
+        isPitrActive = !!activeReadTime;
+        if (btnPitrMenu && pitrIndicator && pitrButtonLabel) {
+          if (isPitrActive) {
+            const d = new Date(activeReadTime);
+            const timeStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            pitrIndicator.textContent = '🟡';
+            pitrButtonLabel.textContent = 'Historical (' + timeStr + ')';
+            if (pitrBanner && pitrBannerTimestamp) {
+              pitrBannerTimestamp.textContent = d.toUTCString();
+              pitrBanner.style.display = 'flex';
+            }
+          } else {
+            pitrIndicator.textContent = '🟢';
+            pitrButtonLabel.textContent = 'Live State';
+            if (pitrBanner) {
+              pitrBanner.style.display = 'none';
+            }
+          }
+        }
+        if (pitrDropdown) {
+          pitrDropdown.querySelectorAll('.pitr-item').forEach(function(item) {
+            if (!isPitrActive && item.getAttribute('data-preset') === 'live') {
+              item.classList.add('active');
+            } else {
+              item.classList.remove('active');
+            }
+          });
+        }
       }
 
       // Tell the extension the page is (re)loaded so it can send the current data.

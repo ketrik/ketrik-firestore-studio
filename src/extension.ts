@@ -131,6 +131,12 @@ import { OverviewService } from "./analytics/overviewService";
 import { CostStatusBarController } from "./cost/CostStatusBarController";
 import { SecretStorageService } from "./secrets/SecretStorageService";
 import { SecretManagerService } from "./secrets/SecretManagerService";
+import { openDatabaseConfiguration } from "./databaseConfig/openDatabaseConfiguration";
+import {
+  openTimeTravelCommand,
+  restoreDocumentFromHistoryCommand,
+  compareDocumentWithLiveCommand,
+} from "./pitr/pitrCommands";
 
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize SecretStorageService for secure OS Keychain credential management
@@ -271,6 +277,22 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.deleteConnection",
       deleteConnectionCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openDatabaseConfiguration",
+      openDatabaseConfiguration
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openTimeTravel",
+      openTimeTravelCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.restoreDocumentFromHistory",
+      restoreDocumentFromHistoryCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.compareDocumentWithLive",
+      compareDocumentWithLiveCommand
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.testConnection",
