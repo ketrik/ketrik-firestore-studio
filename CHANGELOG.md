@@ -2,6 +2,17 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.21.0] - 2026-11-14
+
+### Added
+- **Bulk Field Transformer**: Transform and normalize fields across multiple documents in a collection.
+- **Schema Auto-Fix**: Automated schema repair suggestions and fixes in the Schema Analyzer.
+- **Read-Only Shield**: Protection against unintended writes on read-only connections.
+- **Environment Badges**: Visual environment indicators for connections.
+
+### Changed
+- **CI/CD**: Configured VS Code Marketplace Trusted Publishing (OIDC) in `.github/workflows/release.yml`.
+
 ## [1.20.0] - 2026-11-13
 
 ### Added
