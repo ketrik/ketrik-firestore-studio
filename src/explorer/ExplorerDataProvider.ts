@@ -79,7 +79,14 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     if (!trimmed) {
       this._collectionFilters.delete(key);
     } else {
+      this._collectionFilters.delete(key);
       this._collectionFilters.set(key, trimmed);
+      if (this._collectionFilters.size > 200) {
+        const oldest = this._collectionFilters.keys().next().value;
+        if (oldest !== undefined) {
+          this._collectionFilters.delete(oldest);
+        }
+      }
     }
     const prefix = `col:${connectionId}:${collPath}:`;
     for (const k of this._treeCache.keys()) {
@@ -1081,6 +1088,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
             // Query with text scan
             try {
               const snapshots = await element.reference.limit(limit * 2).get();
+              CostService.getInstance().recordOperation(element.connectionId, "read", snapshots.size);
               for (const doc of snapshots.docs) {
                 if (doc.id.toLowerCase().includes(activeFilter) || matchesSearchTerm(doc.data(), activeFilter)) {
                   const docKey = `doc:${element.connectionId}:${doc.ref.path}`;
@@ -1162,6 +1170,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
               sortConfig?.direction ?? "asc"
             )
             .get();
+          CostService.getInstance().recordOperation(element.connectionId, "read", snapshots.size);
 
           snapshots.forEach((snapshot: QueryDocumentSnapshot) => {
             const docKey = `doc:${element.connectionId}:${snapshot.ref.path}`;

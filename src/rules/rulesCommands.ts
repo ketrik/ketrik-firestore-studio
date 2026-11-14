@@ -120,6 +120,12 @@ export async function deployRulesCommand(item?: ConnectionTreeItem | { id: strin
   const connectionManager = ConnectionManager.getInstance();
   const connectionId = resolveConnectionId(item);
   const conn = connectionManager.getConnection(connectionId);
+  if (conn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to deploy security rules.`
+    );
+    return;
+  }
   const targetName = conn ? `${conn.name} (${conn.projectId || "Project"})` : connectionId;
 
   // 1. Determine rules content to deploy (prefer open active document if it's firestore.rules, or local workspace file)

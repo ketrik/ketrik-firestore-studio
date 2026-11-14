@@ -38,6 +38,9 @@ export async function editAuthUserClaimsCommand(
 ) {
   const authService = AuthService.getInstance();
   let connectionId = resolveConnectionId(item);
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "edit user custom claims")) {
+    return;
+  }
   let uid = item?.user?.uid;
   let currentClaims: Record<string, any> = item?.user?.customClaims || {};
 
@@ -100,6 +103,9 @@ export async function createAuthUserProfileCommand(
 ) {
   const authService = AuthService.getInstance();
   const connectionId = resolveConnectionId(item);
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "create user profile document")) {
+    return;
+  }
   let user = item?.user;
 
   if (!user) {
@@ -164,7 +170,13 @@ export async function openAuthUserProfileCommand(
   }
 
   const collectionName = "users";
-  const exists = await authService.checkProfileExists(connectionId, user.uid, collectionName);
+  let exists = false;
+  try {
+    exists = await authService.checkProfileExists(connectionId, user.uid, collectionName);
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to check user profile: ${err?.message || err}`);
+    return;
+  }
 
   if (exists) {
     await openPath(`${collectionName}/${user.uid}`, connectionId);
@@ -285,7 +297,15 @@ export async function cloneAuthUserCommand(
   }
 
   const targetConnectionId = selectedConn.connection.id;
-  const hasProfile = await authService.checkProfileExists(sourceConnectionId, uid);
+  if (!ConnectionManager.getInstance().ensureWritable(targetConnectionId, "clone user to target connection")) {
+    return;
+  }
+  let hasProfile = false;
+  try {
+    hasProfile = await authService.checkProfileExists(sourceConnectionId, uid);
+  } catch {
+    hasProfile = false;
+  }
 
   const cloneProfileChoice = hasProfile
     ? await vscode.window.showQuickPick(
@@ -370,6 +390,9 @@ export async function mintCustomTokenCommand(item?: AuthUserItem) {
 export async function revokeUserSessionsCommand(item?: AuthUserItem) {
   const authService = AuthService.getInstance();
   const connectionId = resolveConnectionId(item);
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "revoke user refresh tokens")) {
+    return;
+  }
   let uid = item?.user?.uid;
   let userIdentifier = item?.user?.email || item?.user?.uid;
 
@@ -447,6 +470,9 @@ export async function deleteAuthUserCommand(
 ) {
   const authService = AuthService.getInstance();
   const connectionId = resolveConnectionId(item);
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "delete auth user")) {
+    return;
+  }
   let uid = item?.user?.uid;
   let userIdentifier = item?.user?.email || item?.user?.uid;
 
@@ -459,7 +485,12 @@ export async function deleteAuthUserCommand(
     userIdentifier = picked.email || picked.uid;
   }
 
-  const hasProfile = await authService.checkProfileExists(connectionId, uid);
+  let hasProfile = false;
+  try {
+    hasProfile = await authService.checkProfileExists(connectionId, uid);
+  } catch {
+    hasProfile = false;
+  }
 
   // Present explicit confirmation options with safe cancel
   const deleteProfileOption = hasProfile
@@ -511,7 +542,11 @@ export async function deleteAuthUserCommand(
     vscode.window.showInformationMessage(msg);
 
     if (explorerDataProvider) {
-      explorerDataProvider.refreshNode(item);
+      if (item) {
+        explorerDataProvider.refreshNode(item);
+      } else {
+        explorerDataProvider.refresh();
+      }
     }
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to delete user '${userIdentifier}': ${err.message}`);
@@ -574,6 +609,9 @@ export async function createAuthUserCommand(
 ) {
   const authService = AuthService.getInstance();
   const connectionId = resolveConnectionId(item);
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "create auth user")) {
+    return;
+  }
 
   // 1. Email
   const email = await vscode.window.showInputBox({
@@ -865,6 +903,9 @@ export async function importAuthUsersWizardCommand(
 ) {
   const authService = AuthService.getInstance();
   const connectionId = resolveConnectionId(item);
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "import auth users")) {
+    return;
+  }
 
   try {
     const files = await vscode.window.showOpenDialog({

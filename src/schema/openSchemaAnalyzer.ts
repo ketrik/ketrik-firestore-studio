@@ -1,9 +1,15 @@
 import * as vscode from "vscode";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { CollectionItem, DocumentItem } from "../explorer/items";
-import { analyzeCollectionSchemaHealth, CollectionHealthReport } from "./schemaAnalyzer";
+import {
+  analyzeSchemaSnapshots,
+  CollectionHealthReport,
+  DocumentSchemaSnapshot,
+  extractDocumentSchemaSnapshot,
+} from "./schemaAnalyzer";
 import { getSchemaReportHtml } from "../webview/schemaReport/schemaReportHtml";
 import { LocalJsonService } from "../services/LocalJsonService";
+import { CostService } from "../cost/costService";
 
 // Active schema reports registry by collection key
 const activeReportPanels = new Map<string, vscode.WebviewPanel>();
@@ -75,6 +81,13 @@ export async function openSchemaAnalyzer(
     }
   }
 
+  const panelKey = `${connectionId}:${collectionPath}`;
+  const existingPanel = activeReportPanels.get(panelKey);
+  if (existingPanel) {
+    existingPanel.reveal(vscode.ViewColumn.One);
+    return;
+  }
+
   // Ask for sample size if desired
   const samplePick = await vscode.window.showQuickPick(
     [
@@ -88,20 +101,18 @@ export async function openSchemaAnalyzer(
   if (!samplePick) return;
   sampleSize = samplePick.size;
 
-  const panelKey = `${connectionId}:${collectionPath}`;
-  const existingPanel = activeReportPanels.get(panelKey);
-  if (existingPanel) {
-    existingPanel.reveal(vscode.ViewColumn.One);
-    return;
-  }
-
   const conn = ConnectionManager.getInstance().getConnection(connectionId);
   const connectionName = conn?.name || connectionId;
+  const isReadOnly = Boolean(conn?.readOnly);
 
   let report: CollectionHealthReport;
+  let cachedSnapshots: DocumentSchemaSnapshot[] = [];
+  let currentExcludedDocIds: string[] = [];
 
   try {
-    report = await sampleAndAnalyze(connectionId, connectionName, collectionPath, sampleSize);
+    const res = await sampleAndAnalyze(connectionId, connectionName, collectionPath, sampleSize, currentExcludedDocIds);
+    report = res.report;
+    cachedSnapshots = res.snapshots;
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to analyze collection schema: ${err.message}`);
     return;
@@ -127,20 +138,40 @@ export async function openSchemaAnalyzer(
     activeReportPanels.delete(panelKey);
     messageSubscription?.dispose();
     (report as any) = null;
+    cachedSnapshots = [];
   });
 
-  panel.webview.html = getSchemaReportHtml(report);
+  panel.webview.html = getSchemaReportHtml(report, isReadOnly);
 
   // Handle messages from webview
   messageSubscription = panel.webview.onDidReceiveMessage(async (msg) => {
     switch (msg.command) {
       case "rescan": {
         try {
-          report = await sampleAndAnalyze(connectionId, connectionName, collectionPath, sampleSize);
-          panel.webview.html = getSchemaReportHtml(report);
+          const res = await sampleAndAnalyze(connectionId, connectionName, collectionPath, sampleSize, currentExcludedDocIds);
+          report = res.report;
+          cachedSnapshots = res.snapshots;
+          panel.webview.postMessage({ command: "updateReport", report });
           vscode.window.showInformationMessage(`Resampled and updated schema health report for '${collectionPath}'.`);
         } catch (e: any) {
           vscode.window.showErrorMessage(`Failed to rescan: ${e.message}`);
+        }
+        break;
+      }
+
+      case "updateExclusions": {
+        try {
+          currentExcludedDocIds = Array.isArray(msg.excludedDocIds) ? msg.excludedDocIds : [];
+          report = analyzeSchemaSnapshots(
+            collectionPath,
+            connectionId,
+            connectionName,
+            cachedSnapshots,
+            currentExcludedDocIds
+          );
+          panel.webview.postMessage({ command: "updateReport", report });
+        } catch (e: any) {
+          vscode.window.showErrorMessage(`Failed to update exclusions: ${e.message}`);
         }
         break;
       }
@@ -164,6 +195,16 @@ export async function openSchemaAnalyzer(
         await vscode.window.showTextDocument(doc);
         break;
       }
+
+      case "launchTransformer": {
+        await vscode.commands.executeCommand("ketrik-firestore-studio.transformCollectionField", {
+          connectionId,
+          collectionPath,
+          targetField: msg.fieldPath,
+          suggestedAction: msg.suggestedAction,
+        });
+        break;
+      }
     }
   });
 }
@@ -172,8 +213,9 @@ async function sampleAndAnalyze(
   connectionId: string,
   connectionName: string,
   collectionPath: string,
-  sampleSize: number
-): Promise<CollectionHealthReport> {
+  sampleSize: number,
+  excludedDocIds: string[] = []
+): Promise<{ report: CollectionHealthReport; snapshots: DocumentSchemaSnapshot[] }> {
   return await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -184,19 +226,23 @@ async function sampleAndAnalyze(
       const conn = ConnectionManager.getInstance().getConnection(connectionId);
       if (conn?.isLocalJson) {
         const localDocs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
-        const docs = localDocs.slice(0, sampleSize).map((d) => d.data);
-        return analyzeCollectionSchemaHealth(collectionPath, connectionId, connectionName, docs);
+        const snapshots = localDocs.slice(0, sampleSize).map((d) => extractDocumentSchemaSnapshot(d.id, d.data));
+        const report = analyzeSchemaSnapshots(collectionPath, connectionId, connectionName, snapshots, excludedDocIds);
+        return { report, snapshots };
       }
 
       const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
       const snapshot = await firestore.collection(collectionPath).limit(sampleSize).get();
-      const docs: Record<string, any>[] = [];
+      CostService.getInstance().recordOperation(connectionId, "read", Math.max(1, snapshot.docs.length));
+
+      const snapshots: DocumentSchemaSnapshot[] = [];
       snapshot.forEach((d) => {
         if (d.exists) {
-          docs.push(d.data());
+          snapshots.push(extractDocumentSchemaSnapshot(d.id, d.data() || {}));
         }
       });
-      return analyzeCollectionSchemaHealth(collectionPath, connectionId, connectionName, docs);
+      const report = analyzeSchemaSnapshots(collectionPath, connectionId, connectionName, snapshots, excludedDocIds);
+      return { report, snapshots };
     }
   );
 }
@@ -221,10 +267,13 @@ function generateMarkdownReport(r: CollectionHealthReport): string {
     `| :--- | :--- | :--- | :--- | :--- |`,
   ];
 
+  const escapeMdCell = (val: string) => val.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
   for (const f of r.fields) {
     const typesStr = f.typeDistributions.map((t) => `${t.type} (${t.percentage}%)`).join(", ");
     const warningsStr = f.sampleErrorsOrAnomalies.length > 0 ? f.sampleErrorsOrAnomalies.join("; ") : "Healthy";
-    lines.push(`| \`${f.fieldPath}\` | ${f.presencePercentage}% | ${f.occurrenceCount}/${r.sampledCount} | ${typesStr} | ${warningsStr} |`);
+    lines.push(
+      `| \`${escapeMdCell(f.fieldPath)}\` | ${f.presencePercentage}% | ${f.occurrenceCount}/${r.sampledCount} | ${escapeMdCell(typesStr)} | ${escapeMdCell(warningsStr)} |`
+    );
   }
 
   lines.push(``);

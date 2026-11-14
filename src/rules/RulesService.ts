@@ -156,6 +156,12 @@ service cloud.firestore {
     if (!conn) {
       return { success: false, message: `Connection '${connectionId}' not found.` };
     }
+    if (conn.readOnly) {
+      return {
+        success: false,
+        message: `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to deploy security rules.`,
+      };
+    }
 
     try {
       const app = await connectionManager.getApp(connectionId);

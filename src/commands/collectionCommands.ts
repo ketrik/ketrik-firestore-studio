@@ -176,6 +176,12 @@ export async function addCollectionCommand(
   }
 
   const conn = ConnectionManager.getInstance().getConnection(connectionId);
+  if (conn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to create collections.`
+    );
+    return;
+  }
 
   const collectionId = await vscode.window.showInputBox({
     prompt: "Enter Collection ID",
@@ -265,6 +271,12 @@ export async function deleteCollectionCommand(
 
   const connectionManager = ConnectionManager.getInstance();
   const conn = connectionManager.getConnection(item.connectionId);
+  if (conn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete collections.`
+    );
+    return;
+  }
   const connName = conn?.name || item.connectionId;
   const collPath = item.reference?.path || item.collectionId;
 
@@ -344,6 +356,12 @@ export async function deleteMultipleCollectionsCommand(
   const conn = connectionManager.getConnection(connectionId);
   if (!conn) {
     vscode.window.showErrorMessage("Connection not found.");
+    return;
+  }
+  if (conn.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete collections.`
+    );
     return;
   }
 

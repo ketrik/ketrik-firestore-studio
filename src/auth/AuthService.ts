@@ -54,6 +54,7 @@ export class AuthService {
     uid: string,
     customClaims: Record<string, any> | null
   ): Promise<void> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "update user custom claims");
     return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
       auth.setCustomUserClaims(uid, customClaims)
     );
@@ -67,6 +68,7 @@ export class AuthService {
     uid: string,
     properties: import("firebase-admin/auth").UpdateRequest
   ): Promise<UserRecord> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "update auth user");
     return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
       auth.updateUser(uid, properties)
     );
@@ -76,6 +78,7 @@ export class AuthService {
    * Delete an existing user.
    */
   public async deleteUser(connectionId: string, uid: string): Promise<void> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "delete auth user");
     return ConnectionManager.getInstance().withAuth(connectionId, (auth) => auth.deleteUser(uid));
   }
 
@@ -122,6 +125,7 @@ export class AuthService {
     users: import("firebase-admin/auth").UserImportRecord[],
     options?: import("firebase-admin/auth").UserImportOptions
   ): Promise<import("firebase-admin/auth").UserImportResult> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "import auth users");
     return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
       auth.importUsers(users, options)
     );
@@ -144,6 +148,7 @@ export class AuthService {
    * Revoke all active refresh tokens for a user (forces logout across devices).
    */
   public async revokeRefreshTokens(connectionId: string, uid: string): Promise<void> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "revoke user refresh tokens");
     return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
       auth.revokeRefreshTokens(uid)
     );
@@ -168,6 +173,7 @@ export class AuthService {
     profileCloned: boolean;
     resetLink?: string;
   }> {
+    ConnectionManager.getInstance().throwIfReadOnly(targetConnectionId, "clone user to target connection");
     const sourceUser = await this.getUser(sourceConnectionId, uid);
 
     // Create user in target Auth instance
@@ -301,6 +307,7 @@ export class AuthService {
     collectionName = "users",
     fsProvider?: DocumentFileSystemProvider
   ): Promise<string> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "create user profile document");
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
     const docRef = firestore.collection(collectionName).doc(user.uid);
 
@@ -335,6 +342,7 @@ export class AuthService {
     collectionName = "users",
     fsProvider?: DocumentFileSystemProvider
   ): Promise<boolean> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "delete user profile document");
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
     const docRef = firestore.collection(collectionName).doc(uid);
     const doc = await docRef.get();
@@ -358,6 +366,7 @@ export class AuthService {
     collectionName = "users",
     fsProvider?: DocumentFileSystemProvider
   ): Promise<{ authDeleted: boolean; profileDeleted: boolean }> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "delete auth user and profile");
     let profileDeleted = false;
     if (deleteProfile) {
       profileDeleted = await this.deleteProfileDoc(connectionId, uid, collectionName, fsProvider);
@@ -374,6 +383,7 @@ export class AuthService {
     properties: import("firebase-admin/auth").CreateRequest,
     customClaims?: Record<string, any>
   ): Promise<UserRecord> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "create auth user");
     return ConnectionManager.getInstance().withAuth(connectionId, async (auth) => {
       const user = await auth.createUser(properties);
       if (customClaims && Object.keys(customClaims).length > 0) {
@@ -399,6 +409,7 @@ export class AuthService {
     connectionId: string,
     config: import("firebase-admin/auth").UpdateProjectConfigRequest
   ): Promise<import("firebase-admin/auth").ProjectConfig> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "update project auth configuration");
     return ConnectionManager.getInstance().withAuth(connectionId, (auth) =>
       auth.projectConfigManager().updateProjectConfig(config)
     );

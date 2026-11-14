@@ -24,9 +24,10 @@ timeline
         2026-11-02 : v1.19.1 Document Table View, Field Table SSR Hydration & Reliability Fixes
         2026-11-06 : v1.19.2 Performance, Local JSON Parity & Bug Fixes
         2026-11-13 : v1.20.0 Database Configuration, Point-in-Time Recovery (PITR) & Time Travel
+        2026-11-14 : v1.21.0 Bulk Field Transformer, Auto-Fix & Safety Shields
     section Planned
-        Q1 2027 : v1.21.0 Bulk Field Transformer & Type Casting : v1.22.0 PII Masking & Data Anonymization
-        Q2 2027 : v1.23.0 Schema Contract Linter & Validator : v1.24.0 Universal Cross-Collection Search
+        Q1 2027 : v1.22.0 Secret Manager Table View, Delete Secret, PII Masking & Query Explain
+        Q2 2027 : v1.23.0 Schema Contract Linter & TTL Policies : v1.24.0 Universal Cross-Collection Search & AI Queries
         Q3 2027 : v2.0.0 Security Rules Simulator, Storage Rules & Cross-Env Sync
 ```
 
@@ -65,10 +66,10 @@ timeline
 | **v1.19.1** | Shipped | 2026-11-02 | Interactive Document-as-Table webview (Property Sheet & Record view), Field Table SSR hydration, error handling & parsing fixes |
 | **v1.19.2** | Shipped | 2026-11-06 | Memory/CPU optimizations, zero-allocation search, Local JSON table parity, array index safety & reliability fixes |
 | **v1.20.0** | Shipped | 2026-11-13 | Firestore Database Configuration, Point-in-Time Recovery (PITR), Time-Travel Explorer (`readTime`), 7-Day Historical Diff & 1-Click Restore |
-| **v1.21.0** | Planned | Q1 2027 | Bulk Field Transformer & Type Casting Wizard (String ↔ Number/Timestamp, backfill defaults, bulk rename, WriteBatch safety) |
-| **v1.22.0** | Planned | Q2 2027 | PII Data Masking & Anonymization Engine (Prod → Staging replication, GDPR/HIPAA scrubber, fake data generator) |
-| **v1.23.0** | Planned | Q2 2027 | Schema Contract Linter & Validator (audit live collections against Zod / JSON Schema, detect missing/extra fields) |
-| **v1.24.0** | Planned | Q2 2027 | Universal Cross-Collection Search (parallel bounded search for doc IDs, values, emails, and references across all collections) |
+| **v1.21.0** | Shipped | 2026-11-14 | Collection Data Hygiene & Bulk Field Transformer (Type Casting, Backfills, Safe Batch Restructure), Schema Drift 1-Click Auto-Fix, Connection Read-Only Mode & Environment Badges (`PROD` / `STAGING` / `DEV`) |
+| **v1.22.0** | Planned | Q1 2027 | Secret Manager Table View (100s of secrets) & Delete Secret (`deleteSecret`), PII Data Masking & Anonymization Engine, Firestore Query Explain (`EXPLAIN ANALYZE`) & Index Utilization Profiler |
+| **v1.23.0** | Planned | Q2 2027 | Schema Contract Linter & Validator (TypeScript/Zod audit), Native Time-to-Live (TTL) Policy Inspector & GC Alerts |
+| **v1.24.0** | Planned | Q2 2027 | Universal Cross-Collection Search (`Ctrl+Alt+F`), Natural Language AI Query Builder (`vscode.lm`) |
 | **v2.0.0** | Future | Q3 2027 | Interactive Security Rules simulator & test runner, Cloud Storage security rules (`storage.rules`), cross-environment data & schema diff viewer |
 
 ---
@@ -173,7 +174,7 @@ timeline
 * **Collection & Multi-Collection Permanent Deletion (`deleteCollection` & `deleteMultipleCollections`)**:
   * Right-click any collection $\rightarrow$ **`Delete Collection...`** (`$(trash)`).
   * Right-click any connection or collection $\rightarrow$ **`Delete Multiple Collections...`** to selectively delete multiple collections with checkboxes.
-  * Recursive deletion across Cloud Firestore (`firestore.recursiveDelete`), Local Emulators, and Local JSON stores (`LocalJsonService.deleteCollection`).
+  * Recursive deletion across Cloud Firestore (`firestore.recursiveDelete`), Local Emulators, and Local JSON stores (`LocalJsonService.deleteCollection`).  
   * Safety modal confirmation with explicit warnings preventing accidental data loss.
 * **Nested Document Field Virtual File System & Editor (`ketrik-firestore-studio.openFieldInEditor`)**:
   * Fixed virtual file URI resolution for nested Map properties (`sidebar_finance.options`): now maps to `ketrik-firestore-studio://<conn>/<docPath>/<fieldPath>.json` instead of wrongly truncating to the leaf field name.
@@ -349,9 +350,9 @@ timeline
 
 ---
 
-### [v1.21.0] — Collection Data Hygiene & Bulk Field Transformer (Target: Q1 2027)
+### [v1.21.0] — Collection Data Hygiene, Bulk Field Transformer & Safety Shields (Target: Q1 2027)
 
-*Theme: Schema sanitation, batch type-casting, default backfills, and safe bulk property mutations across entire collections.*
+*Theme: Schema sanitation, batch type-casting, default backfills, 1-click auto-fix from Schema Drift Analyzer, connection-level read-only guards, and environment color shields.*
 
 * **Bulk Field Transformation Wizard (`ketrik-firestore-studio.transformCollectionField`)**:
   * Launch from collection tree node or right-click any column in the Collection Table (`$(symbol-variable) Transform Field Across Collection...`).
@@ -360,20 +361,28 @@ timeline
     * String $\leftrightarrow$ Firestore Timestamp (e.g. ISO-8601 string $\rightarrow$ `Timestamp`).
     * Timestamp $\leftrightarrow$ String or Epoch Milliseconds.
     * Boolean string conversion (`"true"` / `"false"` $\rightarrow$ boolean `true` / `false`).
-  * **Backfill & Default Values**: Backfill missing or null fields across legacy documents with a specified default value.
+    * Scalar $\rightarrow$ Array wrapper (e.g. `tag` $\rightarrow$ `[tag]`).
+  * **Backfill & Default Values**: Backfill missing or null fields across legacy documents with a specified default value or ServerTimestamp.
   * **Bulk Field Rename & Restructure**: Atomically rename a field or promote nested Map properties across 100% of documents in a collection.
-  * **Bulk Field Deletion**: Purge deprecated fields collection-wide with a single audited action.
+  * **Bulk Field Deletion**: Purge deprecated or obsolete fields collection-wide with an audited batch action.
+* **1-Click "Fix in Bulk Transformer" from Schema Drift Analyzer**:
+  * Direct bridge from `openSchemaAnalyzer`: when type inconsistencies (e.g. `price: number (85%) vs string (15%)`) or zombie keys ($< 5\%$) are detected, launch the transformer pre-filled with the exact target field, detected anomaly, and suggested casting rule.
 * **Interactive 5-Document Live Preview Diff**:
   * Renders a before/after modal showing the exact transformation applied to 5 sample documents from the collection before any write operations occur.
 * **Chunked WriteBatch Safety**:
   * Commits transformations in safety chunks of 400 documents per `WriteBatch`.
   * Real-time progress bar with document count, percentage, estimated remaining time, and an instant **Cancel / Abort** button.
+* **Connection Read-Only Mode & Environment Color Shields (`PROD` / `STAGING` / `DEV`)**:
+  * Assign environment tags (`production`, `staging`, `development`) and `readOnly: boolean` lock to any connection.
+  * Prominent color-coded safety badges in the Explorer Tree (`🔴 [PROD] 🔒`, `🟡 [STAGING]`, `🟢 [DEV]`).
+  * Hard client-side mutation shields in `DocumentFileSystemProvider` and table editors to completely prevent accidental writes/deletes on production databases.
+  * Quick 1-click **Lock / Unlock** toggle (`$(lock)`) on connection context menus with confirmation dialog.
 
 ---
 
-### [v1.22.0] — PII Data Masking & Anonymization Engine (Target: Q2 2027)
+### [v1.22.0] — PII Data Masking & Query Explain (Target: Q2 2027)
 
-*Theme: GDPR/HIPAA-compliant data sanitization, secure production-to-staging replication, and synthetic data masking.*
+*Theme: GDPR/HIPAA-compliant data sanitization, secure production-to-staging replication, and Firestore Query Explain execution profiling.*
 
 * **Anonymization Engine for Cross-Instance Replication**:
   * Seamlessly integrated into `copyCollectionToInstance`, `copyMultipleCollections`, and collection export wizards.
@@ -383,12 +392,16 @@ timeline
   * **Phone & Identity Scrambling**: Synthesize realistic test telephone numbers, names, and postal addresses using deterministic faker seeds.
   * **Field Redaction / Stripping**: Strip sensitive credentials entirely (`passwordHash`, `stripeCustomerId`, `apiKeys`, `tokens`).
 * **Masking Profiles**: Save and reuse anonymization profiles across different staging environments.
+* **Firestore Query Explain (`EXPLAIN` / `EXPLAIN ANALYZE`) & Index Profiler**:
+  * Dedicated **"⚡ Explain Query"** action in Collection Table query builder toolbar.
+  * Evaluates planner statistics and server execution metrics via official Firestore Admin explain API.
+  * Displays index selection breakdown (Optimal Index vs. Multiple Index Merge), **Index Entries Scanned vs. Documents Returned**, and billable read costs.
 
 ---
 
-### [v1.23.0] — Schema Contract Linter & Validator (Target: Q2 2027)
+### [v1.23.0] — Schema Contract Linter & Native TTL Policies (Target: Q2 2027)
 
-*Theme: Proactive database schema validation, contract enforcement, and runtime anomaly auditing.*
+*Theme: Proactive database schema validation, contract enforcement, and Firestore Time-to-Live (TTL) policy management.*
 
 * **Collection Schema Linter**:
   * Point Studio to a workspace TypeScript interface, Zod schema (`z.object({...})`), or JSON Schema.
@@ -401,12 +414,16 @@ timeline
   * Table view highlights non-compliant cells with warning squiggles and tooltips.
   * 1-Click filter: **"Show only invalid documents"** to quickly triage bad records.
   * Batch auto-fix suggestions for common anomalies (e.g. type coercion, default values).
+* **Native Firestore Time-to-Live (TTL) Policy Inspector & Controls**:
+  * Inspect deployed collection group TTL policies (`ttlConfig`) directly within Database Configuration.
+  * Visual hourglass badges (`⏳ TTL`) in tree and table views indicating expiration timestamp fields.
+  * Highlights documents already past expiration that are awaiting background asynchronous garbage collection (`⚠️ Expired — Pending GC`).
 
 ---
 
-### [v1.24.0] — Universal Cross-Collection Search (Target: Q2 2027)
+### [v1.24.0] — Universal Cross-Collection Search & AI Natural Language Queries (Target: Q2 2027)
 
-*Theme: Global entity resolution, multi-collection lookup, and universal database-wide search.*
+*Theme: Global entity resolution, multi-collection lookup, and AI-assisted query generation.*
 
 * **Global Search Modal (`Ctrl+Alt+F`)**:
   * Search for a Document ID, UUID, customer email, transaction token, or string across all root collections and subcollections in parallel.
@@ -417,6 +434,9 @@ timeline
 * **Unified Results Drawer**:
   * Groups results by collection with match count badges and preview snippets.
   * 1-Click jump directly to the matched document or open it in table view with highlighted rows.
+* **Natural Language AI Query Builder (`✨ Ask AI`)**:
+  * Integrated natural language search input in Collection Table toolbar powered by VS Code Language Model API (`vscode.lm`).
+  * Converts plain English prompts (e.g. *"users with active pro subscription created in last 30 days"*) directly into structured `where` and `orderBy` clauses using inferred collection schema.
 
 ---
 

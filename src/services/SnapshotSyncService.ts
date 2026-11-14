@@ -49,6 +49,14 @@ export class SnapshotSyncService {
         const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
         const autoSync = config.get<boolean>("autoSyncLocalSnapshots", true);
         if (autoSync) {
+          const { ConnectionManager } = await import("../connections/ConnectionManager.js");
+          const conn = ConnectionManager.getInstance().getConnection(binding.connectionId);
+          if (conn?.readOnly) {
+            vscode.window.showWarningMessage(
+              `Auto-sync skipped: connection '${conn.name}' is in Read-Only mode.`
+            );
+            return;
+          }
           await vscode.commands.executeCommand(
             "ketrik-firestore-studio.pushSnapshotToFirestore",
             doc.uri,
@@ -87,27 +95,26 @@ export class SnapshotSyncService {
   ): string {
     const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
     const safeConn = connectionId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const baseDir = path.resolve(wsRoot, ".firestore", safeConn);
+    const sanitizeSegment = (s: string) => (s === "." || s === ".." ? "_" : s.replace(/[\\/:*?"<>|]/g, "_"));
 
     if (fieldPath) {
-      return path.join(
-        wsRoot,
-        ".firestore",
-        safeConn,
-        docPath,
-        `${fieldPath}.json`
-      );
+      const safeDocSegments = docPath.split("/").filter(Boolean).map(sanitizeSegment);
+      const safeField = sanitizeSegment(fieldPath);
+      const resolved = path.resolve(baseDir, ...safeDocSegments, `${safeField}.json`);
+      if (!resolved.startsWith(baseDir + path.sep)) {
+        throw new Error("Invalid snapshot path outside .firestore directory.");
+      }
+      return resolved;
     }
 
-    const segments = docPath.split("/").filter(Boolean);
+    const segments = docPath.split("/").filter(Boolean).map(sanitizeSegment);
     const docId = segments.pop() || "document";
-    const collPath = segments.join("/");
-    return path.join(
-      wsRoot,
-      ".firestore",
-      safeConn,
-      collPath,
-      `${docId}.json`
-    );
+    const resolved = path.resolve(baseDir, ...segments, `${docId}.json`);
+    if (!resolved.startsWith(baseDir + path.sep)) {
+      throw new Error("Invalid snapshot path outside .firestore directory.");
+    }
+    return resolved;
   }
 
   /**

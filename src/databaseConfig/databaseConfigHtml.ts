@@ -1,5 +1,15 @@
 import { DatabaseMetadata } from "./types";
 
+function escapeHtmlConfig(val: any): string {
+  if (val === null || val === undefined) return "";
+  return String(val)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: string): string {
   const isPitrEnabled = data.pointInTimeRecoveryEnablement === "POINT_IN_TIME_RECOVERY_ENABLED";
   const isDeleteProtected = data.deleteProtectionState === "DELETE_PROTECTION_ENABLED";
@@ -26,8 +36,9 @@ export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: st
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Database Configuration: ${connectionName}</title>
+  <title>Database Configuration: ${escapeHtmlConfig(connectionName)}</title>
   <style>
     :root {
       --bg: var(--vscode-editor-background, #1e1e1e);
@@ -308,7 +319,7 @@ export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: st
   <div class="header">
     <div>
       <div class="title-row">
-        <h1>${connectionName}</h1>
+        <h1>${escapeHtmlConfig(connectionName)}</h1>
         <span class="badge ${isReadOnlyMode ? "warning" : "active"}">
           ${isReadOnlyMode ? (data.isLocalJson ? "Local JSON" : "Emulator") : "Cloud Firestore"}
         </span>
@@ -318,8 +329,8 @@ export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: st
         ${isDeleteProtected ? '<span class="badge active">🛡️ Delete Protected</span>' : ""}
       </div>
       <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">
-        Database ID: <strong>${data.databaseId}</strong> | Project: <strong>${data.projectId}</strong>
-        ${data.locationId ? ` | Region: <strong>${data.locationId}</strong>` : ""}
+        Database ID: <strong>${escapeHtmlConfig(data.databaseId)}</strong> | Project: <strong>${escapeHtmlConfig(data.projectId)}</strong>
+        ${data.locationId ? ` | Region: <strong>${escapeHtmlConfig(data.locationId)}</strong>` : ""}
       </div>
     </div>
     <div>
@@ -362,7 +373,7 @@ export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: st
         <div class="setting-sub">The oldest historical snapshot timestamp available to query</div>
       </div>
       <div style="font-size: 12px; font-weight: 500; color: ${isPitrEnabled ? "var(--fg)" : "var(--muted)"}">
-        ${earliestTimeDesc}
+        ${escapeHtmlConfig(earliestTimeDesc)}
       </div>
     </div>
   </div>
@@ -427,34 +438,34 @@ export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: st
     <div class="meta-grid">
       <div class="meta-item">
         <div class="meta-key">Database ID</div>
-        <div class="meta-val">${data.databaseId}</div>
+        <div class="meta-val">${escapeHtmlConfig(data.databaseId)}</div>
       </div>
       <div class="meta-item">
         <div class="meta-key">GCP Project</div>
-        <div class="meta-val">${data.projectId}</div>
+        <div class="meta-val">${escapeHtmlConfig(data.projectId)}</div>
       </div>
       <div class="meta-item">
         <div class="meta-key">Location / Region</div>
-        <div class="meta-val">${data.locationId || "Default"}</div>
+        <div class="meta-val">${escapeHtmlConfig(data.locationId || "Default")}</div>
       </div>
       <div class="meta-item">
         <div class="meta-key">Database Type</div>
-        <div class="meta-val">${data.type || "FIRESTORE_NATIVE"}</div>
+        <div class="meta-val">${escapeHtmlConfig(data.type || "FIRESTORE_NATIVE")}</div>
       </div>
       ${data.uid ? `
       <div class="meta-item">
         <div class="meta-key">Database UID</div>
-        <div class="meta-val" style="font-size: 11px; font-family: monospace;">${data.uid}</div>
+        <div class="meta-val" style="font-size: 11px; font-family: monospace;">${escapeHtmlConfig(data.uid)}</div>
       </div>` : ""}
       ${data.createTime ? `
       <div class="meta-item">
         <div class="meta-key">Created Time</div>
-        <div class="meta-val">${new Date(data.createTime).toLocaleDateString()}</div>
+        <div class="meta-val">${escapeHtmlConfig(new Date(data.createTime).toLocaleDateString())}</div>
       </div>` : ""}
       ${data.cmekConfig?.kmsKeyName ? `
       <div class="meta-item" style="grid-column: 1 / -1;">
         <div class="meta-key">Customer-Managed Encryption Key (CMEK)</div>
-        <div class="meta-val" style="font-size: 11px; font-family: monospace;">${data.cmekConfig.kmsKeyName}</div>
+        <div class="meta-val" style="font-size: 11px; font-family: monospace;">${escapeHtmlConfig(data.cmekConfig.kmsKeyName)}</div>
       </div>` : ""}
     </div>
   </div>
@@ -469,7 +480,7 @@ export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: st
       If your service account lacks IAM permissions to mutate database settings directly, run this command in terminal:
     </div>
     <div class="code-block">
-      <div class="code-content" id="gcloudCode">gcloud firestore databases update --database='${data.databaseId}' ${isPitrEnabled ? "--enable-pitr" : "--no-enable-pitr"} ${isDeleteProtected ? "--enable-delete-protection" : "--no-enable-delete-protection"} --project=${data.projectId}</div>
+      <div class="code-content" id="gcloudCode">gcloud firestore databases update --database='${escapeHtmlConfig(data.databaseId)}' ${isPitrEnabled ? "--enable-pitr" : "--no-enable-pitr"} ${isDeleteProtected ? "--enable-delete-protection" : "--no-enable-delete-protection"} --project=${escapeHtmlConfig(data.projectId)}</div>
       <button class="btn" id="btnCopyGcloud">📋 Copy</button>
     </div>
   </div>

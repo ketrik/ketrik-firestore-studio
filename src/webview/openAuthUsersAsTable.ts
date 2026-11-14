@@ -4,6 +4,7 @@ import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider
 import { getAuthUsersTableHtml } from "./authUsersTable/authUsersTableHtml";
 import openPath from "../commands/openPath";
 import { cloneAuthUserCommand, mintCustomTokenCommand } from "../auth/authCommands";
+import { ConnectionManager } from "../connections/ConnectionManager";
 
 /**
  * Open the Firebase Authentication users in a fast tabular webview.
@@ -178,6 +179,9 @@ export async function openAuthUsersAsTable(
       }
 
       case "editClaims": {
+        if (!ConnectionManager.getInstance().ensureWritable(connectionId, "edit user custom claims")) {
+          break;
+        }
         try {
           const user = await authService.getUser(connectionId, msg.uid);
           const initial = JSON.stringify(user.customClaims || {}, null, 2);
@@ -226,6 +230,9 @@ export async function openAuthUsersAsTable(
               "Cancel"
             );
             if (choice === "Create Profile") {
+              if (!ConnectionManager.getInstance().ensureWritable(connectionId, "create user profile document")) {
+                break;
+              }
               const createdPath = await authService.createProfileDoc(connectionId, user, "users", fsProvider);
               vscode.window.showInformationMessage(`Created Firestore profile at '${createdPath}'`);
               panel.webview.postMessage({ type: "profileStatus", uid: user.uid, exists: true });
@@ -261,6 +268,9 @@ export async function openAuthUsersAsTable(
       }
 
       case "toggleDisable": {
+        if (!ConnectionManager.getInstance().ensureWritable(connectionId, "toggle user disabled status")) {
+          break;
+        }
         try {
           const updated = await authService.updateUser(connectionId, msg.uid, {
             disabled: msg.disabled,
@@ -368,6 +378,9 @@ export async function openAuthUsersAsTable(
       }
 
       case "importUsersWizard": {
+        if (!ConnectionManager.getInstance().ensureWritable(connectionId, "import auth users")) {
+          break;
+        }
         try {
           const files = await vscode.window.showOpenDialog({
             canSelectFiles: true,
@@ -488,6 +501,9 @@ export async function openAuthUsersAsTable(
       }
 
       case "deleteUser": {
+        if (!ConnectionManager.getInstance().ensureWritable(connectionId, "delete auth user")) {
+          break;
+        }
         try {
           const uid = msg.uid;
           const userIdentifier = msg.email || uid;

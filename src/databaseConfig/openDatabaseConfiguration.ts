@@ -104,6 +104,13 @@ export async function openDatabaseConfiguration(target?: { connectionId?: string
     }
 
     if (message.command === "updateSetting") {
+      if (!ConnectionManager.getInstance().ensureWritable(conn.id, "update database configuration")) {
+        try {
+          const fresh = await configService.getDatabaseConfig(conn.id, true);
+          panel.webview.html = getDatabaseConfigHtml(fresh, conn.name);
+        } catch {}
+        return;
+      }
       const setting = message.setting;
       const value = message.value;
       try {

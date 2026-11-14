@@ -499,6 +499,16 @@ export async function pushSnapshotToFirestoreCommand(
     if (!binding) return;
   }
 
+  const pushConn = ConnectionManager.getInstance().getConnection(binding.connectionId);
+  if (pushConn?.readOnly) {
+    if (!silent) {
+      vscode.window.showErrorMessage(
+        `Connection '${pushConn.name}' is in Read-Only mode. Unlock it from the connection context menu to push snapshots.`
+      );
+    }
+    return;
+  }
+
   let rawBytes: Uint8Array;
   try {
     rawBytes = await vscode.workspace.fs.readFile(uri);

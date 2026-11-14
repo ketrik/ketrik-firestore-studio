@@ -4,7 +4,12 @@ import { AuthUserItem, ConnectionTreeItem, DocumentFieldItem, Item } from "../ex
 /**
  * Copy the Tree View item path to the clipboard.
  */
-export default async function copyPath(item: Item) {
+export default async function copyPath(item?: Item) {
+  if (!item) {
+    vscode.window.showWarningMessage("Please select an item in the Firestore Explorer to copy its path.");
+    return;
+  }
+
   if (item instanceof DocumentFieldItem) {
     const fullPath = `${item.reference.path}/${item.fullFieldPath || item.fieldName}`;
     await vscode.env.clipboard.writeText(fullPath);

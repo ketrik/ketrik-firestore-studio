@@ -13,7 +13,9 @@ import { reviveTimestamps } from "../utils/timestampUtils";
 class BatchWriter {
   private _batch: FirebaseFirestore.WriteBatch;
   private _opCount = 0;
+  private _byteCount = 0;
   private readonly _limit = 50;
+  private readonly _maxBytes = 4_000_000;
 
   constructor(private _firestore: FirebaseFirestore.Firestore) {
     this._batch = this._firestore.batch();
@@ -24,17 +26,35 @@ class BatchWriter {
     data: any,
     options: { merge?: boolean }
   ): Promise<void> {
+    const estBytes = Buffer.byteLength(JSON.stringify(data || {}), "utf8");
+    if (this._opCount > 0 && this._byteCount + estBytes > this._maxBytes) {
+      await this.flush();
+    }
     this._batch.set(ref, data, options);
     this._opCount++;
-    if (this._opCount >= this._limit) {
+    this._byteCount += estBytes;
+    if (this._opCount >= this._limit || this._byteCount >= this._maxBytes) {
       await this.flush();
     }
   }
 
   public async flush(): Promise<void> {
     if (this._opCount > 0) {
-      await this._batch.commit();
+      let attempt = 0;
+      while (true) {
+        try {
+          await this._batch.commit();
+          break;
+        } catch (err: any) {
+          attempt++;
+          if (attempt >= 3 || (err?.code !== 14 && err?.code !== 4 && err?.code !== 10)) {
+            throw err;
+          }
+          await new Promise((r) => setTimeout(r, 300 * attempt));
+        }
+      }
       this._opCount = 0;
+      this._byteCount = 0;
       this._batch = this._firestore.batch();
     }
   }
@@ -218,6 +238,9 @@ export async function copyMultipleCollectionsCommand(
   }
 
   const targetConn = targetPick.config;
+  if (!connectionManager.ensureWritable(targetConn.id, "copy collections into target database")) {
+    return;
+  }
   const isSameConnection = targetConn.id === sourceConnId;
 
   // 5. Naming Transformation Strategy
@@ -401,8 +424,14 @@ export async function copyMultipleCollectionsCommand(
 
               const localDocs = LocalJsonService.getInstance().listDocuments(sourceConn, source);
               if (localDocs.length > 0) {
-                LocalJsonService.getInstance().setDocuments(targetConn, target, localDocs);
-                totalDocsCopied += localDocs.length;
+                const docsToWrite = strategyPick.merge
+                  ? localDocs.map((d) => {
+                      const existing = LocalJsonService.getInstance().getDocument(targetConn, `${target}/${d.id}`);
+                      return existing ? { id: d.id, data: { ...existing, ...d.data } } : d;
+                    })
+                  : localDocs;
+                LocalJsonService.getInstance().setDocuments(targetConn, target, docsToWrite);
+                totalDocsCopied += docsToWrite.length;
               }
               completedCollections++;
             }
@@ -458,10 +487,16 @@ export async function copyMultipleCollectionsCommand(
                 const snap = await query.get();
                 if (snap.empty) break;
 
-                const batchDocs = snap.docs.map((doc) => ({
-                  id: doc.id,
-                  data: doc.data(),
-                }));
+                const batchDocs = snap.docs.map((doc) => {
+                  const data = doc.data();
+                  if (strategyPick.merge) {
+                    const existing = LocalJsonService.getInstance().getDocument(targetConn, `${target}/${doc.id}`);
+                    if (existing) {
+                      return { id: doc.id, data: { ...existing, ...data } };
+                    }
+                  }
+                  return { id: doc.id, data };
+                });
                 LocalJsonService.getInstance().setDocuments(targetConn, target, batchDocs);
                 collDocsCopied += batchDocs.length;
                 totalDocsCopied += batchDocs.length;

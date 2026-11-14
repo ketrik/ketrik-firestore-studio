@@ -405,6 +405,13 @@ export async function openCollectionAsTable(
 
     if (message.command === "restoreDocFromHistory") {
       if (!message.docPath || !activeReadTime) return;
+      const liveConn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (liveConn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${liveConn.name}' is in Read-Only mode. Unlock it from the connection context menu to restore documents.`
+        );
+        return;
+      }
       await restoreDocumentFromHistoryCommand({
         connectionId,
         docPath: message.docPath,
@@ -420,6 +427,7 @@ export async function openCollectionAsTable(
         await initialLoad;
       } catch {}
       const bookmarks = await loadSavedBookmarks();
+      const liveConn = ConnectionManager.getInstance().getConnection(connectionId);
       panel.webview.postMessage({
         type: "init",
         headers,
@@ -427,6 +435,8 @@ export async function openCollectionAsTable(
         hasMore: hasMoreState,
         bookmarks,
         activeReadTime: activeReadTime ? activeReadTime.toISOString() : null,
+        isReadOnly: !!liveConn?.readOnly,
+        environment: liveConn?.environment,
       });
       return;
     }
@@ -458,6 +468,7 @@ export async function openCollectionAsTable(
     }
 
     if (message.command === "runServerQuery") {
+      if (isLoading) return;
       activeQueryClauses = (message.clauses as QueryClause[]) || [];
       activeMatchMode = message.matchMode === "or" ? "or" : "and";
       loadedDocs = [];
@@ -481,6 +492,7 @@ export async function openCollectionAsTable(
     }
 
     if (message.command === "resetServerQuery") {
+      if (isLoading) return;
       activeQueryClauses = [];
       activeMatchMode = "and";
       loadedDocs = [];
@@ -512,6 +524,7 @@ export async function openCollectionAsTable(
     }
 
     if (message.command === "refresh") {
+      if (isLoading) return;
       loadedDocs = [];
       lastDoc = null;
       headers = [];
@@ -526,6 +539,8 @@ export async function openCollectionAsTable(
           docs: loadedDocs,
           hasMore: hasMoreState,
           bookmarks,
+          isReadOnly: !!conn?.readOnly,
+          environment: conn?.environment,
         });
       } finally {
         isLoading = false;
@@ -534,6 +549,13 @@ export async function openCollectionAsTable(
     }
 
     if (message.command === "createDoc") {
+      const liveConn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (liveConn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${liveConn.name}' is in Read-Only mode. Unlock it from the connection context menu to create documents.`
+        );
+        return;
+      }
       try {
         const docId = await vscode.window.showInputBox({
           prompt: "Enter Document ID (leave blank for auto-generated ID)",
@@ -589,6 +611,8 @@ export async function openCollectionAsTable(
           docs: loadedDocs,
           hasMore: hasMoreState,
           bookmarks,
+          isReadOnly: !!conn?.readOnly,
+          environment: conn?.environment,
         });
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to create document: ${err.message}`);
@@ -604,6 +628,13 @@ export async function openCollectionAsTable(
     }
 
     if (message.command === "updateField" && message.docPath && message.field !== undefined) {
+      const liveConn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (liveConn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${liveConn.name}' is in Read-Only mode. Unlock it from the connection context menu to edit fields.`
+        );
+        return;
+      }
       const { docPath, field, value } = message;
       try {
         // Sanitize value for write
@@ -807,6 +838,7 @@ export async function openCollectionAsTable(
             snapshot = s;
           }
         }
+        CostService.getInstance().recordOperation(connectionId, "read", 1);
 
         if (!snapshot || !snapshot.exists) {
           panel.webview.postMessage({
@@ -881,7 +913,7 @@ export async function openCollectionAsTable(
         const conn = ConnectionManager.getInstance().getConnection(connectionId);
         if (conn?.isLocalJson) {
           // Local JSON Vector Search (in-memory math)
-          const allDocs = LocalJsonService.getInstance().listDocuments(conn, collectionId);
+          const allDocs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
           const scoredDocs: { doc: any; distance: number }[] = [];
 
           const getNestedVal = (obj: any, path: string): any => {
@@ -1225,6 +1257,13 @@ export async function openCollectionAsTable(
     }
 
     if (message.command === "promptBatchUpdate") {
+      const liveConn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (liveConn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${liveConn.name}' is in Read-Only mode. Unlock it from the connection context menu to perform batch updates.`
+        );
+        return;
+      }
       const docIds = (message.docIds as string[]) || [];
       if (docIds.length === 0) return;
 
@@ -1344,6 +1383,13 @@ export async function openCollectionAsTable(
     }
 
     if (message.command === "promptBatchDelete") {
+      const liveConn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (liveConn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${liveConn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete documents.`
+        );
+        return;
+      }
       const docIds = (message.docIds as string[]) || [];
       if (docIds.length === 0) return;
 

@@ -178,6 +178,7 @@ export class DatabaseConfigService {
     updates: UpdateDatabaseConfigPayload
   ): Promise<DatabaseMetadata> {
     const connectionManager = ConnectionManager.getInstance();
+    connectionManager.throwIfReadOnly(connectionId, "update database configuration");
     const conn = connectionManager.getConnection(connectionId);
     if (!conn) {
       throw new Error(`Connection with ID '${connectionId}' not found.`);

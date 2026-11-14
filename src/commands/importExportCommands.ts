@@ -12,40 +12,53 @@ import { CostService } from "../cost/costService";
  * Basic CSV Parser supporting quoted fields and commas.
  */
 function parseCsv(text: string): Record<string, any>[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length < 2) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (c === "," && !inQuotes) {
+      row.push(cur.trim());
+      cur = "";
+    } else if ((c === "\r" || c === "\n") && !inQuotes) {
+      if (c === "\r" && text[i + 1] === "\n") {
+        i++;
+      }
+      row.push(cur.trim());
+      if (row.some((cell) => cell.length > 0)) {
+        rows.push(row);
+      }
+      row = [];
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  if (cur.length > 0 || row.length > 0) {
+    row.push(cur.trim());
+    if (row.some((cell) => cell.length > 0)) {
+      rows.push(row);
+    }
+  }
+
+  if (rows.length < 2) {
     return [];
   }
 
-  function splitLine(line: string): string[] {
-    const result: string[] = [];
-    let cur = "";
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (c === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (c === "," && !inQuotes) {
-        result.push(cur.trim());
-        cur = "";
-      } else {
-        cur += c;
-      }
-    }
-    result.push(cur.trim());
-    return result;
-  }
-
-  const headers = splitLine(lines[0]);
+  const headers = rows[0];
   const records: Record<string, any>[] = [];
 
-  for (let i = 1; i < lines.length; i++) {
-    const values = splitLine(lines[i]);
+  for (let i = 1; i < rows.length; i++) {
+    const values = rows[i];
     const record: Record<string, any> = {};
     for (let j = 0; j < headers.length; j++) {
       const header = headers[j];
@@ -123,7 +136,11 @@ function recordsToCsv(records: Record<string, any>[]): string {
 /**
  * Command: Export a collection to JSON, NDJSON, or CSV.
  */
-export async function exportCollectionCommand(item: CollectionItem) {
+export async function exportCollectionCommand(item?: CollectionItem) {
+  if (!item || !item.collectionId) {
+    vscode.window.showWarningMessage("Please select a collection in the Firestore Explorer to export.");
+    return;
+  }
   const collectionName = item.collectionId;
   const connectionId = item.connectionId;
   const collectionPath = item.reference.path;
@@ -236,12 +253,24 @@ export async function exportCollectionCommand(item: CollectionItem) {
  * Command: Import dataset (CSV, JSON, NDJSON) into a Firestore collection.
  */
 export async function importCollectionCommand(
-  item: CollectionItem,
+  item: CollectionItem | undefined,
   explorerDataProvider: ExplorerDataProvider
 ) {
+  if (!item || !item.collectionId) {
+    vscode.window.showWarningMessage("Please select a collection in the Firestore Explorer to import into.");
+    return;
+  }
   const collectionName = item.collectionId;
   const connectionId = item.connectionId;
   const collectionPath = item.reference.path;
+
+  const connCheck = ConnectionManager.getInstance().getConnection(connectionId);
+  if (connCheck?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${connCheck.name}' is in Read-Only mode. Unlock it from the connection context menu to import data.`
+    );
+    return;
+  }
 
   // 1. Pick file
   const fileUris = await vscode.window.showOpenDialog({

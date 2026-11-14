@@ -275,6 +275,46 @@ export function getDocumentTableHtml(params: {
           opacity: 1;
           color: var(--vscode-textLink-foreground);
         }
+
+        .info-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 12px;
+          margin-bottom: 12px;
+          font-size: 0.88em;
+          color: var(--vscode-descriptionForeground);
+        }
+        .info-text {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .info-text b {
+          color: var(--vscode-editor-foreground);
+        }
+        .copy-path-inline {
+          background: none;
+          border: none;
+          cursor: pointer;
+          padding: 1px 4px;
+          margin-left: 2px;
+          font-size: 0.95em;
+          opacity: 0.6;
+          border-radius: 3px;
+          color: inherit;
+          line-height: 1;
+        }
+        .copy-path-inline:hover {
+          opacity: 1;
+          background: rgba(128, 128, 128, 0.2);
+        }
+        .info-tip {
+          white-space: nowrap;
+          opacity: 0.85;
+        }
       </style>
     </head>
     <body>
@@ -321,18 +361,19 @@ export function getDocumentTableHtml(params: {
 
       <div class="info-bar" id="infoBar">
         <div class="info-text">
-          Path: <b>${escapeHtml(docPath)}</b>
+          <span>Path: <b id="docPathDisplay">${escapeHtml(docPath)}</b><button class="copy-path-inline" id="copyPathBtn" title="Copy Document Path">📋</button></span>
           ${
             parentCollectionPath
-              ? `&nbsp;|&nbsp; Parent collection: <span class="doc-parent-link link-text" id="parentColLink">${escapeHtml(parentCollectionPath)}</span>`
+              ? `<span>&bull;</span> <span>Parent collection: <span class="doc-parent-link link-text" id="parentColLink">${escapeHtml(parentCollectionPath)}</span></span>`
               : ""
           }
-          &nbsp;|&nbsp; Showing <b id="field-count">${fieldCount}</b> fields
-          <span id="search-note" style="display:none; font-style:italic; opacity:0.85;">
+          <span>&bull;</span>
+          <span>Showing <b id="field-count">${fieldCount}</b> fields</span>
+          <span id="search-note" class="search-note" style="display:none;">
             — (Filtered)
           </span>
         </div>
-        <div>Double-click any value cell to edit | Click field name to inspect</div>
+        <div class="info-tip">Double-click any value cell to edit &bull; Click field name to inspect</div>
       </div>
 
       <div class="table-container">
@@ -643,6 +684,7 @@ export function getDocumentTableClientScript(): string {
 
         if (msg.type === 'error') {
           showError(msg.message || 'An error occurred');
+          filterFields();
           return;
         }
 
@@ -761,6 +803,19 @@ export function getDocumentTableClientScript(): string {
         };
       }
 
+      const copyPathBtn = document.getElementById('copyPathBtn');
+      if (copyPathBtn) {
+        copyPathBtn.onclick = function(e) {
+          e.stopPropagation();
+          vscode.postMessage({ command: 'copyPath', path: docPath });
+          const originalText = copyPathBtn.textContent;
+          copyPathBtn.textContent = '✓';
+          setTimeout(function() {
+            copyPathBtn.textContent = originalText;
+          }, 1500);
+        };
+      }
+
       // In-cell Editing
       let selectedCell = null;
       let activeEditingCell = null;
@@ -788,51 +843,9 @@ export function getDocumentTableClientScript(): string {
 
         activeEditingCell = td;
         td.classList.add('editing');
-
-        if (type === 'boolean') {
-          const currentBool = originalVal === true;
-          const select = document.createElement('select');
-          select.className = 'cell-input';
-          const optTrue = document.createElement('option');
-          optTrue.value = 'true';
-          optTrue.textContent = 'true';
-          optTrue.selected = currentBool;
-          const optFalse = document.createElement('option');
-          optFalse.value = 'false';
-          optFalse.textContent = 'false';
-          optFalse.selected = !currentBool;
-          select.appendChild(optTrue);
-          select.appendChild(optFalse);
-
-          td.innerHTML = '';
-          td.appendChild(select);
-          select.focus();
-
-          function commitBool() {
-            const newVal = select.value === 'true';
-            finishEdit(newVal);
-          }
-          select.onchange = commitBool;
-          select.onblur = commitBool;
-          select.onkeydown = function(e) {
-            if (e.key === 'Enter') { e.preventDefault(); commitBool(); }
-            if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
-          };
-          return;
-        }
-
-        const input = document.createElement('input');
-        input.type = type === 'number' ? 'number' : 'text';
-        if (type === 'number') input.step = 'any';
-        input.className = 'cell-input';
-        input.value = originalVal !== null && originalVal !== undefined ? String(originalVal) : '';
-
-        td.innerHTML = '';
-        td.appendChild(input);
-        input.focus();
-        input.select();
-
         let isDone = false;
+        let input = null;
+
         function finishEdit(forcedVal) {
           if (isDone) return;
           isDone = true;
@@ -882,6 +895,49 @@ export function getDocumentTableClientScript(): string {
           td.classList.remove('editing');
           td.innerHTML = formatCellValue(originalVal, field);
         }
+
+        if (type === 'boolean') {
+          const currentBool = originalVal === true;
+          const select = document.createElement('select');
+          select.className = 'cell-input';
+          const optTrue = document.createElement('option');
+          optTrue.value = 'true';
+          optTrue.textContent = 'true';
+          optTrue.selected = currentBool;
+          const optFalse = document.createElement('option');
+          optFalse.value = 'false';
+          optFalse.textContent = 'false';
+          optFalse.selected = !currentBool;
+          select.appendChild(optTrue);
+          select.appendChild(optFalse);
+
+          td.innerHTML = '';
+          td.appendChild(select);
+          select.focus();
+
+          function commitBool() {
+            const newVal = select.value === 'true';
+            finishEdit(newVal);
+          }
+          select.onchange = commitBool;
+          select.onblur = commitBool;
+          select.onkeydown = function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); commitBool(); }
+            if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+          };
+          return;
+        }
+
+        input = document.createElement('input');
+        input.type = type === 'number' ? 'number' : 'text';
+        if (type === 'number') input.step = 'any';
+        input.className = 'cell-input';
+        input.value = originalVal !== null && originalVal !== undefined ? String(originalVal) : '';
+
+        td.innerHTML = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
 
         input.onblur = function() { finishEdit(); };
         input.onkeydown = function(e) {
@@ -961,6 +1017,8 @@ export function getDocumentTableClientScript(): string {
           currentFields = allFields;
           const countEl = document.getElementById('field-count');
           if (countEl) countEl.textContent = allFields.length;
+          const pathDisplay = document.getElementById('docPathDisplay');
+          if (pathDisplay) pathDisplay.textContent = docPath;
           updateEmptyState(allFields.length);
         }
       } catch (err) {

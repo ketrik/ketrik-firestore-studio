@@ -129,6 +129,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         if (!docData) {
           const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
           const docSnap = await firestore.doc(item.parentDocRef.path).get();
+          CostService.getInstance().recordOperation(item.connectionId, "read", 1);
           if (docSnap.exists) {
             docData = docSnap.data() || {};
           }
@@ -347,6 +348,13 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     }
 
     if (message.command === "updateFieldEntry") {
+      const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+      if (conn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to edit entries.`
+        );
+        return;
+      }
       const { rowId, field, value, index } = message;
       try {
         let writeVal: any = value;
@@ -439,6 +447,13 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     }
 
     if (message.command === "deleteFieldEntry") {
+      const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+      if (conn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete entries.`
+        );
+        return;
+      }
       const { rowId, index } = message;
       const confirm = await vscode.window.showWarningMessage(
         `Are you sure you want to delete entry '${rowId}' from '${targetFieldPath}'?`,
@@ -515,6 +530,13 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     }
 
     if (message.command === "addFieldEntry") {
+      const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+      if (conn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to add entries.`
+        );
+        return;
+      }
       try {
         let entryKey = "";
         if (!ctx.isArray) {

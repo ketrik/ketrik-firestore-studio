@@ -309,6 +309,19 @@ export async function editConnectionCommand(item?: ConnectionTreeItem): Promise<
     );
   }
 
+  actions.push(
+    {
+      label: conn.readOnly ? "$(unlock) Disable Read-Only Shield (Allow Writes)" : "$(lock) Enable Read-Only Shield (Block Writes)",
+      description: conn.readOnly ? "Currently Locked" : "Currently Read/Write",
+      action: "toggleReadOnly",
+    },
+    {
+      label: "$(tag) Set Environment Shield",
+      description: conn.environment ? `Current: ${conn.environment.toUpperCase()}` : "Not set",
+      action: "environment",
+    }
+  );
+
   actions.push({ label: "$(zap) Test Connection", action: "test" });
 
   const action = await vscode.window.showQuickPick(actions, {
@@ -386,6 +399,23 @@ export async function editConnectionCommand(item?: ConnectionTreeItem): Promise<
       await connectionManager.updateConnection(conn);
       vscode.window.showInformationMessage("Database ID updated!");
     }
+  } else if (action.action === "toggleReadOnly") {
+    await toggleConnectionReadOnlyCommand(item);
+  } else if (action.action === "environment") {
+    const envPick = await vscode.window.showQuickPick(
+      [
+        { label: "🔴 Production", description: "High-risk environment. Recommended with Read-Only shield.", env: "production" as const },
+        { label: "🟡 Staging", description: "Pre-production testing environment.", env: "staging" as const },
+        { label: "🟢 Development", description: "Local or shared dev sandbox.", env: "development" as const },
+        { label: "$(clear-all) None (Clear Environment)", description: "Remove environment tag", env: undefined },
+      ],
+      { placeHolder: "Select environment tier" }
+    );
+    if (envPick) {
+      conn.environment = envPick.env;
+      await connectionManager.updateConnection(conn);
+      vscode.window.showInformationMessage(`Environment updated to ${conn.environment ? conn.environment.toUpperCase() : "None"}!`);
+    }
   } else if (action.action === "test") {
     await testConnectionCommand(item);
   }
@@ -459,5 +489,54 @@ export async function testConnectionCommand(item?: ConnectionTreeItem): Promise<
     vscode.window.showInformationMessage(`Connection to '${conn.name}' succeeded!`);
   } else {
     vscode.window.showErrorMessage(`Connection test failed: ${result.message}`);
+  }
+}
+
+/**
+ * Toggle Read-Only mode for a connection.
+ */
+export async function toggleConnectionReadOnlyCommand(item?: ConnectionTreeItem): Promise<void> {
+  const connectionManager = ConnectionManager.getInstance();
+  const connections = connectionManager.getConnections();
+
+  let conn = item?.config;
+  if (!conn) {
+    if (connections.length === 0) {
+      vscode.window.showInformationMessage("No connections available.");
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      connections.map((c) => ({
+        label: `${c.readOnly ? "$(lock)" : "$(unlock)"} ${c.name}`,
+        description: c.readOnly ? "Read-Only" : "Read/Write",
+        config: c,
+      })),
+      { placeHolder: "Select connection to toggle Read-Only shield" }
+    );
+    if (!picked) {
+      return;
+    }
+    conn = picked.config;
+  }
+
+  const willBeReadOnly = !conn.readOnly;
+  if (willBeReadOnly) {
+    conn.readOnly = true;
+    await connectionManager.updateConnection(conn);
+    vscode.window.showInformationMessage(
+      `🔒 Read-Only shield ENABLED for "${conn.name}". All document writes, updates, and deletes are now blocked.`
+    );
+  } else {
+    const confirm = await vscode.window.showWarningMessage(
+      `Disable Read-Only shield for "${conn.name}"? This will allow live writes and mutations to the database.`,
+      { modal: true },
+      "Enable Writes (Unlock)",
+      "Cancel"
+    );
+    if (confirm === "Enable Writes (Unlock)") {
+      conn.readOnly = false;
+      await connectionManager.updateConnection(conn);
+      vscode.window.showInformationMessage(`🔓 Read-Only shield DISABLED for "${conn.name}". Live mutations permitted.`);
+    }
   }
 }

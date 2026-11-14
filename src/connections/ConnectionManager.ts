@@ -8,6 +8,8 @@ import { parseHostPort, probePort } from "../emulator/portUtils";
 import { SecretStorageService } from "../secrets/SecretStorageService";
 import { SecretManagerService } from "../secrets/SecretManagerService";
 
+export type ConnectionEnvironment = "production" | "staging" | "development";
+
 export interface FirestoreConnectionConfig {
   id: string;
   name: string;
@@ -23,6 +25,8 @@ export interface FirestoreConnectionConfig {
   localJsonPath?: string;
   useSecretStorage?: boolean;
   secretUri?: string;
+  readOnly?: boolean;
+  environment?: ConnectionEnvironment;
 }
 
 export class ConnectionManager implements vscode.Disposable {
@@ -219,6 +223,55 @@ export class ConnectionManager implements vscode.Disposable {
       await this._cleanupInstance(conn.id);
       await this.saveConnections(connections);
     }
+  }
+
+  /**
+   * Helper to verify if a connection is currently locked in Read-Only mode.
+   */
+  public isReadOnly(connectionId: string): boolean {
+    const conn = this.getConnection(connectionId);
+    return !!conn?.readOnly;
+  }
+
+  /**
+   * Show an error message and return false if the connection is in Read-Only mode.
+   */
+  public ensureWritable(connectionId: string | undefined, actionDesc = "perform this operation"): boolean {
+    if (!connectionId) return true;
+    const conn = this.getConnection(connectionId);
+    if (conn?.readOnly) {
+      vscode.window.showErrorMessage(
+        `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to ${actionDesc}.`
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Throw an Error if the connection is in Read-Only mode (for service-layer enforcement).
+   */
+  public throwIfReadOnly(connectionId: string | undefined, actionDesc = "perform this operation"): void {
+    if (!connectionId) return;
+    const conn = this.getConnection(connectionId);
+    if (conn?.readOnly) {
+      throw new Error(
+        `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to ${actionDesc}.`
+      );
+    }
+  }
+
+  /**
+   * Toggle the Read-Only status of a connection.
+   */
+  public async toggleReadOnly(connectionId: string): Promise<boolean> {
+    const conn = this.getConnection(connectionId);
+    if (!conn) {
+      throw new Error(`Connection with ID '${connectionId}' not found.`);
+    }
+    conn.readOnly = !conn.readOnly;
+    await this.updateConnection(conn);
+    return conn.readOnly;
   }
 
   public async deleteConnection(id: string): Promise<void> {

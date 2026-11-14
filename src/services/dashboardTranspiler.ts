@@ -308,56 +308,54 @@ export function decompileDashboard(rawDoc: any): DryDashboardDocument {
     }
   }
 
-  // Build a default table template based on the most common DataGrid pattern
-  let templateColumns: DryColumnDefinition[] = [];
+  // Build table templates based on observed DataGrid patterns
   let templateSampleCC: any = null;
+
+  const tableTemplates: Record<string, DryTableTemplate> = {};
+  const templateSigToName = new Map<string, string>();
+  const cardTemplateMap = new WeakMap<any, string>();
+  let templateCounter = 1;
 
   for (const group of root.groups || []) {
     for (const item of group.items || []) {
       if (item.cardConfig && Array.isArray(item.cardConfig)) {
         const contentBlock = item.cardConfig.find((c: any) => c.type === "cardContent");
         if (contentBlock && contentBlock.contentConfig && Array.isArray(contentBlock.contentConfig.columns)) {
-          templateSampleCC = contentBlock.contentConfig;
-          const cols: string[] = templateSampleCC.columns;
-          templateColumns = cols.map((colId) => {
+          const cc = contentBlock.contentConfig;
+          if (!templateSampleCC) {
+            templateSampleCC = cc;
+          }
+          const cols: string[] = cc.columns;
+          const builtCols: DryColumnDefinition[] = cols.map((colId) => {
             const def: DryColumnDefinition = { id: colId };
-            if (templateSampleCC.headerTitles && templateSampleCC.headerTitles[colId]) {
-              def.title = templateSampleCC.headerTitles[colId];
-            }
-            if (templateSampleCC.columnWidths && templateSampleCC.columnWidths[colId]) {
-              def.width = templateSampleCC.columnWidths[colId];
-            }
-            if (templateSampleCC.columnsAlign && templateSampleCC.columnsAlign[colId]) {
-              def.align = templateSampleCC.columnsAlign[colId];
-            }
-            if (templateSampleCC.columnsVisuals && templateSampleCC.columnsVisuals[colId]) {
-              def.visual = templateSampleCC.columnsVisuals[colId];
-            }
-            if (templateSampleCC.columnsColorRules && templateSampleCC.columnsColorRules[colId]) {
-              def.colorRule = templateSampleCC.columnsColorRules[colId];
-            }
-            if (templateSampleCC.dataFormatters && templateSampleCC.dataFormatters[colId]) {
-              def.format = templateSampleCC.dataFormatters[colId];
-            }
+            if (cc.headerTitles && cc.headerTitles[colId]) def.title = cc.headerTitles[colId];
+            if (cc.columnWidths && cc.columnWidths[colId]) def.width = cc.columnWidths[colId];
+            if (cc.columnsAlign && cc.columnsAlign[colId]) def.align = cc.columnsAlign[colId];
+            if (cc.columnsVisuals && cc.columnsVisuals[colId]) def.visual = cc.columnsVisuals[colId];
+            if (cc.columnsColorRules && cc.columnsColorRules[colId]) def.colorRule = cc.columnsColorRules[colId];
+            if (cc.dataFormatters && cc.dataFormatters[colId]) def.format = cc.dataFormatters[colId];
             return def;
           });
-          break;
+          const tmplObj: DryTableTemplate = {
+            density: cc.density || "comfortable",
+            idColumnName: cc.idColumnName || "Metric",
+            pageSize: cc.pageSize || 100,
+            hideFooter: cc.hideFooter !== undefined ? cc.hideFooter : true,
+            defaultColumnWidth: cc.columnWidth || 150,
+            columns: builtCols,
+          };
+          const sig = JSON.stringify(tmplObj);
+          let tmplName = templateSigToName.get(sig);
+          if (!tmplName) {
+            tmplName = templateCounter === 1 ? "standardRiskGrid" : `gridTemplate_${templateCounter}`;
+            templateCounter++;
+            templateSigToName.set(sig, tmplName);
+            tableTemplates[tmplName] = tmplObj;
+          }
+          cardTemplateMap.set(item, tmplName);
         }
       }
     }
-    if (templateSampleCC) break;
-  }
-
-  const tableTemplates: Record<string, DryTableTemplate> = {};
-  if (templateSampleCC) {
-    tableTemplates["standardRiskGrid"] = {
-      density: templateSampleCC.density || "comfortable",
-      idColumnName: templateSampleCC.idColumnName || "Metric",
-      pageSize: templateSampleCC.pageSize || 100,
-      hideFooter: templateSampleCC.hideFooter !== undefined ? templateSampleCC.hideFooter : true,
-      defaultColumnWidth: templateSampleCC.columnWidth || 150,
-      columns: templateColumns,
-    };
   }
 
   // Second pass: map groups and items into DRY items
@@ -422,7 +420,7 @@ export function decompileDashboard(rawDoc: any): DryDashboardDocument {
           dataKey: contentBlock?.dataKey || "",
           title: headerBlock?.defaults?.title,
           subheader: headerBlock?.defaults?.subheader,
-          template: "standardRiskGrid",
+          template: cardTemplateMap.get(item) || "standardRiskGrid",
           size: headerBlock?.defaults?.size,
           formatters: cc.dataFormatters,
           colorRules: Object.keys(resolvedColorRules).length ? resolvedColorRules : undefined,
@@ -560,31 +558,30 @@ export function compileDashboard(dryDoc: DryDashboardDocument): any {
           if (col.visual) columnsVisuals[col.id] = col.visual;
         }
 
+        // Apply columnOverrides
+        if (item.columnOverrides) {
+          for (const [colId, ov] of Object.entries<Partial<DryColumnDefinition>>(item.columnOverrides)) {
+            if (ov.width !== undefined) columnWidths[colId] = ov.width;
+            if (ov.title !== undefined) headerTitles[colId] = ov.title;
+            if (ov.align !== undefined) columnsAlign[colId] = ov.align;
+            if (ov.format !== undefined) dataFormatters[colId] = ov.format;
+            if (ov.colorRule !== undefined) columnsColorRules[colId] = ov.colorRule;
+            if (ov.visual !== undefined) columnsVisuals[colId] = ov.visual;
+          }
+        }
+
         // Apply visual overrides
         if (item.visualOverrides) {
           Object.assign(columnsVisuals, item.visualOverrides);
         }
 
-        // Build target table's colorRules dictionary
-        // If columnsColorRules references rules like threshold_0_binary, we map them back
+        // Build target table's colorRules dictionary only for rules referenced by this table
         const tableColorRules: Record<string, any> = {};
-        for (const [targetName, runtimeRule] of Object.entries(runtimeColorRules)) {
-          // Base name e.g. "threshold_0"
-          const baseName = targetName.split("_")[0] + (targetName.includes("threshold_") ? `_${targetName.split("_")[1]}` : "");
-          tableColorRules[targetName] = runtimeRule;
-          if (!tableColorRules[baseName]) {
-            tableColorRules[baseName] = runtimeRule;
-          }
-        }
-
-        // Ensure any rule referenced in columnsColorRules is present in tableColorRules
         const finalColumnsColorRules: Record<string, string> = {};
         for (const [col, ruleRef] of Object.entries(columnsColorRules)) {
+          finalColumnsColorRules[col] = ruleRef;
           if (runtimeColorRules[ruleRef]) {
-            finalColumnsColorRules[col] = ruleRef;
             tableColorRules[ruleRef] = runtimeColorRules[ruleRef];
-          } else {
-            finalColumnsColorRules[col] = ruleRef;
           }
         }
 

@@ -9,6 +9,7 @@ import {
   editConnectionCommand,
   deleteConnectionCommand,
   testConnectionCommand,
+  toggleConnectionReadOnlyCommand,
 } from "./commands/connectionCommands";
 import {
   jumpToDocumentCommand,
@@ -48,6 +49,7 @@ import {
   explodeFieldCommand,
   consolidateCollectionCommand,
 } from "./commands/migrationCommands";
+import { transformCollectionFieldCommand } from "./transformation/transformCommands";
 import {
   purgeFieldTombstonesCommand,
   purgeCollectionTombstonesCommand,
@@ -275,6 +277,10 @@ export async function activate(context: vscode.ExtensionContext) {
       editConnectionCommand
     ),
     vscode.commands.registerCommand(
+      "ketrik-firestore-studio.toggleConnectionReadOnly",
+      toggleConnectionReadOnlyCommand
+    ),
+    vscode.commands.registerCommand(
       "ketrik-firestore-studio.deleteConnection",
       deleteConnectionCommand
     ),
@@ -450,6 +456,10 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.analyzeCollectionSchema",
       (item?: any) => openSchemaAnalyzer(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.transformCollectionField",
+      (item?: any) => transformCollectionFieldCommand(item, explorerDataProvider)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.openDataGraph",

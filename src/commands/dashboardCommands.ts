@@ -73,12 +73,17 @@ export async function convertDashboardFormatCommand(arg?: DocumentItem | vscode.
 
       if (!action) return;
 
-      if (action.action === "replace" && activeEditor && targetUri && activeEditor.document.uri.toString() === targetUri.toString()) {
+      if (action.action === "replace" && targetUri) {
+        const targetDoc = await vscode.workspace.openTextDocument(targetUri);
+        const editor =
+          activeEditor && activeEditor.document.uri.toString() === targetUri.toString()
+            ? activeEditor
+            : await vscode.window.showTextDocument(targetDoc);
         const fullRange = new vscode.Range(
-          activeEditor.document.positionAt(0),
-          activeEditor.document.positionAt(text.length)
+          editor.document.positionAt(0),
+          editor.document.positionAt(editor.document.getText().length)
         );
-        await activeEditor.edit((editBuilder) => {
+        await editor.edit((editBuilder) => {
           editBuilder.replace(fullRange, formattedJson);
         });
         vscode.window.showInformationMessage("Dashboard compiled to runtime JSON. Save file (Cmd+S) to commit to Firestore.");
@@ -122,12 +127,17 @@ export async function convertDashboardFormatCommand(arg?: DocumentItem | vscode.
 
       if (!action) return;
 
-      if (action.action === "replace" && activeEditor && targetUri && activeEditor.document.uri.toString() === targetUri.toString()) {
+      if (action.action === "replace" && targetUri) {
+        const targetDoc = await vscode.workspace.openTextDocument(targetUri);
+        const editor =
+          activeEditor && activeEditor.document.uri.toString() === targetUri.toString()
+            ? activeEditor
+            : await vscode.window.showTextDocument(targetDoc);
         const fullRange = new vscode.Range(
-          activeEditor.document.positionAt(0),
-          activeEditor.document.positionAt(text.length)
+          editor.document.positionAt(0),
+          editor.document.positionAt(editor.document.getText().length)
         );
-        await activeEditor.edit((editBuilder) => {
+        await editor.edit((editBuilder) => {
           editBuilder.replace(fullRange, formattedDry);
         });
         vscode.window.showInformationMessage(`Converted to compact DRY format (${originalLines} ➔ ${newLines} lines).`);

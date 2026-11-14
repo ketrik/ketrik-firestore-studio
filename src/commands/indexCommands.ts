@@ -53,6 +53,9 @@ export function registerIndexCommands(
         if (!item || !item.index) {
           return;
         }
+        if (!ConnectionManager.getInstance().ensureWritable(item.connectionId, "delete composite index")) {
+          return;
+        }
 
         const fieldsSummary = item.index.fields
           .map((f) => `${f.fieldPath} (${f.arrayConfig || f.order || "ASC"})`)
@@ -155,7 +158,10 @@ export function registerIndexCommands(
       "ketrik-firestore-studio.diffIndexes",
       async (item?: CompositeIndexesBranchItem) => {
         const indexesService = IndexesService.getInstance();
-        const connectionId = item?.connectionId || "default";
+        const connectionId =
+          item?.connectionId ||
+          ConnectionManager.getInstance().getConnections()[0]?.id ||
+          "default";
 
         try {
           const liveIndexes = await indexesService.listCompositeIndexes(connectionId);
@@ -218,7 +224,13 @@ export function registerIndexCommands(
       "ketrik-firestore-studio.deployIndexes",
       async (item?: CompositeIndexesBranchItem) => {
         const indexesService = IndexesService.getInstance();
-        const connectionId = item?.connectionId || "default";
+        const connectionId =
+          item?.connectionId ||
+          ConnectionManager.getInstance().getConnections()[0]?.id ||
+          "default";
+        if (!ConnectionManager.getInstance().ensureWritable(connectionId, "deploy composite indexes")) {
+          return;
+        }
 
         const { path: localPath, data } = await indexesService.loadLocalIndexesFile();
         const count = data.indexes?.length || 0;
@@ -269,7 +281,13 @@ export function registerIndexCommands(
       "ketrik-firestore-studio.buildCompositeIndex",
       async (item?: any) => {
         const indexesService = IndexesService.getInstance();
-        const connectionId = item?.connectionId || "default";
+        const connectionId =
+          item?.connectionId ||
+          ConnectionManager.getInstance().getConnections()[0]?.id ||
+          "default";
+        if (!ConnectionManager.getInstance().ensureWritable(connectionId, "create composite index")) {
+          return;
+        }
         const defaultCollection = item?.collectionId || item?.collectionGroup || "";
 
         // Step 1: Collection Group / Collection ID

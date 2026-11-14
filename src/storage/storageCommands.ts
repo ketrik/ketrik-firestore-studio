@@ -67,6 +67,10 @@ export function registerStorageCommands(
           connectionId = picked.id;
         }
 
+        if (!connMgr.ensureWritable(connectionId, "upload file to Cloud Storage")) {
+          return;
+        }
+
         if (!bucketName) {
           try {
             const buckets = await storageService.listBuckets(connectionId);
@@ -244,6 +248,10 @@ export function registerStorageCommands(
       async (item?: StorageFileTreeItem) => {
         if (!item || !item.fileData) return;
 
+        if (!ConnectionManager.getInstance().ensureWritable(item.connectionId, "delete Cloud Storage file")) {
+          return;
+        }
+
         const fileName = item.fileData.name.split("/").pop() || item.fileData.name;
         const confirm = await vscode.window.showWarningMessage(
           `Are you sure you want to permanently delete '${fileName}' from bucket '${item.bucketName}'?`,
@@ -300,6 +308,9 @@ export async function promptAndCleanupOrphanStorageFiles(
   docData: any,
   itemLabel: string
 ): Promise<void> {
+  if (ConnectionManager.getInstance().getConnection(connectionId)?.readOnly) {
+    return;
+  }
   const storageService = StorageService.getInstance();
   const urls = storageService.extractStorageUrlsFromObject(docData);
 

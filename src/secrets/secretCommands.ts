@@ -74,6 +74,10 @@ export function createSecretCommand(explorerDataProvider?: ExplorerDataProvider)
       }
     }
 
+    if (!ConnectionManager.getInstance().ensureWritable(connectionId, "create secret")) {
+      return;
+    }
+
     const secretId = await vscode.window.showInputBox({
       title: "Create Secret in Google Secret Manager",
       prompt: "Enter Secret ID (lowercase alphanumeric and hyphens, e.g. stripe-webhook-secret)",
@@ -130,6 +134,10 @@ export function addSecretVersionCommand(explorerDataProvider?: ExplorerDataProvi
   return async (target?: SecretTreeItem) => {
     if (!target || !(target instanceof SecretTreeItem)) {
       vscode.window.showErrorMessage("Please select a secret from the Google Secret Manager tree.");
+      return;
+    }
+
+    if (!ConnectionManager.getInstance().ensureWritable(target.connectionId, "add secret version")) {
       return;
     }
 
@@ -332,6 +340,9 @@ export function disableSecretVersionCommand(explorerDataProvider?: ExplorerDataP
     if (!target || !(target instanceof SecretVersionTreeItem)) {
       return;
     }
+    if (!ConnectionManager.getInstance().ensureWritable(target.connectionId, "disable secret version")) {
+      return;
+    }
 
     try {
       await SecretManagerService.getInstance().disableSecretVersion(
@@ -357,6 +368,9 @@ export function enableSecretVersionCommand(explorerDataProvider?: ExplorerDataPr
     if (!target || !(target instanceof SecretVersionTreeItem)) {
       return;
     }
+    if (!ConnectionManager.getInstance().ensureWritable(target.connectionId, "enable secret version")) {
+      return;
+    }
 
     try {
       await SecretManagerService.getInstance().enableSecretVersion(
@@ -380,6 +394,9 @@ export function enableSecretVersionCommand(explorerDataProvider?: ExplorerDataPr
 export function destroySecretVersionCommand(explorerDataProvider?: ExplorerDataProvider) {
   return async (target?: SecretVersionTreeItem) => {
     if (!target || !(target instanceof SecretVersionTreeItem)) {
+      return;
+    }
+    if (!ConnectionManager.getInstance().ensureWritable(target.connectionId, "destroy secret version")) {
       return;
     }
 
@@ -416,6 +433,9 @@ export function linkFieldToSecretCommand(explorerDataProvider?: ExplorerDataProv
   return async (fieldItem?: DocumentFieldItem) => {
     if (!fieldItem || !(fieldItem instanceof DocumentFieldItem)) {
       vscode.window.showErrorMessage("Please right-click a document field.");
+      return;
+    }
+    if (!ConnectionManager.getInstance().ensureWritable(fieldItem.connectionId, "link field to secret")) {
       return;
     }
 
@@ -478,6 +498,9 @@ export function migrateFieldToSecretCommand(explorerDataProvider?: ExplorerDataP
   return async (fieldItem?: DocumentFieldItem) => {
     if (!fieldItem || !(fieldItem instanceof DocumentFieldItem)) {
       vscode.window.showErrorMessage("Please right-click a document field.");
+      return;
+    }
+    if (!ConnectionManager.getInstance().ensureWritable(fieldItem.connectionId, "migrate field to secret")) {
       return;
     }
 

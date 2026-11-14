@@ -24,6 +24,21 @@ export class LocalJsonService {
     return LocalJsonService.instance;
   }
 
+  private _resolveSafePath(baseDir: string, relativePath: string): string {
+    const resolvedBase = path.resolve(baseDir);
+    const resolvedTarget = path.resolve(resolvedBase, relativePath);
+    if (resolvedTarget !== resolvedBase && !resolvedTarget.startsWith(resolvedBase + path.sep)) {
+      throw new Error(`Invalid path '${relativePath}': escapes Local JSON root directory.`);
+    }
+    return resolvedTarget;
+  }
+
+  private _assertWritable(config: FirestoreConnectionConfig, action: string): void {
+    if (config.readOnly) {
+      throw new Error(`Connection '${config.name}' is in Read-Only mode. Cannot ${action}.`);
+    }
+  }
+
   /**
    * Clear the in-memory file cache.
    */
@@ -75,6 +90,10 @@ export class LocalJsonService {
    */
   private _writeJsonFile(filePath: string, data: any): void {
     const jsonStr = JSON.stringify(data, null, 2);
+    const parentDir = path.dirname(filePath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
     fs.writeFileSync(filePath, jsonStr, "utf8");
 
     try {
@@ -144,14 +163,14 @@ export class LocalJsonService {
 
     if (this.isDirectoryMode(config)) {
       // 1. Direct path check: e.g. <localJsonPath>/dashboard/broker/session.json or <localJsonPath>/dashboard.json
-      const filePath = path.join(config.localJsonPath, `${collectionId}.json`);
+      const filePath = this._resolveSafePath(config.localJsonPath, `${collectionId}.json`);
       if (fs.existsSync(filePath)) {
         const parsed = this._readJsonFile(filePath);
         return this._normalizeToDocumentMap(parsed);
       }
 
       // 2. Directory check: e.g. <localJsonPath>/dashboard/broker/session/ containing individual .json documents
-      const dirPath = path.join(config.localJsonPath, collectionId);
+      const dirPath = this._resolveSafePath(config.localJsonPath, collectionId);
       if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
         try {
           const files = fs.readdirSync(dirPath);
@@ -159,7 +178,7 @@ export class LocalJsonService {
           for (const f of files) {
             if (f.endsWith(".json")) {
               const docId = f.slice(0, -5);
-              const docContent = this._readJsonFile(path.join(dirPath, f));
+              const docContent = this._readJsonFile(this._resolveSafePath(dirPath, f));
               if (docContent !== undefined) {
                 map[docId] = docContent;
               }
@@ -175,7 +194,7 @@ export class LocalJsonService {
       const segments = collectionId.split("/").filter(Boolean);
       if (segments.length > 1) {
         const lastSeg = segments[segments.length - 1];
-        const lastFilePath = path.join(config.localJsonPath, `${lastSeg}.json`);
+        const lastFilePath = this._resolveSafePath(config.localJsonPath, `${lastSeg}.json`);
         if (fs.existsSync(lastFilePath)) {
           const parsed = this._readJsonFile(lastFilePath);
           return this._normalizeToDocumentMap(parsed);
@@ -183,7 +202,7 @@ export class LocalJsonService {
 
         // 4. Try root collection file and deep navigation: e.g. <localJsonPath>/dashboard.json
         const rootColl = segments[0];
-        const rootFile = path.join(config.localJsonPath, `${rootColl}.json`);
+        const rootFile = this._resolveSafePath(config.localJsonPath, `${rootColl}.json`);
         if (fs.existsSync(rootFile)) {
           let cur: any = this._readJsonFile(rootFile);
           for (let i = 1; i < segments.length; i++) {
@@ -282,14 +301,14 @@ export class LocalJsonService {
 
     if (this.isDirectoryMode(config)) {
       // 1. Direct document file check: e.g. <localJsonPath>/dashboard/broker/session/metadata.json
-      const exactDocFile = path.join(config.localJsonPath!, `${docPath}.json`);
+      const exactDocFile = this._resolveSafePath(config.localJsonPath!, `${docPath}.json`);
       if (fs.existsSync(exactDocFile) && !fs.statSync(exactDocFile).isDirectory()) {
         const parsed = this._readJsonFile(exactDocFile);
         if (parsed !== undefined) return parsed;
       }
 
       // 2. Direct filename check: e.g. <localJsonPath>/metadata.json
-      const standaloneDocFile = path.join(config.localJsonPath!, `${docId}.json`);
+      const standaloneDocFile = this._resolveSafePath(config.localJsonPath!, `${docId}.json`);
       if (fs.existsSync(standaloneDocFile) && !fs.statSync(standaloneDocFile).isDirectory()) {
         const parsed = this._readJsonFile(standaloneDocFile);
         if (parsed !== undefined && !Array.isArray(parsed)) {
@@ -350,6 +369,7 @@ export class LocalJsonService {
    * Save / set document data by docPath.
    */
   public setDocument(config: FirestoreConnectionConfig, docPath: string, data: Record<string, any>): void {
+    this._assertWritable(config, "write document");
     const segments = docPath.split("/").filter(Boolean);
     if (segments.length < 2) {
       throw new Error(`Invalid document path: '${docPath}'`);
@@ -360,21 +380,21 @@ export class LocalJsonService {
 
     if (this.isDirectoryMode(config)) {
       // 1. If exact doc file exists, write to it
-      const exactDocFile = path.join(config.localJsonPath!, `${docPath}.json`);
+      const exactDocFile = this._resolveSafePath(config.localJsonPath!, `${docPath}.json`);
       if (fs.existsSync(exactDocFile)) {
         this._writeJsonFile(exactDocFile, data);
         return;
       }
 
       // 2. If standalone doc file exists, write to it
-      const standaloneDocFile = path.join(config.localJsonPath!, `${docId}.json`);
+      const standaloneDocFile = this._resolveSafePath(config.localJsonPath!, `${docId}.json`);
       if (fs.existsSync(standaloneDocFile)) {
         this._writeJsonFile(standaloneDocFile, data);
         return;
       }
 
       // 3. Write into collection file
-      const collFilePath = path.join(config.localJsonPath!, `${collPath}.json`);
+      const collFilePath = this._resolveSafePath(config.localJsonPath!, `${collPath}.json`);
       const collMap = this.getCollectionData(config, collPath);
       collMap[docId] = data;
       this._writeJsonFile(collFilePath, collMap);
@@ -411,10 +431,11 @@ export class LocalJsonService {
     collectionId: string,
     docs: Array<{ id: string; data: Record<string, any> }>
   ): void {
+    this._assertWritable(config, "write documents");
     if (docs.length === 0) return;
 
     if (this.isDirectoryMode(config)) {
-      const filePath = path.join(config.localJsonPath!, `${collectionId}.json`);
+      const filePath = this._resolveSafePath(config.localJsonPath!, `${collectionId}.json`);
       const collMap = this.getCollectionData(config, collectionId);
       for (const d of docs) {
         collMap[d.id] = d.data;
@@ -441,12 +462,13 @@ export class LocalJsonService {
    * Delete an entire collection.
    */
   public deleteCollection(config: FirestoreConnectionConfig, collectionId: string): void {
+    this._assertWritable(config, "delete collection");
     if (!config.localJsonPath || !fs.existsSync(config.localJsonPath)) {
       return;
     }
 
     if (this.isDirectoryMode(config)) {
-      const filePath = path.join(config.localJsonPath, `${collectionId}.json`);
+      const filePath = this._resolveSafePath(config.localJsonPath, `${collectionId}.json`);
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
         this._fileCache.delete(filePath);
@@ -466,6 +488,7 @@ export class LocalJsonService {
    * Delete a document by docPath.
    */
   public deleteDocument(config: FirestoreConnectionConfig, docPath: string): void {
+    this._assertWritable(config, "delete document");
     const segments = docPath.split("/").filter(Boolean);
     if (segments.length < 2) {
       return;
@@ -475,21 +498,21 @@ export class LocalJsonService {
     const collPath = segments.slice(0, -1).join("/");
 
     if (this.isDirectoryMode(config)) {
-      const exactDocFile = path.join(config.localJsonPath!, `${docPath}.json`);
+      const exactDocFile = this._resolveSafePath(config.localJsonPath!, `${docPath}.json`);
       if (fs.existsSync(exactDocFile)) {
         fs.unlinkSync(exactDocFile);
         this._fileCache.delete(exactDocFile);
         return;
       }
 
-      const standaloneDocFile = path.join(config.localJsonPath!, `${docId}.json`);
+      const standaloneDocFile = this._resolveSafePath(config.localJsonPath!, `${docId}.json`);
       if (fs.existsSync(standaloneDocFile)) {
         fs.unlinkSync(standaloneDocFile);
         this._fileCache.delete(standaloneDocFile);
         return;
       }
 
-      const collFilePath = path.join(config.localJsonPath!, `${collPath}.json`);
+      const collFilePath = this._resolveSafePath(config.localJsonPath!, `${collPath}.json`);
       const collMap = this.getCollectionData(config, collPath);
       delete collMap[docId];
       this._writeJsonFile(collFilePath, collMap);
@@ -524,25 +547,28 @@ export class LocalJsonService {
     collectionId: string,
     docIds: string[]
   ): void {
+    this._assertWritable(config, "delete documents");
     if (docIds.length === 0) return;
 
     if (this.isDirectoryMode(config)) {
-      const filePath = path.join(config.localJsonPath!, `${collectionId}.json`);
+      const filePath = this._resolveSafePath(config.localJsonPath!, `${collectionId}.json`);
       const collMap = this.getCollectionData(config, collectionId);
       for (const id of docIds) {
         delete collMap[id];
-        const exactDocFile = path.join(config.localJsonPath!, collectionId, `${id}.json`);
+        const exactDocFile = this._resolveSafePath(config.localJsonPath!, `${collectionId}/${id}.json`);
         if (fs.existsSync(exactDocFile)) {
           fs.unlinkSync(exactDocFile);
           this._fileCache.delete(exactDocFile);
         }
-        const standaloneDocFile = path.join(config.localJsonPath!, `${id}.json`);
+        const standaloneDocFile = this._resolveSafePath(config.localJsonPath!, `${id}.json`);
         if (fs.existsSync(standaloneDocFile)) {
           fs.unlinkSync(standaloneDocFile);
           this._fileCache.delete(standaloneDocFile);
         }
       }
-      this._writeJsonFile(filePath, collMap);
+      if (fs.existsSync(filePath) || Object.keys(collMap).length > 0) {
+        this._writeJsonFile(filePath, collMap);
+      }
       return;
     }
 

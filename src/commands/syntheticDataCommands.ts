@@ -29,13 +29,23 @@ function autoId(): string {
  * Command: Generate Synthetic Mock Data for a Collection.
  */
 export async function generateSyntheticDataCommand(
-  item: CollectionItem,
+  item: CollectionItem | undefined,
   explorerDataProvider: ExplorerDataProvider
 ): Promise<void> {
+  if (!item || !item.connectionId) {
+    vscode.window.showWarningMessage("Please select a collection in the Firestore Explorer to generate synthetic data.");
+    return;
+  }
   const connectionManager = ConnectionManager.getInstance();
   const conn = connectionManager.getConnection(item.connectionId);
   if (!conn) {
     vscode.window.showErrorMessage(`Connection '${item.connectionId}' not found.`);
+    return;
+  }
+  if (conn.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to generate synthetic data.`
+    );
     return;
   }
 
@@ -232,8 +242,13 @@ export async function generateSyntheticDataCommand(
           totalCreated++;
 
           if (batchOps >= BATCH_SIZE || i === docCount - 1) {
-            await batch.commit();
-            CostService.getInstance().recordOperation(item.connectionId, "write", batchOps);
+            try {
+              await batch.commit();
+              CostService.getInstance().recordOperation(item.connectionId, "write", batchOps);
+            } catch (err: any) {
+              vscode.window.showErrorMessage(`Failed to commit synthetic data batch: ${err?.message || err}`);
+              return;
+            }
             progress.report({ increment: (batchOps / docCount) * 100 });
             batch = firestore.batch();
             batchOps = 0;

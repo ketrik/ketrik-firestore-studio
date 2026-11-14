@@ -20,6 +20,8 @@ Unlike basic viewers that only render static JSON trees, **Ketrik Firestore Stud
 - 👥 **Firebase Auth User Suite**: Bulk user explorer, avatar previews, custom claims editor (`admin: true`), JWT custom token minter, and cross-environment user cloner.
 - 🛡️ **Live Security Rules & Diff**: Virtual editor for `firestore.rules` with live deployment, AST-level permission badges (`🚨 Public`, `🔒 Locked`), and side-by-side diff.
 - 🕒 **Point-in-Time Recovery (PITR) & Time Travel**: 7-day historical database state browsing, side-by-side historical diffs, and 1-click document rollbacks.
+- 🧹 **Bulk Field Transformer & Schema Auto-Fix**: Cast string/number/timestamp types, backfill defaults, rename properties, and auto-fix schema drift across entire collections.
+- 🛡️ **Connection Read-Only Mode & Environment Color Shields**: 1-click write-lock shields with color-coded tags (`🔴 [PROD] 🔒`, `🟡 [STAGING]`, `🟢 [DEV]`).
 - ⚙️ **Database Configuration & Safeguards**: 1-click PITR toggles, delete protection, and optimistic/pessimistic concurrency controls.
 - 🔐 **Google Secret Manager & Field Links**: Dedicated secret tree explorer, document field secret links (`projects/.../secrets/...`), 1-click secret migration, and zero-plaintext OS Keychain credentials.
 - ⚡ **Quota & Memory Protection**: Native document storage size monitoring (bytes & limit warnings), direct 1-read document ID lookups, and auto-pausing listeners.
@@ -160,6 +162,8 @@ Enterprise disaster recovery, historical state exploration, and accidental mutat
 | `ketrik-firestore-studio.pullSnapshotFromFirestore` | Snapshot Editor Title (`$(cloud-download)`) | Refresh local snapshot from remote Firestore without losing bindings |
 | `ketrik-firestore-studio.deleteCollection` | Collection Context Menu | Permanently delete a collection and all nested documents/subcollections with safety confirmation |
 | `ketrik-firestore-studio.deleteMultipleCollections` | Connection & Collection Menu | Multi-select and batch-delete multiple collections with safety confirmation |
+| `ketrik-firestore-studio.toggleConnectionReadOnly` | Connection Menu (`$(lock)`) | Toggle Read-Only mutation shield on active connection |
+| `ketrik-firestore-studio.transformCollectionField` | Collection & Field Menu (`$(symbol-variable)`) | Bulk field transformer (type casting, backfills, renames, deletions) |
 | `ketrik-firestore-studio.createSecret` | Secret Manager Branch Menu (`$(add)`) | Provision a new secret in Google Cloud Secret Manager |
 | `ketrik-firestore-studio.addSecretVersion` | Secret Item Menu (`$(plus)`) | Add a new payload version via text or file upload |
 | `ketrik-firestore-studio.inspectSecretPayload` | Secret & Version Item (`$(eye)`) | Decrypt and inspect live secret payload with auto-wipe copy |

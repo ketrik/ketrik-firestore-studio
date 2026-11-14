@@ -1,14 +1,28 @@
 import { CollectionHealthReport } from "../../schema/schemaAnalyzer";
 
-export function getSchemaReportHtml(report: CollectionHealthReport): string {
-  const jsonReportStr = JSON.stringify(report).replace(/</g, "\\u003c");
+function escapeHtmlServer(val: any): string {
+  if (val === null || val === undefined) return "";
+  return String(val)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function getSchemaReportHtml(report: CollectionHealthReport, isReadOnly = false): string {
+  const jsonReportStr = JSON.stringify(report)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Schema Drift & Anomaly Health Report: ${report.collectionPath}</title>
+  <title>Schema Drift &amp; Anomaly Health Report: ${escapeHtmlServer(report.collectionPath)}</title>
   <style>
     :root {
       --bg-color: var(--vscode-editor-background, #1e1e1e);
@@ -281,6 +295,126 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
       color: var(--danger);
       border: 1px solid rgba(241, 76, 76, 0.3);
     }
+
+    .btn-autofix {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      font-size: 0.75rem;
+      border-radius: 4px;
+      margin-top: 6px;
+      background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+      color: var(--vscode-button-secondaryForeground, #ffffff);
+      border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
+      cursor: pointer;
+    }
+    .btn-autofix:hover {
+      background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.35));
+    }
+
+    /* Exclusion / Document Filter Bar */
+    .exclusion-bar {
+      margin-top: 10px;
+      padding: 8px 12px;
+      background: rgba(128, 128, 128, 0.06);
+      border: 1px dashed var(--card-border);
+      border-radius: 6px;
+      font-size: 0.82rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .exclusion-tags {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .exclusion-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: rgba(241, 76, 76, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(241, 76, 76, 0.35);
+      font-family: var(--mono-font);
+      font-size: 0.8rem;
+    }
+    .exclusion-tag-remove {
+      cursor: pointer;
+      opacity: 0.7;
+      font-weight: bold;
+      padding: 0 2px;
+    }
+    .exclusion-tag-remove:hover {
+      opacity: 1;
+    }
+    .btn-exclude-picker {
+      background: var(--vscode-button-secondaryBackground, #3a3d41);
+      color: var(--vscode-button-secondaryForeground, #cccccc);
+      border: 1px solid var(--card-border);
+      padding: 3px 8px;
+      font-size: 0.8rem;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .btn-exclude-picker:hover {
+      background: var(--vscode-button-secondaryHoverBackground, #45494e);
+    }
+
+    /* Exclusion Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-box {
+      background: var(--bg-color);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 20px;
+      width: 480px;
+      max-width: 90vw;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+    .modal-list {
+      overflow-y: auto;
+      max-height: 320px;
+      border: 1px solid var(--card-border);
+      border-radius: 4px;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .modal-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-family: var(--mono-font);
+      font-size: 0.85rem;
+    }
+    .modal-item:hover {
+      background: rgba(128, 128, 128, 0.1);
+    }
   </style>
 </head>
 <body>
@@ -290,7 +424,14 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
         <span>🔬 Collection Schema Drift & Anomaly Analyzer</span>
       </div>
       <div class="header-subtitle">
-        Collection: <b>${report.collectionPath}</b> • Connection: <b>${report.connectionName}</b> • Sampled: <b>${report.sampledCount}</b> documents
+        Collection: <b>${escapeHtmlServer(report.collectionPath)}</b> • Connection: <b>${escapeHtmlServer(report.connectionName)}</b> • Sampled: <b id="sampledCountHeader">${report.sampledCount}</b> documents
+      </div>
+      <div class="exclusion-bar" id="exclusionBar">
+        <span>🚫 Excluded Documents (<span id="excludedCount">${report.excludedDocIds?.length || 0}</span>):</span>
+        <div class="exclusion-tags" id="exclusionTags">
+          <!-- Rendered via JS -->
+        </div>
+        <button id="btnManageExclusions" class="btn-exclude-picker">⚙️ Exclude Documents (e.g. metadata)...</button>
       </div>
     </div>
     <div class="header-actions">
@@ -304,21 +445,21 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
   <div class="kpi-grid">
     <div class="kpi-card">
       <div class="kpi-title">Overall Health Score</div>
-      <div class="kpi-value ${report.overallHealthScore >= 80 ? 'score-high' : report.overallHealthScore >= 50 ? 'score-med' : 'score-low'}">
+      <div id="kpiScoreVal" class="kpi-value ${report.overallHealthScore >= 80 ? 'score-high' : report.overallHealthScore >= 50 ? 'score-med' : 'score-low'}">
         ${report.overallHealthScore}<span style="font-size: 1rem;">/100</span>
       </div>
-      <div class="kpi-desc">${report.overallHealthScore >= 80 ? 'Robust & Consistent Schema' : report.overallHealthScore >= 50 ? 'Moderate Schema Drift Detected' : 'Significant Inconsistencies / Anomalies'}</div>
+      <div id="kpiScoreDesc" class="kpi-desc">${report.overallHealthScore >= 80 ? 'Robust & Consistent Schema' : report.overallHealthScore >= 50 ? 'Moderate Schema Drift Detected' : 'Significant Inconsistencies / Anomalies'}</div>
     </div>
 
     <div class="kpi-card">
       <div class="kpi-title">Total Unique Keys</div>
-      <div class="kpi-value">${report.totalUniqueFields}</div>
-      <div class="kpi-desc">Across ${report.sampledCount} sampled documents</div>
+      <div id="kpiKeysVal" class="kpi-value">${report.totalUniqueFields}</div>
+      <div id="kpiKeysDesc" class="kpi-desc">Across ${report.sampledCount} sampled documents</div>
     </div>
 
     <div class="kpi-card">
       <div class="kpi-title">Mixed Type Conflicts</div>
-      <div class="kpi-value ${report.mixedTypesCount > 0 ? 'score-low' : 'score-high'}">
+      <div id="kpiMixedVal" class="kpi-value ${report.mixedTypesCount > 0 ? 'score-low' : 'score-high'}">
         ${report.mixedTypesCount}
       </div>
       <div class="kpi-desc">Keys with diverging non-null datatypes</div>
@@ -326,10 +467,10 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
 
     <div class="kpi-card">
       <div class="kpi-title">Orphan / Zombie Keys</div>
-      <div class="kpi-value ${report.orphanKeysCount > 0 ? 'score-med' : 'score-high'}">
+      <div id="kpiOrphansVal" class="kpi-value ${report.orphanKeysCount > 0 ? 'score-med' : 'score-high'}">
         ${report.orphanKeysCount}
       </div>
-      <div class="kpi-desc">Obsolete fields (< 5% occurrence)</div>
+      <div class="kpi-desc">Obsolete fields (&lt; 5% occurrence)</div>
     </div>
   </div>
 
@@ -338,7 +479,7 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
     <input type="text" id="searchInput" class="search-box" placeholder="Filter fields by name, type, or anomaly..." />
     <div class="pill-filters">
       <div class="filter-pill active" data-filter="all">All Fields (${report.totalUniqueFields})</div>
-      <div class="filter-pill" data-filter="anomalies">Anomalies & Warnings (${report.anomaliesCount})</div>
+      <div class="filter-pill" data-filter="anomalies">Anomalies &amp; Warnings (${report.anomaliesCount})</div>
       <div class="filter-pill" data-filter="mixed">Mixed Types (${report.mixedTypesCount})</div>
       <div class="filter-pill" data-filter="orphans">Orphan Keys (${report.orphanKeysCount})</div>
       <div class="filter-pill" data-filter="perfect">100% Present</div>
@@ -364,9 +505,11 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
 
   <script>
     const vscode = acquireVsCodeApi();
-    const report = ${jsonReportStr};
+    let report = ${jsonReportStr};
+    const isReadOnly = ${isReadOnly ? "true" : "false"};
     let currentFilter = 'all';
     let searchQuery = '';
+    let searchDebounceTimer = null;
 
     const tbody = document.getElementById('tableBody');
     const searchInput = document.getElementById('searchInput');
@@ -401,6 +544,7 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
         return;
       }
 
+      const frag = document.createDocumentFragment();
       filtered.forEach(f => {
         const tr = document.createElement('tr');
 
@@ -435,6 +579,21 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
 
         if (!anomalyHtml) {
           anomalyHtml = '<span style="color:var(--success); font-size:0.8rem;">✓ Healthy</span>';
+        } else if (!isReadOnly) {
+          // Add 1-Click Auto-Fix action button to trigger bulk transformer
+          let suggestedAction = 'cast_string_to_number';
+          if (f.isZombieOrOrphan || (f.nullCount > 0 && f.nullCount === f.occurrenceCount)) {
+            suggestedAction = 'delete_field';
+          } else if (f.isPrimaryTypeMixed) {
+            const hasNum = f.typeDistributions.some(t => t.type === 'number' || t.type === 'integer');
+            const hasStr = f.typeDistributions.some(t => t.type === 'string');
+            const hasTs = f.typeDistributions.some(t => t.type === 'Timestamp');
+            if (hasNum && hasStr) suggestedAction = 'cast_string_to_number';
+            else if (hasTs && hasStr) suggestedAction = 'cast_string_to_timestamp';
+          } else if (f.missingCount > 0) {
+            suggestedAction = 'backfill_default';
+          }
+          anomalyHtml += '<button class="btn-autofix" data-field="' + escapeHtml(f.fieldPath) + '" data-action="' + suggestedAction + '">⚡ Auto-Fix in Transformer...</button>';
         }
 
         tr.innerHTML = \`
@@ -453,17 +612,19 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
           <td>\${typesHtml}</td>
           <td>\${anomalyHtml}</td>
         \`;
-        tbody.appendChild(tr);
+        frag.appendChild(tr);
       });
+      tbody.appendChild(frag);
     }
 
     function escapeHtml(str) {
-      if (!str) return '';
+      if (str === null || str === undefined) return '';
       return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     // Pill clicks
@@ -476,10 +637,13 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
       });
     });
 
-    // Search input
+    // Search input (debounced)
     searchInput.addEventListener('input', () => {
       searchQuery = searchInput.value;
-      renderFields();
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        renderFields();
+      }, 120);
     });
 
     rescanBtn.addEventListener('click', () => {
@@ -493,6 +657,203 @@ export function getSchemaReportHtml(report: CollectionHealthReport): string {
     exportJsonBtn.addEventListener('click', () => {
       vscode.postMessage({ command: 'exportJson' });
     });
+
+    tbody.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-autofix');
+      if (btn) {
+        const fieldPath = btn.getAttribute('data-field');
+        const suggestedAction = btn.getAttribute('data-action');
+        if (fieldPath && suggestedAction) {
+          launchAutoFix(fieldPath, suggestedAction);
+        }
+      }
+    });
+
+    function launchAutoFix(fieldPath, suggestedAction) {
+      vscode.postMessage({
+        command: 'launchTransformer',
+        fieldPath: fieldPath,
+        suggestedAction: suggestedAction
+      });
+    }
+
+    // Exclusion Management
+    const exclusionTagsEl = document.getElementById('exclusionTags');
+    const btnManageExclusions = document.getElementById('btnManageExclusions');
+    let excludedDocs = new Set(report.excludedDocIds || []);
+
+    function renderExclusionTags() {
+      if (!exclusionTagsEl) return;
+      exclusionTagsEl.innerHTML = '';
+      if (excludedDocs.size === 0) {
+        exclusionTagsEl.innerHTML = '<span style="color:var(--muted); font-style:italic;">None (all sampled documents included)</span>';
+        return;
+      }
+      excludedDocs.forEach(id => {
+        const tag = document.createElement('span');
+        tag.className = 'exclusion-tag';
+        tag.innerHTML = '<span>' + escapeHtml(id) + '</span><span class="exclusion-tag-remove" data-id="' + escapeHtml(id) + '" title="Remove exclusion">&times;</span>';
+        exclusionTagsEl.appendChild(tag);
+      });
+    }
+
+    if (exclusionTagsEl) {
+      exclusionTagsEl.addEventListener('click', (e) => {
+        const removeBtn = e.target.closest('.exclusion-tag-remove');
+        if (removeBtn) {
+          const id = removeBtn.getAttribute('data-id');
+          if (id) {
+            excludedDocs.delete(id);
+            renderExclusionTags();
+            vscode.postMessage({
+              command: 'updateExclusions',
+              excludedDocIds: Array.from(excludedDocs)
+            });
+          }
+        }
+      });
+    }
+
+    if (btnManageExclusions) {
+      btnManageExclusions.addEventListener('click', () => {
+        showExclusionModal();
+      });
+    }
+
+    function showExclusionModal() {
+      const allDocIds = report.sampledDocIds || [];
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.id = 'exclusionModalOverlay';
+
+      let itemsHtml = '';
+      if (allDocIds.length === 0) {
+        itemsHtml = '<div style="color:var(--muted); padding:10px;">No sampled document IDs found.</div>';
+      } else {
+        allDocIds.forEach(id => {
+          const isChecked = excludedDocs.has(id);
+          itemsHtml += '<label class="modal-item">' +
+            '<input type="checkbox" class="exclude-doc-checkbox" value="' + escapeHtml(id) + '" ' + (isChecked ? 'checked' : '') + ' />' +
+            '<span>' + escapeHtml(id) + '</span>' +
+            (id.toLowerCase().includes('meta') || id.toLowerCase().includes('config') ? ' <span style="font-size:0.75rem; color:var(--warning);">(Likely Metadata)</span>' : '') +
+            '</label>';
+        });
+      }
+
+      overlay.innerHTML = '<div class="modal-box">' +
+        '<h3 style="margin:0; font-size:1.1rem; display:flex; align-items:center; gap:8px;">' +
+        '<span>🚫</span> Exclude Documents from Schema Analysis</h3>' +
+        '<p style="margin:0; font-size:0.85rem; color:var(--muted);">' +
+        'Select singleton or metadata documents (e.g. <code>metadata</code>, <code>_config</code>) to exclude them from calculations so data fields are not flagged as orphans.</p>' +
+        '<div class="modal-list">' + itemsHtml + '</div>' +
+        '<div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">' +
+        '<button id="modalCancelBtn" class="secondary">Cancel</button>' +
+        '<button id="modalApplyBtn">Apply Exclusions</button>' +
+        '</div>' +
+        '</div>';
+
+      document.body.appendChild(overlay);
+
+      const cancelBtn = overlay.querySelector('#modalCancelBtn');
+      const applyBtn = overlay.querySelector('#modalApplyBtn');
+
+      const closeModal = () => {
+        document.removeEventListener('keydown', onKeyDown);
+        overlay.remove();
+      };
+
+      const onKeyDown = (ev) => {
+        if (ev.key === 'Escape') {
+          closeModal();
+        }
+      };
+      document.addEventListener('keydown', onKeyDown);
+
+      overlay.addEventListener('click', (ev) => {
+        if (ev.target === overlay) {
+          closeModal();
+        }
+      });
+
+      cancelBtn.addEventListener('click', closeModal);
+
+      applyBtn.addEventListener('click', () => {
+        const checkboxes = overlay.querySelectorAll('.exclude-doc-checkbox');
+        const newExcluded = new Set();
+        checkboxes.forEach(cb => {
+          if (cb.checked) newExcluded.add(cb.value);
+        });
+        excludedDocs = newExcluded;
+        closeModal();
+        renderExclusionTags();
+        vscode.postMessage({
+          command: 'updateExclusions',
+          excludedDocIds: Array.from(excludedDocs)
+        });
+      });
+    }
+
+    function updateReportSummary(newReport) {
+      report = newReport;
+      excludedDocs = new Set(report.excludedDocIds || []);
+
+      const sampledHeader = document.getElementById('sampledCountHeader');
+      if (sampledHeader) sampledHeader.textContent = report.sampledCount;
+
+      const excludedCountEl = document.getElementById('excludedCount');
+      if (excludedCountEl) excludedCountEl.textContent = excludedDocs.size;
+
+      const scoreVal = document.getElementById('kpiScoreVal');
+      const scoreDesc = document.getElementById('kpiScoreDesc');
+      if (scoreVal) {
+        scoreVal.className = 'kpi-value ' + (report.overallHealthScore >= 80 ? 'score-high' : report.overallHealthScore >= 50 ? 'score-med' : 'score-low');
+        scoreVal.innerHTML = report.overallHealthScore + '<span style="font-size: 1rem;">/100</span>';
+      }
+      if (scoreDesc) {
+        scoreDesc.textContent = report.overallHealthScore >= 80
+          ? 'Robust & Consistent Schema'
+          : report.overallHealthScore >= 50
+            ? 'Moderate Schema Drift Detected'
+            : 'Significant Inconsistencies / Anomalies';
+      }
+
+      const keysVal = document.getElementById('kpiKeysVal');
+      const keysDesc = document.getElementById('kpiKeysDesc');
+      if (keysVal) keysVal.textContent = report.totalUniqueFields;
+      if (keysDesc) keysDesc.textContent = 'Across ' + report.sampledCount + ' sampled documents';
+
+      const mixedVal = document.getElementById('kpiMixedVal');
+      if (mixedVal) {
+        mixedVal.className = 'kpi-value ' + (report.mixedTypesCount > 0 ? 'score-low' : 'score-high');
+        mixedVal.textContent = report.mixedTypesCount;
+      }
+
+      const orphansVal = document.getElementById('kpiOrphansVal');
+      if (orphansVal) {
+        orphansVal.className = 'kpi-value ' + (report.orphanKeysCount > 0 ? 'score-med' : 'score-high');
+        orphansVal.textContent = report.orphanKeysCount;
+      }
+
+      pills.forEach(p => {
+        const f = p.getAttribute('data-filter');
+        if (f === 'all') p.textContent = 'All Fields (' + report.totalUniqueFields + ')';
+        else if (f === 'anomalies') p.textContent = 'Anomalies & Warnings (' + report.anomaliesCount + ')';
+        else if (f === 'mixed') p.textContent = 'Mixed Types (' + report.mixedTypesCount + ')';
+        else if (f === 'orphans') p.textContent = 'Orphan Keys (' + report.orphanKeysCount + ')';
+      });
+
+      renderExclusionTags();
+      renderFields();
+    }
+
+    window.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (msg && msg.command === 'updateReport' && msg.report) {
+        updateReportSummary(msg.report);
+      }
+    });
+
+    renderExclusionTags();
 
     // Initial render
     renderFields();

@@ -12,9 +12,13 @@ import { reviveTimestamps } from "../utils/timestampUtils";
  * Works seamlessly across Cloud Firestore, Local Emulators, and Local JSON stores!
  */
 export async function copyCollectionToInstanceCommand(
-  item: CollectionItem,
+  item: CollectionItem | undefined,
   explorerDataProvider: ExplorerDataProvider
 ): Promise<void> {
+  if (!item || !item.collectionId) {
+    vscode.window.showWarningMessage("Please select a collection in the Firestore Explorer to copy.");
+    return;
+  }
   const sourceConnId = item.connectionId;
   const sourceCollName = item.collectionId;
   const sourceCollPath = item.reference.path;
@@ -54,6 +58,9 @@ export async function copyCollectionToInstanceCommand(
   }
 
   const targetConn = targetPick.config;
+  if (!connectionManager.ensureWritable(targetConn.id, "copy collection into target database")) {
+    return;
+  }
 
   // 2. Target collection name
   const isSameConnection = targetConn.id === sourceConnId;
@@ -117,16 +124,22 @@ export async function copyCollectionToInstanceCommand(
         // Source Docs Loading
         if (sourceConn.isLocalJson) {
           // Case A: Source is Local JSON
-          const localDocs = LocalJsonService.getInstance().listDocuments(sourceConn, sourceCollName);
+          const localDocs = LocalJsonService.getInstance().listDocuments(sourceConn, sourceCollPath);
           if (localDocs.length === 0) {
             vscode.window.showInformationMessage(`Source collection '${sourceCollName}' has no documents.`);
             return;
           }
 
           if (targetConn.isLocalJson) {
-            // Local JSON -> Local JSON (batch write)
-            LocalJsonService.getInstance().setDocuments(targetConn, targetCollName, localDocs);
-            copiedCount = localDocs.length;
+            // Local JSON -> Local JSON (batch write with merge support)
+            const docsToWrite = strategyPick.merge
+              ? localDocs.map((d) => {
+                  const existing = LocalJsonService.getInstance().getDocument(targetConn, `${targetCollName}/${d.id}`);
+                  return existing ? { id: d.id, data: { ...existing, ...d.data } } : d;
+                })
+              : localDocs;
+            LocalJsonService.getInstance().setDocuments(targetConn, targetCollName, docsToWrite);
+            copiedCount = docsToWrite.length;
           } else {
             // Local JSON -> Firestore / Emulator
             const firestore = await connectionManager.getFirestore(targetConn.id);
@@ -168,10 +181,16 @@ export async function copyCollectionToInstanceCommand(
               const snapshot = await query.get();
               if (snapshot.empty) break;
 
-              const batchDocs = snapshot.docs.map((doc) => ({
-                id: doc.id,
-                data: doc.data(),
-              }));
+              const batchDocs = snapshot.docs.map((doc) => {
+                const data = doc.data();
+                if (strategyPick.merge) {
+                  const existing = LocalJsonService.getInstance().getDocument(targetConn, `${targetCollName}/${doc.id}`);
+                  if (existing) {
+                    return { id: doc.id, data: { ...existing, ...data } };
+                  }
+                }
+                return { id: doc.id, data };
+              });
               LocalJsonService.getInstance().setDocuments(targetConn, targetCollName, batchDocs);
               copiedCount += batchDocs.length;
 
@@ -196,13 +215,27 @@ export async function copyCollectionToInstanceCommand(
               const snapshot = await query.get();
               if (snapshot.empty) break;
 
-              const batch = targetFirestore.batch();
+              let batch = targetFirestore.batch();
+              let batchBytes = 0;
+              let batchOps = 0;
               for (const doc of snapshot.docs) {
+                const data = doc.data();
+                const approxBytes = Buffer.byteLength(JSON.stringify(data), "utf8") + 128;
+                if (batchOps > 0 && batchBytes + approxBytes > 4_000_000) {
+                  await batch.commit();
+                  batch = targetFirestore.batch();
+                  batchBytes = 0;
+                  batchOps = 0;
+                }
                 const targetRef = targetCollRef.doc(doc.id);
-                batch.set(targetRef, doc.data(), { merge: strategyPick.merge });
+                batch.set(targetRef, data, { merge: strategyPick.merge });
+                batchBytes += approxBytes;
+                batchOps++;
               }
 
-              await batch.commit();
+              if (batchOps > 0) {
+                await batch.commit();
+              }
               copiedCount += snapshot.docs.length;
               lastDoc = snapshot.docs[snapshot.docs.length - 1];
 

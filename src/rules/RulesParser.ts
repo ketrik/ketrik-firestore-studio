@@ -45,7 +45,9 @@ function classifyCondition(conditionStr?: string): OperationAccess {
 
   // Admin checks (e.g. request.auth.token.admin == true, request.auth.token.role == 'admin', isAdmin())
   if (
-    /request\.auth\.token\.(admin|role\s*==\s*['"]admin['"])/i.test(cond) ||
+    (/request\.auth\.token\.admin\s*==\s*true/i.test(cond) ||
+      (/request\.auth\.token\.admin\b/i.test(cond) && !/request\.auth\.token\.admin\s*==\s*false/i.test(cond)) ||
+      /request\.auth\.token\.role\s*==\s*['"]admin['"]/i.test(cond)) ||
     /\bisAdmin\s*\(/i.test(cond)
   ) {
     return { role: "admin", condition: cond };
@@ -68,11 +70,6 @@ function classifyCondition(conditionStr?: string): OperationAccess {
     // If combined with other conditions via || or &&, note as conditional
     const isConditional = cond.includes("&&") || cond.includes("||");
     return { role: "auth", condition: cond, isConditional };
-  }
-
-  // Check for public access with conditions (e.g. resource.data.isPublished == true)
-  if (cond.includes("request.auth") === false) {
-    return { role: "public", condition: cond, isConditional: true };
   }
 
   return { role: "custom", condition: cond, isConditional: true };
@@ -166,12 +163,24 @@ export class RulesParser {
 
       const rawPath = text.substring(pathStart, blockOpenBrace).trim();
 
-      // Find matching closing brace for the block
+      // Find matching closing brace for the block (skipping string literals)
       let depth = 1;
       let cur = blockOpenBrace + 1;
+      let quote: string | null = null;
+      let escaped = false;
       while (cur < text.length && depth > 0) {
-        if (text[cur] === "{") depth++;
-        else if (text[cur] === "}") depth--;
+        const ch = text[cur];
+        if (quote) {
+          if (escaped) escaped = false;
+          else if (ch === "\\") escaped = true;
+          else if (ch === quote) quote = null;
+        } else if (ch === "'" || ch === '"') {
+          quote = ch;
+        } else if (ch === "{") {
+          depth++;
+        } else if (ch === "}") {
+          depth--;
+        }
         cur++;
       }
 
@@ -271,12 +280,24 @@ export class RulesParser {
         break;
       }
 
-      // Skip past matching closing brace
+      // Skip past matching closing brace (skipping string literals)
       let depth = 1;
       let cur = openBrace + 1;
+      let quote: string | null = null;
+      let escaped = false;
       while (cur < body.length && depth > 0) {
-        if (body[cur] === "{") depth++;
-        else if (body[cur] === "}") depth--;
+        const ch = body[cur];
+        if (quote) {
+          if (escaped) escaped = false;
+          else if (ch === "\\") escaped = true;
+          else if (ch === quote) quote = null;
+        } else if (ch === "'" || ch === '"') {
+          quote = ch;
+        } else if (ch === "{") {
+          depth++;
+        } else if (ch === "}") {
+          depth--;
+        }
         cur++;
       }
 
@@ -327,9 +348,8 @@ export class RulesParser {
         let score = 0;
         const isRecursive = effectiveSegments.some((s) => s.includes("=**"));
         for (let i = 0; i < collSegments.length; i++) {
-          const ruleIdx = i * 2;
-          if (ruleIdx < effectiveSegments.length) {
-            const seg = effectiveSegments[ruleIdx];
+          if (i < effectiveSegments.length) {
+            const seg = effectiveSegments[i];
             if (seg === collSegments[i]) {
               score += 10;
             } else if (seg.startsWith("{") && !seg.includes("=**")) {
@@ -398,39 +418,29 @@ export class RulesParser {
   private pathMatches(collSegments: string[], ruleSegments: string[]): boolean {
     if (collSegments.length === 0 || ruleSegments.length === 0) return false;
 
-    // Rule segments start with the collection name
-    const firstRuleSegment = ruleSegments[0];
-    if (firstRuleSegment.includes("=**")) {
-      return true;
-    }
-
-    if (firstRuleSegment !== collSegments[0] && !firstRuleSegment.startsWith("{")) {
-      return false;
-    }
-
-    // Match deeper segments if nested
     for (let i = 0; i < collSegments.length; i++) {
-      const collPart = collSegments[i];
-      const ruleIndex = i * 2; // rule has document placeholder between subcollections
-
-      if (ruleIndex >= ruleSegments.length) {
-        // Check if previous segment was recursive wildcard =**
-        if (ruleSegments[ruleSegments.length - 1]?.includes("=**")) {
-          return true;
-        }
-        return false;
+      if (i >= ruleSegments.length) {
+        return ruleSegments[ruleSegments.length - 1]?.includes("=**") ?? false;
       }
 
-      const rulePart = ruleSegments[ruleIndex];
+      const rulePart = ruleSegments[i];
       if (rulePart.includes("=**")) {
         return true;
       }
-      if (rulePart !== collPart && !rulePart.startsWith("{")) {
+      if (rulePart !== collSegments[i] && !rulePart.startsWith("{")) {
         return false;
       }
     }
 
-    return true;
+    // Exact collection match or rule targeting documents in that collection (e.g. /users/{userId})
+    if (ruleSegments.length === collSegments.length) {
+      return true;
+    }
+    if (ruleSegments.length === collSegments.length + 1) {
+      const nextSeg = ruleSegments[collSegments.length];
+      return nextSeg.startsWith("{") || nextSeg.includes("=**");
+    }
+    return false;
   }
 
   /**

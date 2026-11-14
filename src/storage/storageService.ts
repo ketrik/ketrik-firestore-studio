@@ -64,17 +64,9 @@ export class StorageService {
     if (!projectId) return [];
 
     try {
-      const storage = await ConnectionManager.getInstance().getStorage(connectionId);
-      // Attempt using storageClient.getBuckets()
-      const [buckets] = await (storage as any).storageClient.getBuckets();
-      if (Array.isArray(buckets) && buckets.length > 0) {
-        return buckets.map((b: any) => ({ name: b.name }));
-      }
-    } catch (err) {
-      // Fallback: Use Google Cloud Storage JSON API via OAuth2
       const accessToken = await this.getAccessToken(connectionId);
       if (accessToken) {
-        const url = `https://storage.googleapis.com/storage/v1/b?project=${projectId}`;
+        const url = `https://storage.googleapis.com/storage/v1/b?project=${encodeURIComponent(projectId)}`;
         const res = await fetch(url, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -83,11 +75,13 @@ export class StorageService {
         });
         if (res.ok) {
           const data: any = await res.json();
-          if (Array.isArray(data.items)) {
+          if (Array.isArray(data.items) && data.items.length > 0) {
             return data.items.map((b: any) => ({ name: b.name }));
           }
         }
       }
+    } catch {
+      // Fallback to configured or default bucket below
     }
 
     // Default fallback to configured bucket or standard Firebase naming pattern
@@ -197,17 +191,17 @@ export class StorageService {
     bucketName: string,
     destinationPath: string,
     localFilePath: string,
-    contentType?: string
+    contentType?: string,
+    cacheControl?: string
   ): Promise<{ gsUrl: string; httpUrl: string }> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "upload storage files");
     const storage = await ConnectionManager.getInstance().getStorage(connectionId);
     const bucket = storage.bucket(bucketName);
 
     await bucket.upload(localFilePath, {
       destination: destinationPath,
       contentType,
-      metadata: {
-        cacheControl: "public, max-age=31536000",
-      },
+      metadata: cacheControl ? { cacheControl } : undefined,
     });
 
     return this.getFileUrls(bucketName, destinationPath);
@@ -217,6 +211,7 @@ export class StorageService {
    * Delete a file from Cloud Storage.
    */
   public async deleteFile(connectionId: string, bucketName: string, filePath: string): Promise<void> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "delete storage files");
     const storage = await ConnectionManager.getInstance().getStorage(connectionId);
     const bucket = storage.bucket(bucketName);
     const file = bucket.file(filePath);

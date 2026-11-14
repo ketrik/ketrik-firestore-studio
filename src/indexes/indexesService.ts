@@ -170,6 +170,7 @@ export class IndexesService {
    */
   public async deleteIndex(connectionId: string, indexName: string): Promise<void> {
     const connectionManager = ConnectionManager.getInstance();
+    connectionManager.throwIfReadOnly(connectionId, "delete composite indexes");
     const conn = connectionManager.getConnection(connectionId);
     if (!conn) {
       throw new Error(`Connection '${connectionId}' not found.`);
@@ -212,6 +213,7 @@ export class IndexesService {
     fields: FirestoreIndexField[]
   ): Promise<any> {
     const connectionManager = ConnectionManager.getInstance();
+    connectionManager.throwIfReadOnly(connectionId, "create composite indexes");
     const conn = connectionManager.getConnection(connectionId);
     if (!conn) {
       throw new Error(`Connection '${connectionId}' not found.`);
@@ -422,6 +424,7 @@ export class IndexesService {
    * Deploy local firestore.indexes.json indexes to live Cloud Firestore.
    */
   public async deployLocalIndexes(connectionId: string): Promise<{ created: number; skipped: number; failed: number }> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "deploy composite indexes");
     const { data } = await this.loadLocalIndexesFile();
     const localIndexes = data.indexes || [];
     if (localIndexes.length === 0) {

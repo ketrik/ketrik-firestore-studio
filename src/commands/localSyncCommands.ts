@@ -11,9 +11,13 @@ import { getDefaultExportUri } from "../webview/common/tableUtils";
  * Command: Push / Seed a local JSON collection into a Firestore database (Cloud or Emulator).
  */
 export async function pushLocalCollectionToFirestoreCommand(
-  item: CollectionItem,
+  item: CollectionItem | undefined,
   explorerDataProvider: ExplorerDataProvider
 ): Promise<void> {
+  if (!item || !item.connectionId) {
+    vscode.window.showWarningMessage("Please select a Local JSON collection in the Firestore Explorer.");
+    return;
+  }
   const sourceConnId = item.connectionId;
   const sourceCollName = item.collectionId;
   const connectionManager = ConnectionManager.getInstance();
@@ -57,6 +61,9 @@ export async function pushLocalCollectionToFirestoreCommand(
   }
 
   const targetConn = targetPick.config;
+  if (!connectionManager.ensureWritable(targetConn.id, "push documents into target database")) {
+    return;
+  }
 
   // 3. Confirm target collection name (default same name)
   const targetCollInput = await vscode.window.showInputBox({
@@ -112,26 +119,44 @@ export async function pushLocalCollectionToFirestoreCommand(
         const chunkSize = 400;
         let writtenCount = 0;
 
-        for (let i = 0; i < localDocs.length; i += chunkSize) {
+        let batch = firestore.batch();
+        let batchOps = 0;
+        let batchBytes = 0;
+
+        for (let i = 0; i < localDocs.length; i++) {
           if (token.isCancellationRequested) {
             vscode.window.showWarningMessage(`Push stopped. ${writtenCount} documents written.`);
             return;
           }
 
-          const chunk = localDocs.slice(i, i + chunkSize);
-          const batch = firestore.batch();
+          const doc = localDocs[i];
+          const docRef = collRef.doc(doc.id);
+          const sanitized = reviveTimestamps(doc.data);
+          const approxBytes = Buffer.byteLength(JSON.stringify(doc.data), "utf8") + 128;
 
-          for (const doc of chunk) {
-            const docRef = collRef.doc(doc.id);
-            const sanitized = reviveTimestamps(doc.data);
-            batch.set(docRef, sanitized, { merge: strategyPick.merge });
+          if (batchOps > 0 && (batchOps >= chunkSize || batchBytes + approxBytes > 4_000_000)) {
+            await batch.commit();
+            writtenCount += batchOps;
+            progress.report({
+              message: `${writtenCount} / ${localDocs.length} written...`,
+              increment: (batchOps / localDocs.length) * 100,
+            });
+            batch = firestore.batch();
+            batchOps = 0;
+            batchBytes = 0;
           }
 
+          batch.set(docRef, sanitized, { merge: strategyPick.merge });
+          batchOps++;
+          batchBytes += approxBytes;
+        }
+
+        if (batchOps > 0) {
           await batch.commit();
-          writtenCount += chunk.length;
+          writtenCount += batchOps;
           progress.report({
             message: `${writtenCount} / ${localDocs.length} written...`,
-            increment: (chunk.length / localDocs.length) * 100,
+            increment: (batchOps / localDocs.length) * 100,
           });
         }
 
@@ -151,9 +176,13 @@ export async function pushLocalCollectionToFirestoreCommand(
  * Command: Pull / Snapshot an entire Firestore collection into a Local JSON Database or file.
  */
 export async function snapshotFirestoreToLocalJsonCommand(
-  item: CollectionItem,
+  item: CollectionItem | undefined,
   explorerDataProvider: ExplorerDataProvider
 ): Promise<void> {
+  if (!item || !item.connectionId) {
+    vscode.window.showWarningMessage("Please select a Firestore collection in the Explorer.");
+    return;
+  }
   const sourceConnId = item.connectionId;
   const sourceCollName = item.collectionId;
   const sourceCollPath = item.reference.path;
@@ -205,6 +234,9 @@ export async function snapshotFirestoreToLocalJsonCommand(
     await connectionManager.addConnection(targetConfig);
   } else {
     targetConfig = pick.conn!;
+    if (!connectionManager.ensureWritable(targetConfig.id, "save snapshot into local database")) {
+      return;
+    }
   }
 
   // 2. Stream all documents from Firestore and write into Local JSON store
@@ -269,9 +301,13 @@ export async function snapshotFirestoreToLocalJsonCommand(
  * Command: Push / Seed a single local document into a Firestore database.
  */
 export async function pushLocalDocumentToFirestoreCommand(
-  item: DocumentItem,
+  item: DocumentItem | undefined,
   explorerDataProvider: ExplorerDataProvider
 ): Promise<void> {
+  if (!item || !item.connectionId) {
+    vscode.window.showWarningMessage("Please select a Local JSON document in the Explorer.");
+    return;
+  }
   const sourceConnId = item.connectionId;
   const connectionManager = ConnectionManager.getInstance();
   const sourceConn = connectionManager.getConnection(sourceConnId);
@@ -286,7 +322,7 @@ export async function pushLocalDocumentToFirestoreCommand(
   if (segments.length < 2) {
     return;
   }
-  const docId = segments[1];
+  const docId = segments[segments.length - 1];
 
   const docData = LocalJsonService.getInstance().getDocument(sourceConn, docPath);
   if (!docData) {
@@ -314,6 +350,9 @@ export async function pushLocalDocumentToFirestoreCommand(
 
   if (!targetPick) return;
   const targetConn = targetPick.config;
+  if (!connectionManager.ensureWritable(targetConn.id, "push document into target database")) {
+    return;
+  }
 
   const targetPathInput = await vscode.window.showInputBox({
     prompt: "Destination document path in target database",
@@ -356,9 +395,13 @@ export async function pushLocalDocumentToFirestoreCommand(
  * Command: Pull / Snapshot an individual Firestore document into a Local JSON Database or file.
  */
 export async function snapshotDocumentToLocalJsonCommand(
-  item: DocumentItem,
+  item: DocumentItem | undefined,
   explorerDataProvider: ExplorerDataProvider
 ): Promise<void> {
+  if (!item || !item.connectionId) {
+    vscode.window.showWarningMessage("Please select a Firestore document in the Explorer.");
+    return;
+  }
   const sourceConnId = item.connectionId;
   const sourceDocPath = item.reference.path;
   const connectionManager = ConnectionManager.getInstance();
@@ -405,6 +448,9 @@ export async function snapshotDocumentToLocalJsonCommand(
     await connectionManager.addConnection(targetConfig);
   } else {
     targetConfig = pick.conn!;
+    if (!connectionManager.ensureWritable(targetConfig.id, "save snapshot into local database")) {
+      return;
+    }
   }
 
   try {

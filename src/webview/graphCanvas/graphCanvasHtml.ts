@@ -1,7 +1,21 @@
 import { GraphData } from "../../graph/graphModel.js";
 
+function escapeHtmlGraph(val: unknown): string {
+  return String(val ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function getGraphCanvasHtml(graphData: GraphData): string {
-  const initialDataJson = JSON.stringify(graphData).replace(/</g, "\\u003c");
+  const initialDataJson = JSON.stringify(graphData)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+  const safeRootPath = escapeHtmlGraph(graphData.rootPath);
+  const safeConnectionId = escapeHtmlGraph(graphData.connectionId);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -9,7 +23,7 @@ export function getGraphCanvasHtml(graphData: GraphData): string {
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:; font-src data:;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Data Graph Canvas: ${graphData.rootPath}</title>
+  <title>Data Graph Canvas: ${safeRootPath}</title>
   <style>
     :root {
       --bg-color: var(--vscode-editor-background, #1e1e1e);
@@ -351,9 +365,9 @@ export function getGraphCanvasHtml(graphData: GraphData): string {
   <div class="graph-toolbar">
     <div class="toolbar-left">
       <div class="toolbar-title">
-        <span>🕸️</span> Data Graph: <code>${graphData.rootPath}</code>
+        <span>🕸️</span> Data Graph: <code>${safeRootPath}</code>
       </div>
-      <span class="toolbar-badge">${graphData.connectionId}</span>
+      <span class="toolbar-badge">${safeConnectionId}</span>
       <div class="toolbar-stats" id="graphStats">0 nodes • 0 edges</div>
     </div>
     <div class="toolbar-actions">
@@ -657,8 +671,8 @@ export function getGraphCanvasHtml(graphData: GraphData): string {
       // Viewport indicator in mini-map
       const vpW = (window.innerWidth / zoom) * scale;
       const vpH = (window.innerHeight / zoom) * scale;
-      const vpX = (-panX - minX + pad) * scale;
-      const vpY = (-panY - minY + pad) * scale;
+      const vpX = (-panX / zoom - minX + pad) * scale;
+      const vpY = (-panY / zoom - minY + pad) * scale;
 
       miniMapViewport.style.left = Math.max(0, vpX) + 'px';
       miniMapViewport.style.top = Math.max(0, vpY) + 'px';

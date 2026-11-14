@@ -90,6 +90,9 @@ export async function openTimeTravelCommand(target?: any): Promise<void> {
     );
 
     if (choice === "Enable PITR (1-Click)") {
+      if (!ConnectionManager.getInstance().ensureWritable(conn.id, "enable PITR")) {
+        return;
+      }
       try {
         await vscode.window.withProgress(
           {
@@ -195,16 +198,32 @@ export async function restoreDocumentFromHistoryCommand(options?: {
   }
 
   const { connectionId, docPath } = options;
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
+  if (conn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to restore documents.`
+    );
+    return;
+  }
   const readTime = typeof options.readTime === "string" ? new Date(options.readTime) : options.readTime;
+  if (!(readTime instanceof Date) || isNaN(readTime.getTime())) {
+    vscode.window.showErrorMessage("Invalid Point-in-Time Recovery timestamp.");
+    return;
+  }
 
   let data = options.historicalData;
   if (!data) {
-    const historicalSnap = await PitrService.getInstance().getDocumentAtTimestamp(connectionId, docPath, readTime);
-    if (!historicalSnap || !historicalSnap.exists) {
-      vscode.window.showErrorMessage(`No historical snapshot found for document '${docPath}' at ${formatDateTime(readTime)}.`);
+    try {
+      const historicalSnap = await PitrService.getInstance().getDocumentAtTimestamp(connectionId, docPath, readTime);
+      if (!historicalSnap || !historicalSnap.exists) {
+        vscode.window.showErrorMessage(`No historical snapshot found for document '${docPath}' at ${formatDateTime(readTime)}.`);
+        return;
+      }
+      data = historicalSnap.data;
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to fetch historical snapshot: ${err?.message || err}`);
       return;
     }
-    data = historicalSnap.data;
   }
 
   const choice = await vscode.window.showWarningMessage(
@@ -252,6 +271,10 @@ export async function compareDocumentWithLiveCommand(options?: {
   }
 
   const readTime = typeof options.readTime === "string" ? new Date(options.readTime) : options.readTime;
+  if (!(readTime instanceof Date) || isNaN(readTime.getTime())) {
+    vscode.window.showErrorMessage("Invalid Point-in-Time Recovery timestamp.");
+    return;
+  }
   try {
     await PitrService.getInstance().compareDocumentWithLive(options.connectionId, options.docPath, readTime);
   } catch (err: any) {

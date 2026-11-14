@@ -10,6 +10,21 @@ import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
 
 /**
+ * Guard helper to block field mutations when a connection is in Read-Only mode.
+ */
+function ensureWritable(connectionId: string | undefined, actionDesc: string): boolean {
+  if (!connectionId) return true;
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
+  if (conn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to ${actionDesc}.`
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
  * Handle opening or quick-editing a field.
  */
 export async function openFieldCommand(
@@ -17,6 +32,10 @@ export async function openFieldCommand(
   explorerDataProvider: ExplorerDataProvider
 ) {
   if (!item?.parentDocRef || !item?.fieldName) {
+    return;
+  }
+
+  if (!ensureWritable(item.connectionId, "edit fields")) {
     return;
   }
 
@@ -41,8 +60,8 @@ export async function openFieldCommand(
   const valType = Array.isArray(value)
     ? "array"
     : value === null
-    ? "null"
-    : typeof value;
+      ? "null"
+      : typeof value;
 
   // If it's a Firestore VectorValue, prompt to edit vector numbers
   const isVec = value && (value.constructor?.name === "VectorValue" || (Array.isArray(value._values) && typeof value.isEqual === "function") || (value.__type === "VectorValue" && Array.isArray(value.values)));
@@ -240,101 +259,105 @@ export async function openFieldCommand(
       return;
     }
 
-    if (typeChoice.type === "object") {
-      await setDocField({});
-      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
-      explorerDataProvider.refreshNode(item);
-      await openPath(item.parentDocRef.path, item.connectionId, fieldTarget);
-      return;
-    }
-
-    if (typeChoice.type === "array") {
-      await setDocField([]);
-      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
-      explorerDataProvider.refreshNode(item);
-      await openPath(item.parentDocRef.path, item.connectionId, fieldTarget);
-      return;
-    }
-
-    if (typeChoice.type === "timestamp") {
-      const tsChoice = await vscode.window.showQuickPick(
-        [
-          { label: "$(clock) Current Time (Now)", action: "now" },
-          { label: "$(server-process) ServerTimestamp (FieldValue.serverTimestamp)", action: "server" },
-          { label: "$(edit) Custom ISO-8601 String", action: "custom" },
-        ],
-        { placeHolder: `Set Timestamp value for '${item.fieldName}'` }
-      );
-      if (!tsChoice) {
+    try {
+      if (typeChoice.type === "object") {
+        await setDocField({});
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+        explorerDataProvider.refreshNode(item);
+        await openPath(item.parentDocRef.path, item.connectionId, fieldTarget);
         return;
       }
-      let tsVal: any;
-      if (tsChoice.action === "now") {
-        tsVal = Timestamp.now();
-      } else if (tsChoice.action === "server") {
-        tsVal = FieldValue.serverTimestamp();
-      } else {
-        const iso = await vscode.window.showInputBox({
-          prompt: `Enter ISO-8601 string for '${item.fieldName}'`,
-          value: new Date().toISOString(),
-          validateInput: (v) => (isNaN(Date.parse(v)) ? "Invalid date format" : undefined),
-        });
-        if (!iso) {
+
+      if (typeChoice.type === "array") {
+        await setDocField([]);
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+        explorerDataProvider.refreshNode(item);
+        await openPath(item.parentDocRef.path, item.connectionId, fieldTarget);
+        return;
+      }
+
+      if (typeChoice.type === "timestamp") {
+        const tsChoice = await vscode.window.showQuickPick(
+          [
+            { label: "$(clock) Current Time (Now)", action: "now" },
+            { label: "$(server-process) ServerTimestamp (FieldValue.serverTimestamp)", action: "server" },
+            { label: "$(edit) Custom ISO-8601 String", action: "custom" },
+          ],
+          { placeHolder: `Set Timestamp value for '${item.fieldName}'` }
+        );
+        if (!tsChoice) {
           return;
         }
-        tsVal = Timestamp.fromDate(new Date(iso));
-      }
-      await setDocField(tsVal);
-      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
-      vscode.window.showInformationMessage(`Updated '${item.fieldName}' to Timestamp`);
-      explorerDataProvider.refreshNode(item);
-      return;
-    }
-
-    if (typeChoice.type === "boolean") {
-      const boolPick = await vscode.window.showQuickPick(
-        [{ label: "true" }, { label: "false" }],
-        { placeHolder: `Set boolean value for '${item.fieldName}'` }
-      );
-      if (!boolPick) {
+        let tsVal: any;
+        if (tsChoice.action === "now") {
+          tsVal = Timestamp.now();
+        } else if (tsChoice.action === "server") {
+          tsVal = FieldValue.serverTimestamp();
+        } else {
+          const iso = await vscode.window.showInputBox({
+            prompt: `Enter ISO-8601 string for '${item.fieldName}'`,
+            value: new Date().toISOString(),
+            validateInput: (v) => (isNaN(Date.parse(v)) ? "Invalid date format" : undefined),
+          });
+          if (!iso) {
+            return;
+          }
+          tsVal = Timestamp.fromDate(new Date(iso));
+        }
+        await setDocField(tsVal);
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+        vscode.window.showInformationMessage(`Updated '${item.fieldName}' to Timestamp`);
+        explorerDataProvider.refreshNode(item);
         return;
       }
-      const bVal = boolPick.label === "true";
-      await setDocField(bVal);
-      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
-      vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${bVal}`);
-      explorerDataProvider.refreshNode(item);
-      return;
-    }
 
-    if (typeChoice.type === "number") {
-      const numInput = await vscode.window.showInputBox({
-        prompt: `Enter numeric value for '${item.fieldName}'`,
-        validateInput: (v) => (isNaN(Number(v)) ? "Must be a valid number" : undefined),
-      });
-      if (numInput === undefined) {
+      if (typeChoice.type === "boolean") {
+        const boolPick = await vscode.window.showQuickPick(
+          [{ label: "true" }, { label: "false" }],
+          { placeHolder: `Set boolean value for '${item.fieldName}'` }
+        );
+        if (!boolPick) {
+          return;
+        }
+        const bVal = boolPick.label === "true";
+        await setDocField(bVal);
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+        vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${bVal}`);
+        explorerDataProvider.refreshNode(item);
         return;
       }
-      const nVal = Number(numInput);
-      await setDocField(nVal);
-      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
-      vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${nVal}`);
-      explorerDataProvider.refreshNode(item);
-      return;
-    }
 
-    if (typeChoice.type === "string") {
-      const strInput = await vscode.window.showInputBox({
-        prompt: `Enter string value for '${item.fieldName}'`,
-      });
-      if (strInput === undefined) {
+      if (typeChoice.type === "number") {
+        const numInput = await vscode.window.showInputBox({
+          prompt: `Enter numeric value for '${item.fieldName}'`,
+          validateInput: (v) => (isNaN(Number(v)) ? "Must be a valid number" : undefined),
+        });
+        if (numInput === undefined) {
+          return;
+        }
+        const nVal = Number(numInput);
+        await setDocField(nVal);
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+        vscode.window.showInformationMessage(`Updated '${item.fieldName}' to ${nVal}`);
+        explorerDataProvider.refreshNode(item);
         return;
       }
-      await setDocField(strInput);
-      DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
-      vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
-      explorerDataProvider.refreshNode(item);
-      return;
+
+      if (typeChoice.type === "string") {
+        const strInput = await vscode.window.showInputBox({
+          prompt: `Enter string value for '${item.fieldName}'`,
+        });
+        if (strInput === undefined) {
+          return;
+        }
+        await setDocField(strInput);
+        DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
+        vscode.window.showInformationMessage(`Updated '${item.fieldName}'`);
+        explorerDataProvider.refreshNode(item);
+        return;
+      }
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to update '${item.fieldName}': ${err?.message || err}`);
     }
     return;
   }
@@ -372,6 +395,10 @@ export async function renameFieldCommand(
   documentFileSystemProvider: DocumentFileSystemProvider
 ) {
   if (!item?.parentDocRef || !item?.fieldName) {
+    return;
+  }
+
+  if (!ensureWritable(item.connectionId, "rename fields")) {
     return;
   }
 
@@ -516,6 +543,9 @@ export async function deleteFieldCommand(
   documentFileSystemProvider: DocumentFileSystemProvider
 ) {
   let targetItem = item;
+  if (targetItem?.connectionId && !ensureWritable(targetItem.connectionId, "delete fields")) {
+    return;
+  }
 
   // Fallback to active editor if triggered without an item argument (e.g. keybinding or command palette)
   if (!targetItem?.parentDocRef || !targetItem?.fieldName) {
@@ -523,6 +553,9 @@ export async function deleteFieldCommand(
     if (activeEditor && activeEditor.document.uri.scheme === "ketrik-firestore-studio") {
       const parsed = documentFileSystemProvider.parseUri(activeEditor.document.uri);
       if (parsed.connectionId && parsed.docPath && parsed.fieldPath) {
+        if (!ensureWritable(parsed.connectionId, "delete fields")) {
+          return;
+        }
         try {
           const firestore = await ConnectionManager.getInstance().getFirestore(parsed.connectionId);
           const docRef = firestore.doc(parsed.docPath);
@@ -604,12 +637,21 @@ export async function deleteMultipleFieldsCommand(
   if (item instanceof DocumentItem) {
     docRef = item.reference;
     connectionId = item.connectionId;
+    if (!ensureWritable(connectionId, "delete fields")) {
+      return;
+    }
   } else if (item instanceof DocumentFieldItem) {
     docRef = item.parentDocRef;
     connectionId = item.connectionId;
+    if (!ensureWritable(connectionId, "delete fields")) {
+      return;
+    }
   } else if (item instanceof vscode.Uri) {
     const parsed = documentFileSystemProvider.parseUri(item);
     connectionId = parsed.connectionId;
+    if (!ensureWritable(connectionId, "delete fields")) {
+      return;
+    }
     if (parsed.docPath && !parsed.isRules) {
       const conn = ConnectionManager.getInstance().getConnection(connectionId);
       if (conn?.isLocalJson) {
@@ -639,6 +681,10 @@ export async function deleteMultipleFieldsCommand(
 
   if (!docRef || !connectionId) {
     vscode.window.showErrorMessage("No document selected. Open a document or select one in Firestore Studio.");
+    return;
+  }
+
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "delete fields")) {
     return;
   }
 
@@ -894,13 +940,17 @@ export async function addFieldCommand(
     item instanceof DocumentItem
       ? item.reference
       : item instanceof DocumentFieldItem
-      ? item.parentDocRef
-      : undefined;
+        ? item.parentDocRef
+        : undefined;
 
   const connectionId = item?.connectionId;
 
   if (!docRef) {
     vscode.window.showErrorMessage("No document selected.");
+    return;
+  }
+
+  if (!ensureWritable(connectionId, "add fields")) {
     return;
   }
 
@@ -1138,6 +1188,10 @@ export async function duplicateFieldCommand(
     return;
   }
 
+  if (!ensureWritable(item.connectionId, "duplicate fields")) {
+    return;
+  }
+
   if (item.isArrayElement) {
     vscode.window.showWarningMessage("Array elements cannot be duplicated by name. Use Add Array Item instead.");
     return;
@@ -1183,7 +1237,7 @@ export async function duplicateFieldCommand(
     if (valToClone !== null && typeof valToClone === "object" && !isTimestampLike(valToClone)) {
       try {
         valToClone = JSON.parse(JSON.stringify(valToClone));
-      } catch {}
+      } catch { }
     }
 
     if (conn?.isLocalJson) {
@@ -1287,14 +1341,18 @@ export async function editArrayItemCommand(
     return;
   }
 
+  if (!ensureWritable(item.connectionId, "edit array items")) {
+    return;
+  }
+
   const idx = item.arrayIndex;
   const val = item.value;
   const parentName = item.parentArrayItem?.fieldName || "array";
   const valType = Array.isArray(val)
     ? "array"
     : val === null
-    ? "null"
-    : typeof val;
+      ? "null"
+      : typeof val;
 
   let newVal: any;
 
@@ -1339,6 +1397,7 @@ export async function editArrayItemCommand(
       const input = await vscode.window.showInputBox({
         prompt: `Enter ISO-8601 string for item [${idx}]`,
         value: curDate.toISOString(),
+        validateInput: (v) => (isNaN(Date.parse(v)) ? "Invalid ISO-8601 date string" : undefined),
       });
       if (!input) return;
       newVal = Timestamp.fromDate(new Date(input));
@@ -1409,11 +1468,15 @@ export async function duplicateArrayItemCommand(
     return;
   }
 
+  if (!ensureWritable(item.connectionId, "duplicate array items")) {
+    return;
+  }
+
   const idx = item.arrayIndex;
   let cloneVal = item.value;
   try {
     cloneVal = JSON.parse(JSON.stringify(cloneVal));
-  } catch {}
+  } catch { }
 
   await mutateDocumentArray(
     item,
@@ -1434,6 +1497,10 @@ export async function deleteArrayItemCommand(
 ) {
   if (!item?.parentDocRef || item.arrayIndex === undefined) {
     vscode.window.showErrorMessage("No array item selected.");
+    return;
+  }
+
+  if (!ensureWritable(item.connectionId, "delete array items")) {
     return;
   }
 
@@ -1466,6 +1533,10 @@ export async function addArrayItemCommand(
 ) {
   if (!item?.parentDocRef) {
     vscode.window.showErrorMessage("No array selected.");
+    return;
+  }
+
+  if (!ensureWritable(item.connectionId, "add array items")) {
     return;
   }
 

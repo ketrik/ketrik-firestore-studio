@@ -1,13 +1,23 @@
 import { getSharedTableStyles } from "../common/tableStyles";
 
+function escapeHtmlServer(val: unknown): string {
+  return String(val ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function getAuthUsersTableHtml(connectionId: string): string {
+  const safeConnectionId = escapeHtmlServer(connectionId);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:; font-src data:;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Auth Users: ${connectionId}</title>
+  <title>Auth Users: ${safeConnectionId}</title>
   <style>
     ${getSharedTableStyles()}
 
@@ -224,7 +234,7 @@ export function getAuthUsersTableHtml(connectionId: string): string {
         <span>🛡️</span>
         <span class="collection-name">Authentication Users</span>
       </h1>
-      <span class="badge" title="Connection ID">${connectionId}</span>
+      <span class="badge" title="Connection ID">${safeConnectionId}</span>
     </div>
     <div class="toolbar-actions">
       <div class="search-wrapper">
@@ -438,11 +448,12 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       tbody.innerHTML = '';
       if (filtered.length === 0) {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="8" style="text-align:center; padding: 24px; color: var(--vscode-descriptionForeground);">' +
+        tr.innerHTML = '<td colspan="9" style="text-align:center; padding: 24px; color: var(--vscode-descriptionForeground);">' +
           (allUsers.length === 0 ? 'No users found in Firebase Authentication' : 'No users match filter "' + escapeHtml(currentFilter) + '"') +
           '</td>';
         tbody.appendChild(tr);
       } else {
+        const frag = document.createDocumentFragment();
         filtered.forEach(u => {
           const tr = document.createElement('tr');
 
@@ -518,15 +529,16 @@ export function getAuthUsersTableHtml(connectionId: string): string {
             <td>\${formatDate(u.metadata?.creationTime)}</td>
             <td>\${formatDate(u.metadata?.lastSignInTime)}</td>
             <td>\${statusHtml}</td>
-            <td>\${claimsHtml}</td>
             <td>\${providersHtml}</td>
+            <td>\${claimsHtml}</td>
             <td id="profile-cell-\${escapeHtml(u.uid)}">\${profileHtml}</td>
             <td class="actions-col sticky-actions">
               <button class="user-menu-btn" data-uid="\${escapeHtml(u.uid)}" title="User Actions (Claims, Profile, Token, etc.)">⋯</button>
             </td>
           \`;
-          tbody.appendChild(tr);
+          frag.appendChild(tr);
         });
+        tbody.appendChild(frag);
       }
 
       // Update status & pagination
@@ -790,13 +802,15 @@ export function getAuthUsersTableHtml(connectionId: string): string {
           }
           break;
 
-        case 'userUpdated':
+        case 'userUpdated': {
+          if (!msg.user || !msg.user.uid) break;
           const idx = allUsers.findIndex(u => u.uid === msg.user.uid);
           if (idx !== -1) {
             allUsers[idx] = { ...allUsers[idx], ...msg.user };
             renderTable();
           }
           break;
+        }
 
         case 'userDeleted':
           allUsers = allUsers.filter(u => u.uid !== msg.uid);

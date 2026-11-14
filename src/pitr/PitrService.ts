@@ -62,8 +62,6 @@ export class PitrService {
     const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
     const targetTimestamp = Timestamp.fromDate(readTime);
 
-    CostService.getInstance().recordOperation(connectionId, "read", options.limit || 20);
-
     return await firestore.runTransaction(
       async (transaction) => {
         let query: Query = firestore.collection(collectionPath);
@@ -87,6 +85,7 @@ export class PitrService {
         }
 
         const snapshot = await transaction.get(query);
+        CostService.getInstance().recordOperation(connectionId, "read", Math.max(1, snapshot.docs.length));
 
         return snapshot.docs.map((doc) => ({
           id: doc.id,
@@ -156,7 +155,13 @@ export class PitrService {
     historicalData: Record<string, any>,
     strategy: "overwrite" | "merge" = "overwrite"
   ): Promise<void> {
-    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+    const connMgr = ConnectionManager.getInstance();
+    connMgr.throwIfReadOnly(connectionId, "restore document from history");
+    const conn = connMgr.getConnection(connectionId);
+    if (conn?.isLocalJson) {
+      throw new Error("Point-in-Time Recovery restore is not supported on Local JSON database instances.");
+    }
+    const firestore = await connMgr.getFirestore(connectionId);
     const docRef = firestore.doc(docPath);
 
     CostService.getInstance().recordOperation(connectionId, "write", 1);

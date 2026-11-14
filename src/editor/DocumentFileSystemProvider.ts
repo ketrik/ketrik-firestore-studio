@@ -122,9 +122,9 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       }
 
       if (tabsToClose.length > 0) {
-        tabGroups.close(tabsToClose).then(undefined, () => {});
+        tabGroups.close(tabsToClose).then(undefined, () => { });
       }
-    } catch {}
+    } catch { }
 
     const collUri = vscode.Uri.from({
       scheme,
@@ -190,9 +190,9 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       }
 
       if (tabsToClose.length > 0) {
-        tabGroups.close(tabsToClose).then(undefined, () => {});
+        tabGroups.close(tabsToClose).then(undefined, () => { });
       }
-    } catch {}
+    } catch { }
   }
 
   /**
@@ -219,7 +219,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
           }
         }
       }
-    } catch {}
+    } catch { }
 
     for (const { connectionId, docPath } of entries) {
       const key = `${connectionId}:${docPath}`;
@@ -333,7 +333,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   }
 
   watch(_uri: vscode.Uri): vscode.Disposable {
-    return new vscode.Disposable(() => {});
+    return new vscode.Disposable(() => { });
   }
 
   public parseUri(uri: vscode.Uri): ParsedDocumentUri {
@@ -383,7 +383,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
             readTime = parsedDate;
           }
         }
-      } catch {}
+      } catch { }
     }
 
     const segments = pathStr.split("/").filter(Boolean);
@@ -437,13 +437,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
    */
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
     const parsed = this.parseUri(uri);
-    const { connectionId, docPath, fieldPath, isRules, readTime } = parsed;
-
-    if (readTime) {
-      throw vscode.FileSystemError.NoPermissions(
-        "Historical Point-in-Time Recovery snapshots are strictly read-only. Use 'Restore from History' to roll back live documents."
-      );
-    }
+    const { connectionId, docPath, fieldPath, isRules } = parsed;
     const now = Date.now();
 
     if (isRules) {
@@ -474,6 +468,8 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     }
 
     const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    const isReadOnly = !!conn?.readOnly;
+
     if (conn?.isLocalJson) {
       const localDoc = LocalJsonService.getInstance().getDocument(conn, docPath);
       if (!localDoc) {
@@ -487,6 +483,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
         ctime: now,
         mtime: now,
         size: 0,
+        permissions: isReadOnly ? vscode.FilePermission.Readonly : undefined,
       };
     }
 
@@ -503,9 +500,10 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
               ctime: now,
               mtime: now,
               size: 2,
+              permissions: isReadOnly ? vscode.FilePermission.Readonly : undefined,
             };
           }
-        } catch {}
+        } catch { }
       }
       throw vscode.FileSystemError.FileNotFound(uri);
     }
@@ -522,6 +520,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       ctime: doc.createTime ? doc.createTime.toMillis() : now,
       mtime: doc.updateTime ? doc.updateTime.toMillis() : now,
       size: 0,
+      permissions: isReadOnly ? vscode.FilePermission.Readonly : undefined,
     };
   }
 
@@ -537,13 +536,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
     const parsed = this.parseUri(uri);
-    const { connectionId, docPath, fieldPath, isRules, readTime } = parsed;
-
-    if (readTime) {
-      throw vscode.FileSystemError.NoPermissions(
-        "Historical Point-in-Time Recovery snapshots are strictly read-only. Use 'Restore from History' to roll back live documents."
-      );
-    }
+    const { connectionId, docPath, fieldPath, isRules } = parsed;
 
     if (isRules) {
       const text = RulesService.getInstance().getRulesContent(connectionId);
@@ -599,7 +592,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
             void SnapshotSyncService.getInstance().mirrorVirtualDocument(connectionId, docPath, fieldPath, {});
             return bytes;
           }
-        } catch {}
+        } catch { }
       }
       throw vscode.FileSystemError.FileNotFound(uri);
     }
@@ -705,6 +698,13 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       );
     }
 
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    if (conn?.readOnly) {
+      throw vscode.FileSystemError.NoPermissions(
+        `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to save changes.`
+      );
+    }
+
     if (isRules) {
       const text = decoder.decode(content);
       await RulesService.getInstance().saveRulesContent(connectionId, text);
@@ -716,10 +716,9 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     try {
       json = JSON.parse(decoder.decode(content));
     } catch (e: any) {
-      throw new Error(`Could not parse JSON: ${e.message}`);
+      throw vscode.FileSystemError.Unavailable(`Could not parse JSON: ${e.message}`);
     }
 
-    const conn = ConnectionManager.getInstance().getConnection(connectionId);
     if (conn?.isLocalJson) {
       if (fieldPath !== undefined) {
         LocalJsonService.getInstance().updateField(conn, docPath, fieldPath, json);
@@ -821,7 +820,10 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       this._evictSnapshot(`${connectionId}:${docPath}`);
       this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
     } catch (e: any) {
-      throw new Error(`Could not write Firestore document: ${e.message}`);
+      if (e instanceof vscode.FileSystemError) {
+        throw e;
+      }
+      throw vscode.FileSystemError.Unavailable(`Could not write Firestore document: ${e.message}`);
     }
   }
 

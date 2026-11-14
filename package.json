@@ -124,6 +124,25 @@
               "secretUri": {
                 "type": "string",
                 "description": "Google Cloud Secret Manager secret resource path (e.g. projects/PROJECT_ID/secrets/SECRET_ID/versions/latest)"
+              },
+              "readOnly": {
+                "type": "boolean",
+                "default": false,
+                "description": "Shield database from mutations: blocks all document writes, edits, field updates, pastes, and deletions"
+              },
+              "environment": {
+                "type": "string",
+                "enum": [
+                  "production",
+                  "staging",
+                  "development"
+                ],
+                "enumDescriptions": [
+                  "Production environment (prominent red badge, recommended with read-only shield)",
+                  "Staging environment (amber/yellow badge)",
+                  "Development environment (green badge)"
+                ],
+                "description": "Environment tier badge and color shield styling"
               }
             },
             "required": [
@@ -327,6 +346,12 @@
         "category": "Firestore Studio",
         "title": "Edit Connection",
         "icon": "$(edit)"
+      },
+      {
+        "command": "ketrik-firestore-studio.toggleConnectionReadOnly",
+        "category": "Firestore Studio",
+        "title": "Toggle Read-Only Shield",
+        "icon": "$(lock)"
       },
       {
         "command": "ketrik-firestore-studio.deleteConnection",
@@ -557,6 +582,12 @@
         "icon": "$(sparkle)"
       },
       {
+        "command": "ketrik-firestore-studio.transformCollectionField",
+        "category": "Firestore Studio",
+        "title": "Bulk Transform Field Across Collection...",
+        "icon": "$(symbol-variable)"
+      },
+      {
         "command": "ketrik-firestore-studio.openPath",
         "category": "Firestore Studio",
         "title": "Open Path"
@@ -614,7 +645,8 @@
       {
         "command": "ketrik-firestore-studio.createDocument",
         "category": "Firestore Studio",
-        "title": "Create Document"
+        "title": "Create Document",
+        "icon": "$(add)"
       },
       {
         "command": "ketrik-firestore-studio.deleteDocument",
@@ -1214,97 +1246,107 @@
       "view/item/context": [
         {
           "command": "ketrik-firestore-studio.testConnection",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "inline@1"
         },
         {
+          "command": "ketrik-firestore-studio.toggleConnectionReadOnly",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
+          "group": "inline@1a"
+        },
+        {
           "command": "ketrik-firestore-studio.openDatabaseConfiguration",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "inline@2"
         },
         {
           "command": "ketrik-firestore-studio.openOverviewDashboard",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "1_open@1"
         },
         {
           "command": "ketrik-firestore-studio.openCostSimulator",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "1_open@2"
         },
         {
           "command": "ketrik-firestore-studio.openDatabaseConfiguration",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "1_open@3"
         },
         {
           "command": "ketrik-firestore-studio.openTimeTravel",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "1_open@4"
         },
         {
           "command": "ketrik-firestore-studio.queryCollectionGroup",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "1_open@5"
         },
         {
           "command": "ketrik-firestore-studio.addCollection",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "2_create@1"
         },
         {
           "command": "ketrik-firestore-studio.editConnection",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "3_manage@1"
         },
         {
+          "command": "ketrik-firestore-studio.toggleConnectionReadOnly",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
+          "group": "3_manage@1a"
+        },
+        {
           "command": "ketrik-firestore-studio.testConnection",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "3_manage@2"
         },
         {
           "command": "ketrik-firestore-studio.openSecurityRules",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "3_manage@3"
         },
         {
           "command": "ketrik-firestore-studio.diffSecurityRules",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "3_manage@4"
         },
         {
           "command": "ketrik-firestore-studio.deploySecurityRules",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "3_manage@5"
         },
         {
           "command": "ketrik-firestore-studio.openAuthUsersAsTable",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "3_manage@6"
         },
         {
           "command": "ketrik-firestore-studio.manageAuthUsers",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "3_manage@7"
         },
         {
           "command": "ketrik-firestore-studio.copyMultipleCollections",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "4_batch@1"
         },
         {
           "command": "ketrik-firestore-studio.deleteMultipleCollections",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "4_batch@2"
         },
         {
           "command": "ketrik-firestore-studio.refreshItem",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "7_refresh@1"
         },
         {
           "command": "ketrik-firestore-studio.deleteConnection",
-          "when": "view == ketrik-firestore-studio-view && viewItem == 'connection'",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'connection' || viewItem == 'connectionReadOnly')",
           "group": "9_danger@1"
         },
         {
@@ -1718,6 +1760,11 @@
           "group": "4_tools@2"
         },
         {
+          "command": "ketrik-firestore-studio.transformCollectionField",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'collectionFiltered')",
+          "group": "4_tools@2a"
+        },
+        {
           "command": "ketrik-firestore-studio.openDataGraph",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'collection' || viewItem == 'collectionFiltered')",
           "group": "4_tools@3"
@@ -1966,6 +2013,11 @@
           "command": "ketrik-firestore-studio.duplicateField",
           "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
           "group": "3_edit@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.transformCollectionField",
+          "when": "view == ketrik-firestore-studio-view && (viewItem == 'documentField' || viewItem == 'documentFieldMap' || viewItem == 'documentFieldArray' || viewItem == 'documentFieldTimestamp')",
+          "group": "3_edit@4a"
         },
         {
           "command": "ketrik-firestore-studio.revealFieldSecretPayload",

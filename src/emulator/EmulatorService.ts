@@ -29,8 +29,61 @@ export interface DetectedEmulatorConfig {
  * Safely parses JSON strings that may contain single-line or multi-line comments.
  */
 function parseJsonWithComments(content: string): any {
-  const cleaned = content.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, "$1");
-  return JSON.parse(cleaned);
+  let out = "";
+  let inString = false;
+  let inSingleLineComment = false;
+  let inMultiLineComment = false;
+  let escaped = false;
+
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i];
+    const next = content[i + 1];
+
+    if (inSingleLineComment) {
+      if (ch === "\n") {
+        inSingleLineComment = false;
+        out += ch;
+      }
+      continue;
+    }
+
+    if (inMultiLineComment) {
+      if (ch === "*" && next === "/") {
+        inMultiLineComment = false;
+        i++;
+      } else if (ch === "\n") {
+        out += ch;
+      }
+      continue;
+    }
+
+    if (inString) {
+      out += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+    } else if (ch === "/" && next === "/") {
+      inSingleLineComment = true;
+      i++;
+    } else if (ch === "/" && next === "*") {
+      inMultiLineComment = true;
+      i++;
+    } else {
+      out += ch;
+    }
+  }
+
+  return JSON.parse(out);
 }
 
 /**
@@ -45,6 +98,7 @@ export class EmulatorService implements vscode.Disposable {
   private cachedConfigs: DetectedEmulatorConfig[] | null = null;
   private lastKnownOnline = false;
   private configChangeTimer: NodeJS.Timeout | null = null;
+  private pendingTimers = new Set<NodeJS.Timeout>();
 
   private constructor() {}
 
@@ -83,7 +137,7 @@ export class EmulatorService implements vscode.Disposable {
     this.disposables.push(
       vscode.window.onDidCloseTerminal((t) => {
         if (t.name === "Firebase Emulator") {
-          setTimeout(() => this.refreshStatus(), 1000);
+          this.scheduleStatusRefresh(1000);
         }
       })
     );
@@ -91,6 +145,14 @@ export class EmulatorService implements vscode.Disposable {
     // 4. Initial status refresh and startup discovery
     await this.refreshStatus();
     await this.handleStartupDiscovery(context);
+  }
+
+  private scheduleStatusRefresh(delayMs: number): void {
+    const timer = setTimeout(() => {
+      this.pendingTimers.delete(timer);
+      void this.refreshStatus();
+    }, delayMs);
+    this.pendingTimers.add(timer);
   }
 
   private onWorkspaceConfigChanged(): void {
@@ -383,7 +445,7 @@ export class EmulatorService implements vscode.Disposable {
     if (terminal) {
       terminal.sendText("\x03"); // Send SIGINT / Ctrl+C
       vscode.window.showInformationMessage("Sent stop signal (SIGINT) to Firebase Emulator terminal.");
-      setTimeout(() => this.refreshStatus(), 2000);
+      this.scheduleStatusRefresh(2000);
     } else {
       vscode.window.showInformationMessage("No active 'Firebase Emulator' terminal found.");
     }
@@ -709,6 +771,10 @@ export class EmulatorService implements vscode.Disposable {
       clearTimeout(this.configChangeTimer);
       this.configChangeTimer = null;
     }
+    for (const timer of this.pendingTimers) {
+      clearTimeout(timer);
+    }
+    this.pendingTimers.clear();
     if (this.fileWatcher) {
       this.fileWatcher.dispose();
     }

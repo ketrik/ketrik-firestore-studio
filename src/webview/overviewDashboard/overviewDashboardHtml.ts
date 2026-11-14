@@ -1,14 +1,28 @@
 import { OverviewDashboardData } from "../../analytics/overviewTypes";
 
+function escapeHtmlOverview(val: any): string {
+  if (val === null || val === undefined) return "";
+  return String(val)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function getOverviewDashboardHtml(data: OverviewDashboardData): string {
-  const jsonData = JSON.stringify(data).replace(/</g, "\\u003c");
+  const jsonData = JSON.stringify(data)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Overview & Traffic Analytics: ${data.connectionName}</title>
+  <title>Overview &amp; Traffic Analytics: ${escapeHtmlOverview(data.connectionName)}</title>
   <style>
     :root {
       --bg: var(--vscode-editor-background, #1e1e1e);
@@ -325,12 +339,12 @@ export function getOverviewDashboardHtml(data: OverviewDashboardData): string {
     <div>
       <div class="title-row">
         <h1>Studio Overview & Traffic Analytics</h1>
-        <span id="traffic-badge" class="status-badge ${data.traffic.status}">
-          ● ${data.traffic.source}
+        <span id="traffic-badge" class="status-badge ${escapeHtmlOverview(data.traffic.status)}">
+          ● ${escapeHtmlOverview(data.traffic.source)}
         </span>
       </div>
       <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">
-        Connection: <strong>${data.connectionName}</strong> | Project: <strong>${data.projectId || "N/A"}</strong> | Refreshed: <span id="refreshed-time">${new Date(data.lastRefreshed).toLocaleTimeString()}</span>
+        Connection: <strong>${escapeHtmlOverview(data.connectionName)}</strong> | Project: <strong>${escapeHtmlOverview(data.projectId || "N/A")}</strong> | Refreshed: <span id="refreshed-time">${escapeHtmlOverview(new Date(data.lastRefreshed).toLocaleTimeString())}</span>
       </div>
     </div>
     <div class="actions">
@@ -342,7 +356,7 @@ export function getOverviewDashboardHtml(data: OverviewDashboardData): string {
 
   ${data.traffic.noticeMessage ? `
   <div class="notice-banner">
-    <div>ℹ️ ${data.traffic.noticeMessage}</div>
+    <div>ℹ️ ${escapeHtmlOverview(data.traffic.noticeMessage)}</div>
   </div>
   ` : ""}
 
@@ -460,12 +474,12 @@ export function getOverviewDashboardHtml(data: OverviewDashboardData): string {
         <tbody id="top-collections-tbody">
           ${data.database.topCollections.map(col => `
             <tr>
-              <td><strong>${col.id}</strong></td>
+              <td><strong>${escapeHtmlOverview(col.id)}</strong></td>
               <td>${col.documentCount.toLocaleString()}</td>
               <td>${formatBytes(col.avgDocSizeBytes)}</td>
               <td>${formatBytes(col.estimatedSizeBytes)}</td>
               <td>
-                <a class="link-action open-table-link" data-collection="${col.id}">
+                <a class="link-action open-table-link" data-collection="${escapeHtmlOverview(col.id)}">
                   ↗ Open Table
                 </a>
               </td>
@@ -580,7 +594,7 @@ export function getOverviewDashboardHtml(data: OverviewDashboardData): string {
         <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
           ${Object.entries(data.auth.providers).map(([provider, count]) => `
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(128, 128, 128, 0.1);">
-              <span style="text-transform: capitalize;">${provider}</span>
+              <span style="text-transform: capitalize;">${escapeHtmlOverview(provider)}</span>
               <span style="font-weight: 600;">${count.toLocaleString()}</span>
             </div>
           `).join("")}
@@ -673,7 +687,7 @@ export function getOverviewDashboardHtml(data: OverviewDashboardData): string {
         <text x="\${padLeft - 6}" y="\${padTop + chartH}" fill="var(--muted)" font-size="10" text-anchor="end">0</text>
       \`;
 
-      const getX = idx => padLeft + (idx / (history.length - 1)) * chartW;
+      const getX = idx => padLeft + (history.length > 1 ? (idx / (history.length - 1)) * chartW : chartW / 2);
       const getY = val => padTop + chartH - (val / maxVal) * chartH;
 
       // Lines
@@ -696,12 +710,13 @@ export function getOverviewDashboardHtml(data: OverviewDashboardData): string {
       history.forEach((pt, i) => {
         const x = getX(i);
         const yReads = getY(pt.reads);
-        const dateLabel = pt.date.slice(5);
+        const safeDate = String(pt.date || '').replace(/[<>"'&]/g, '');
+        const dateLabel = safeDate.slice(5);
 
         pointsHtml += \`
           <text x="\${x}" y="\${padTop + chartH + 16}" fill="var(--muted)" font-size="10" text-anchor="middle">\${dateLabel}</text>
-          <circle cx="\${x}" cy="\${yReads}" r="4" fill="var(--accent)" class="chart-point" data-info="Reads: \${pt.reads.toLocaleString()} (\${pt.date})">
-            <title>Reads: \${pt.reads.toLocaleString()} (\${pt.date})</title>
+          <circle cx="\${x}" cy="\${yReads}" r="4" fill="var(--accent)" class="chart-point" data-info="Reads: \${pt.reads.toLocaleString()} (\${safeDate})">
+            <title>Reads: \${pt.reads.toLocaleString()} (\${safeDate})</title>
           </circle>
         \`;
       });
@@ -731,7 +746,7 @@ export function getOverviewDashboardHtml(data: OverviewDashboardData): string {
         <text x="\${padLeft - 6}" y="\${padTop + chartH}" fill="var(--muted)" font-size="10" text-anchor="end">0 B</text>
       \`;
 
-      const getX = idx => padLeft + (idx / (history.length - 1)) * chartW;
+      const getX = idx => padLeft + (history.length > 1 ? (idx / (history.length - 1)) * chartW : chartW / 2);
       const getY = val => padTop + chartH - (val / maxVal) * chartH;
 
       const pathSent = history.map((pt, i) => \`\${i === 0 ? "M" : "L"} \${getX(i)} \${getY(pt.sentBytes || 0)}\`).join(" ");
@@ -746,12 +761,13 @@ export function getOverviewDashboardHtml(data: OverviewDashboardData): string {
       history.forEach((pt, i) => {
         const x = getX(i);
         const ySent = getY(pt.sentBytes || 0);
-        const dateLabel = pt.date.slice(5);
+        const safeDate = String(pt.date || '').replace(/[<>"'&]/g, '');
+        const dateLabel = safeDate.slice(5);
 
         pointsHtml += \`
           <text x="\${x}" y="\${padTop + chartH + 16}" fill="var(--muted)" font-size="10" text-anchor="middle">\${dateLabel}</text>
-          <circle cx="\${x}" cy="\${ySent}" r="4" fill="var(--purple)" class="chart-point" data-info="Sent: \${formatBytes(pt.sentBytes || 0)} (\${pt.date})">
-            <title>Sent: \${formatBytes(pt.sentBytes || 0)} (\${pt.date})</title>
+          <circle cx="\${x}" cy="\${ySent}" r="4" fill="var(--purple)" class="chart-point" data-info="Sent: \${formatBytes(pt.sentBytes || 0)} (\${safeDate})">
+            <title>Sent: \${formatBytes(pt.sentBytes || 0)} (\${safeDate})</title>
           </circle>
         \`;
       });

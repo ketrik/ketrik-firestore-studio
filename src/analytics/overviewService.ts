@@ -155,53 +155,55 @@ export class OverviewService implements vscode.Disposable {
       let totalDocs = 0;
       let totalEstimatedBytes = 0;
 
-      // Process up to 20 collections in parallel to keep latency tight
-      const targetCollections = collections.slice(0, 20);
+      // Process collections in bounded batches of 10 so all root collections are counted accurately
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < collections.length; i += BATCH_SIZE) {
+        const batch = collections.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map(async (col) => {
+            try {
+              // 1. Native count() aggregation
+              const countSnap = await col.count().get();
+              const count = countSnap.data().count;
 
-      await Promise.all(
-        targetCollections.map(async (col) => {
-          try {
-            // 1. Native count() aggregation
-            const countSnap = await col.count().get();
-            const count = countSnap.data().count;
+              // 2. Sample up to 5 documents to calculate average document size
+              const sampleSnap = await col.limit(5).get();
+              let sampleBytesTotal = 0;
+              let sampleCount = 0;
 
-            // 2. Sample up to 5 documents to calculate average document size
-            const sampleSnap = await col.limit(5).get();
-            let sampleBytesTotal = 0;
-            let sampleCount = 0;
+              for (const doc of sampleSnap.docs) {
+                const data = doc.data();
+                sampleBytesTotal += calculateDocumentSize(data, doc.ref.path);
+                sampleCount++;
+              }
 
-            for (const doc of sampleSnap.docs) {
-              const data = doc.data();
-              sampleBytesTotal += calculateDocumentSize(data, doc.ref.path);
-              sampleCount++;
+              const avgDocSize = sampleCount > 0 ? Math.round(sampleBytesTotal / sampleCount) : 256;
+              const colEstBytes = count * avgDocSize;
+
+              totalDocs += count;
+              totalEstimatedBytes += colEstBytes;
+
+              collectionMetrics.push({
+                id: col.id,
+                path: col.path,
+                documentCount: count,
+                estimatedSizeBytes: colEstBytes,
+                avgDocSizeBytes: avgDocSize,
+                sampleCount,
+              });
+            } catch {
+              collectionMetrics.push({
+                id: col.id,
+                path: col.path,
+                documentCount: 0,
+                estimatedSizeBytes: 0,
+                avgDocSizeBytes: 0,
+                sampleCount: 0,
+              });
             }
-
-            const avgDocSize = sampleCount > 0 ? Math.round(sampleBytesTotal / sampleCount) : 256;
-            const colEstBytes = count * avgDocSize;
-
-            totalDocs += count;
-            totalEstimatedBytes += colEstBytes;
-
-            collectionMetrics.push({
-              id: col.id,
-              path: col.path,
-              documentCount: count,
-              estimatedSizeBytes: colEstBytes,
-              avgDocSizeBytes: avgDocSize,
-              sampleCount,
-            });
-          } catch {
-            collectionMetrics.push({
-              id: col.id,
-              path: col.path,
-              documentCount: 0,
-              estimatedSizeBytes: 0,
-              avgDocSizeBytes: 0,
-              sampleCount: 0,
-            });
-          }
-        })
-      );
+          })
+        );
+      }
 
       // Sort by document count descending
       collectionMetrics.sort((a, b) => b.documentCount - a.documentCount);

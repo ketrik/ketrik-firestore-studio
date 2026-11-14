@@ -300,7 +300,7 @@ export class SecretManagerService implements vscode.Disposable {
     }
     const parent = `projects/${projectId}/secrets/${secretId}`;
 
-    const [versions] = await client.listSecretVersions({ parent });
+    const [versions] = await client.listSecretVersions({ parent, pageSize: 50 }, { autoPaginate: false });
 
     return (versions || []).map((v) => {
       const fullName = v.name || "";
@@ -336,8 +336,10 @@ export class SecretManagerService implements vscode.Disposable {
 
     // Attempt accessing secret version: first via GCP user session / ADC, fallback to SA
     let client: SecretManagerServiceClient;
+    let usedUserAuth = false;
     try {
       client = await this.getClient(connectionId, true);
+      usedUserAuth = true;
     } catch {
       client = await this.getClient(connectionId, false);
     }
@@ -348,8 +350,13 @@ export class SecretManagerService implements vscode.Disposable {
       [versionData] = await client.accessSecretVersion({ name });
     } catch (err: any) {
       // If user auth threw permission error and connection has SA credentials, try with SA credentials
-      if (client !== (await this.getClient(connectionId, false))) {
-        const saClient = await this.getClient(connectionId, false);
+      if (usedUserAuth) {
+        let saClient: SecretManagerServiceClient;
+        try {
+          saClient = await this.getClient(connectionId, false);
+        } catch {
+          throw err;
+        }
         [versionData] = await saClient.accessSecretVersion({ name });
       } else {
         throw err;
@@ -375,6 +382,7 @@ export class SecretManagerService implements vscode.Disposable {
     initialPayload?: string,
     labels?: Record<string, string>
   ): Promise<SecretMetadata> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "create secret");
     const projectId = await this.ensureProjectId(connectionId, true);
 
     let client: SecretManagerServiceClient;
@@ -418,6 +426,7 @@ export class SecretManagerService implements vscode.Disposable {
     secretId: string,
     payloadText: string
   ): Promise<SecretVersionMetadata> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "add secret version");
     const defaultProjectId = await this.ensureProjectId(connectionId, true);
 
     const parsed = this.parseSecretResource(secretId);
@@ -455,13 +464,22 @@ export class SecretManagerService implements vscode.Disposable {
   /**
    * Disable a specific secret version.
    */
+  private async _getMutationClient(connectionId: string): Promise<SecretManagerServiceClient> {
+    try {
+      return await this.getClient(connectionId, true);
+    } catch {
+      return await this.getClient(connectionId, false);
+    }
+  }
+
   public async disableSecretVersion(
     connectionId: string,
     secretIdOrPath: string,
     versionId?: string
   ): Promise<void> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "disable secret version");
     const fullName = this._resolveVersionFullName(connectionId, secretIdOrPath, versionId);
-    const client = await this.getClient(connectionId);
+    const client = await this._getMutationClient(connectionId);
     await client.disableSecretVersion({ name: fullName });
   }
 
@@ -473,8 +491,9 @@ export class SecretManagerService implements vscode.Disposable {
     secretIdOrPath: string,
     versionId?: string
   ): Promise<void> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "enable secret version");
     const fullName = this._resolveVersionFullName(connectionId, secretIdOrPath, versionId);
-    const client = await this.getClient(connectionId);
+    const client = await this._getMutationClient(connectionId);
     await client.enableSecretVersion({ name: fullName });
   }
 
@@ -486,8 +505,9 @@ export class SecretManagerService implements vscode.Disposable {
     secretIdOrPath: string,
     versionId?: string
   ): Promise<void> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "destroy secret version");
     const fullName = this._resolveVersionFullName(connectionId, secretIdOrPath, versionId);
-    const client = await this.getClient(connectionId);
+    const client = await this._getMutationClient(connectionId);
     await client.destroySecretVersion({ name: fullName });
   }
 

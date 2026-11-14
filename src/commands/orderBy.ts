@@ -3,8 +3,8 @@ import * as vscode from "vscode";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { CollectionItem, DocumentItem, Item } from "../explorer/items";
 
-export default async function orderBy(item: Item, explorerDataProvider: ExplorerDataProvider) {
-  if (!item.reference) {
+export default async function orderBy(item: Item | undefined, explorerDataProvider: ExplorerDataProvider) {
+  if (!item || !item.reference) {
     return;
   }
 

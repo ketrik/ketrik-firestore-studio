@@ -41,6 +41,16 @@ export async function explodeFieldCommand(
     return;
   }
 
+  if (!ConnectionManager.getInstance().ensureWritable(item.connectionId, "explode fields")) {
+    return;
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.isLocalJson) {
+    vscode.window.showWarningMessage("Explode Field into Collection is only supported for Cloud Firestore and Emulator connections.");
+    return;
+  }
+
   const rawValue = item.value;
   if (!rawValue || typeof rawValue !== "object") {
     vscode.window.showErrorMessage(
@@ -242,6 +252,16 @@ export async function consolidateCollectionCommand(
     return;
   }
 
+  if (!ConnectionManager.getInstance().ensureWritable(item.connectionId, "consolidate collections")) {
+    return;
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.isLocalJson) {
+    vscode.window.showWarningMessage("Consolidate Collection is only supported for Cloud Firestore and Emulator connections.");
+    return;
+  }
+
   // 1. Ask for Target Document Path
   const targetDocPath = await vscode.window.showInputBox({
     prompt: `Enter target Document Path to store consolidated collection '${item.collectionId}'`,
@@ -338,24 +358,50 @@ export async function consolidateCollectionCommand(
         const sourceColl = item.reference;
         const targetDocRef = firestore.doc(targetDocPath.trim());
 
-        // Fetch all documents from the collection (with safety limit 500)
+        // Paginate collection documents up to 5000 docs to avoid silent truncation
         progress.report({ message: "Reading collection documents..." });
-        const snapshot = await sourceColl.limit(500).get();
+        const MAX_CONSOLIDATE_DOCS = 5000;
+        const PAGE_SIZE = 500;
+        const allDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+        let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+        let truncated = false;
 
-        if (snapshot.empty) {
+        while (allDocs.length < MAX_CONSOLIDATE_DOCS) {
+          let q = sourceColl.limit(PAGE_SIZE);
+          if (lastDoc) q = q.startAfter(lastDoc);
+          const snap = await q.get();
+          if (snap.empty) break;
+          CostService.getInstance().recordOperation(item.connectionId, "read", snap.docs.length);
+          allDocs.push(...snap.docs);
+          lastDoc = snap.docs[snap.docs.length - 1];
+          if (snap.docs.length < PAGE_SIZE) break;
+          if (allDocs.length >= MAX_CONSOLIDATE_DOCS) {
+            truncated = true;
+            break;
+          }
+        }
+
+        if (allDocs.length === 0) {
           vscode.window.showInformationMessage(`Collection '${item.collectionId}' has no documents.`);
+          return;
+        }
+
+        if (truncated && deleteSource.value) {
+          vscode.window.showErrorMessage(
+            `Collection '${item.collectionId}' exceeds ${MAX_CONSOLIDATE_DOCS} documents. Aborting consolidation with source deletion to prevent data loss.`
+          );
           return;
         }
 
         let consolidatedData: any;
         if (formatPick.asArray) {
-          consolidatedData = snapshot.docs.map((d) => ({
+          consolidatedData = allDocs.map((d) => ({
             id: d.id,
             ...d.data(),
           }));
         } else {
           consolidatedData = {};
-          snapshot.docs.forEach((d) => {
+          allDocs.forEach((d) => {
             consolidatedData[d.id] = d.data();
           });
         }
@@ -367,13 +413,14 @@ export async function consolidateCollectionCommand(
           },
           { merge: true }
         );
+        CostService.getInstance().recordOperation(item.connectionId, "write", 1);
 
         // Delete source docs if requested (in batches of 400 to respect Firestore limit)
         if (deleteSource.value) {
           progress.report({ message: "Cleaning up source documents..." });
           const DELETE_BATCH_SIZE = 400;
-          for (let i = 0; i < snapshot.docs.length; i += DELETE_BATCH_SIZE) {
-            const chunk = snapshot.docs.slice(i, i + DELETE_BATCH_SIZE);
+          for (let i = 0; i < allDocs.length; i += DELETE_BATCH_SIZE) {
+            const chunk = allDocs.slice(i, i + DELETE_BATCH_SIZE);
             const batch = firestore.batch();
             chunk.forEach((d) => {
               batch.delete(d.ref);
@@ -389,7 +436,7 @@ export async function consolidateCollectionCommand(
         documentFileSystemProvider.invalidateAndNotify(item.connectionId, targetDocRef.path);
 
         vscode.window.showInformationMessage(
-          `Successfully consolidated ${snapshot.size} document(s) into '${targetDocPath}.${targetFieldName.trim()}'!`
+          `Successfully consolidated ${allDocs.length} document(s) into '${targetDocPath}.${targetFieldName.trim()}'!`
         );
 
         await openPath(targetDocRef.path, item.connectionId, targetFieldName.trim());

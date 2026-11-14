@@ -65,6 +65,14 @@ export async function purgeFieldTombstonesCommand(
     return;
   }
 
+  const fieldConn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (fieldConn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${fieldConn.name}' is in Read-Only mode. Unlock it from the connection context menu to purge tombstones.`
+    );
+    return;
+  }
+
   const rawValue = item.value;
   if (!rawValue || typeof rawValue !== "object") {
     vscode.window.showErrorMessage(
@@ -178,6 +186,14 @@ export async function purgeCollectionTombstonesCommand(
     return;
   }
 
+  const collConn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (collConn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${collConn.name}' is in Read-Only mode. Unlock it from the connection context menu to purge tombstones.`
+    );
+    return;
+  }
+
   // Filter mode selection
   const criteriaPick = await vscode.window.showQuickPick(
     [
@@ -217,11 +233,17 @@ export async function purgeCollectionTombstonesCommand(
     },
     async (progress) => {
       try {
+        const collConn = ConnectionManager.getInstance().getConnection(item.connectionId);
+        if (collConn?.isLocalJson) {
+          vscode.window.showWarningMessage("Tombstone scan & purge is only supported for Cloud Firestore and Emulator connections.");
+          return;
+        }
         const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
         const collRef = item.reference;
 
         // Bounded safety read of up to 500 documents
         const snapshot = await collRef.limit(500).get();
+        CostService.getInstance().recordOperation(item.connectionId, "read", snapshot.size);
         if (snapshot.empty) {
           vscode.window.showInformationMessage(`Collection '${item.collectionId}' is empty.`);
           return;

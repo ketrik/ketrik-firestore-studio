@@ -98,14 +98,33 @@ export function getCollectionTableStyles(): string {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
       font-weight: 600;
       font-size: 0.95em;
+    }
+    .query-header-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .query-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.2));
     }
     .clause-row {
       display: flex;
       gap: 8px;
       align-items: center;
+      flex-wrap: wrap;
       margin-bottom: 8px;
     }
     .clause-row input.clause-field {
@@ -706,10 +725,21 @@ export function getCollectionTableStyles(): string {
   `;
 }
 
+function escapeHtmlServer(val: unknown): string {
+  return String(val ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function getCollectionTableHtml(
   item: { collectionId: string; connectionId: string },
   isCollectionGroup = false
 ): string {
+  const safeCollectionId = escapeHtmlServer(item.collectionId);
+  const safeConnectionId = escapeHtmlServer(item.connectionId);
   return `
     <!DOCTYPE html>
     <html lang="en">
@@ -717,9 +747,107 @@ export function getCollectionTableHtml(
       <meta charset="UTF-8">
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:; font-src data:;">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${isCollectionGroup ? "Collection Group" : "Collection"}: ${item.collectionId}</title>
+      <title>${isCollectionGroup ? "Collection Group" : "Collection"}: ${safeCollectionId}</title>
       <style>
         ${getCollectionTableStyles()}
+        .toolbar {
+          border-bottom: none;
+          margin-bottom: 6px;
+          padding-bottom: 0;
+          gap: 8px;
+        }
+        .toolbar button,
+        .search-lookup-bar button,
+        .search-lookup-bar input[type="text"] {
+          padding: 4px 10px;
+          font-size: 0.86em;
+        }
+        .search-lookup-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-top: 0;
+          margin-bottom: 10px;
+          padding: 6px 0 8px 0;
+          border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.2));
+          border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.2));
+        }
+        .input-group {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .lookup-divider {
+          width: 1px;
+          height: 20px;
+          background: var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+        }
+        .lookup-box {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .lookup-close-btn {
+          padding: 4px 7px;
+          min-width: auto;
+        }
+        .toolbar-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .more-menu-container {
+          position: relative;
+          display: inline-block;
+        }
+        .more-dropdown-menu {
+          position: absolute;
+          top: 100%;
+          right: 0;
+          margin-top: 4px;
+          background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+          border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, #454545));
+          border-radius: 6px;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+          z-index: 120;
+          min-width: 200px;
+          padding: 4px 0;
+        }
+        .more-item {
+          padding: 7px 14px;
+          font-size: 0.88em;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: var(--vscode-menu-foreground, var(--vscode-foreground));
+          transition: background 0.1s ease;
+          user-select: none;
+        }
+        .more-item:hover {
+          background: var(--vscode-menu-selectionBackground, #094771);
+          color: var(--vscode-menu-selectionForeground, #ffffff);
+        }
+        .more-item.disabled {
+          opacity: 0.45;
+          pointer-events: none;
+        }
+        .more-divider {
+          height: 1px;
+          background: var(--vscode-menu-separatorBackground, var(--vscode-panel-border, rgba(128, 128, 128, 0.2)));
+          margin: 4px 0;
+        }
+        .more-header-label {
+          padding: 4px 14px 2px;
+          font-size: 0.72em;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          opacity: 0.55;
+          font-weight: 600;
+        }
       </style>
     </head>
     <body>
@@ -727,28 +855,17 @@ export function getCollectionTableHtml(
         <div class="title-area">
           <h1>
             <span>${isCollectionGroup ? "🗂️" : "📁"}</span>
-            <span class="collection-name">${item.collectionId}</span>
-            ${
-              isCollectionGroup
-                ? '<span class="badge" style="margin-left: 8px; background: rgba(255,152,0,0.18); color: #ff9800; border: 1px solid rgba(255,152,0,0.4);">Collection Group</span>'
-                : ""
-            }
+            <span class="collection-name">${safeCollectionId}</span>
+            ${isCollectionGroup
+      ? '<span class="badge" style="margin-left: 8px; background: rgba(255,152,0,0.18); color: #ff9800; border: 1px solid rgba(255,152,0,0.4);">Collection Group</span>'
+      : ""
+    }
           </h1>
-          <span class="badge" title="Connection ID">${item.connectionId}</span>
+          <span class="badge" title="Connection ID">${safeConnectionId}</span>
+          <span id="envBadge" class="badge" style="display:none;"></span>
+          <span id="readOnlyBadge" class="badge" style="display:none; background: rgba(241,76,76,0.18); color: #f14c4c; border: 1px solid rgba(241,76,76,0.45); font-weight:600;">🔒 READ-ONLY</span>
         </div>
         <div class="toolbar-actions" id="toolbarActions" style="display:none;">
-          <button id="toggleProtoBtn" class="secondary toggle-btn" title="Toggle visibility of Operational Protocol (__) columns" style="display:none;">
-            <span>🛡️</span> __ Protocol
-          </button>
-          <button id="toggleEnvBtn" class="secondary toggle-btn" title="Toggle visibility of System Envelope (_) columns" style="display:none;">
-            <span>🏷️</span> _ Envelope
-          </button>
-          <button id="toggleFilterBtn" class="secondary" title="Build server-side Firestore query filters">
-            <span>🔍</span> Filter / Where
-          </button>
-          <button id="toggleVectorSearchBtn" class="secondary toggle-btn" title="Run kNN similarity vector search (findNearest) against embeddings">
-            <span>🧠</span> Vector Search (kNN)
-          </button>
           <div class="pitr-menu-container">
             <button id="btnPitrMenu" class="secondary toggle-btn" title="Point-in-Time Recovery: Query historical snapshots (past 7 days) or return to live state">
               <span id="pitrIndicator">🟢</span> <span id="pitrButtonLabel">Live State</span> ▾
@@ -770,30 +887,47 @@ export function getCollectionTableHtml(
           <button id="toggleLiveWatchBtn" class="secondary toggle-btn live-watch-btn" title="Toggle Real-Time Live Watch mode (listens to Firestore onSnapshot with mutation flash)">
             <span class="live-watch-indicator"></span> 📡 Live Watch
           </button>
-          <button id="toggleSchemaHealthBtn" class="secondary" title="Scan and analyze collection schema drift, type consistency, and orphan keys">
-            <span>🔬</span> Schema Health
-          </button>
-          <button id="openDataGraphBtn" class="secondary" title="Visualize collection documents & references on an interactive graph canvas">
-            <span>🕸️</span> Data Graph
-          </button>
-          <div class="search-wrapper">
-            <input id="searchInput" type="text" placeholder="Filter loaded rows..." />
+          <div class="more-menu-container">
+            <button id="btnMoreMenu" class="secondary toggle-btn" title="More tools, views, and export">
+              <span>⋯</span> Tools ▾
+            </button>
+            <div id="moreMenuDropdown" class="more-dropdown-menu" style="display:none;">
+              <div class="more-header-label">Analyze</div>
+              <div class="more-item" id="moreCountItem">
+                <span>📊</span> Count Documents
+              </div>
+              <div class="more-item" id="moreAggItem" style="display:none;">
+                <span>∑</span> Aggregates...
+              </div>
+              <div class="more-item" id="moreSchemaHealthItem" title="Opens Schema Health analyzer in a new tab">
+                <span>🔬</span> Schema Health <span style="margin-left:auto; opacity:0.55; font-size:0.85em;">↗</span>
+              </div>
+              <div class="more-item" id="moreDataGraphItem" title="Opens interactive Data Graph in a new tab">
+                <span>🕸️</span> Data Graph <span style="margin-left:auto; opacity:0.55; font-size:0.85em;">↗</span>
+              </div>
+              <div id="moreViewDivider" class="more-divider" style="display:none;"></div>
+              <div id="moreViewHeader" class="more-header-label" style="display:none;">View Columns</div>
+              <div class="more-item" id="moreProtoItem" style="display:none;">
+                <span>🛡️</span> Toggle __ Protocol
+              </div>
+              <div class="more-item" id="moreEnvItem" style="display:none;">
+                <span>🏷️</span> Toggle _ Envelope
+              </div>
+              <div class="more-divider"></div>
+              <div class="more-header-label">Export</div>
+              <div class="more-item" id="moreExportItem">
+                <span>⬇</span> Export JSON
+              </div>
+            </div>
           </div>
-          <button id="searchBtn">Filter</button>
-          <div class="search-wrapper" style="margin-left: 8px;">
-            <input id="jumpInput" type="text" placeholder="Lookup exact Doc ID..." style="width: 170px;" />
-          </div>
-          <button id="jumpBtn" class="secondary" title="Direct single-read fetch of document ID">Lookup</button>
-          <button id="countCollBtn" class="secondary" title="Get exact total document count in collection (1 read per 1k index entries)">
-            <span>📊</span> Count
-          </button>
-          <button id="calcAggBtn" class="secondary" title="Compute Sum and Average on numeric fields" style="display:none;">
-            <span>∑</span> Aggregates...
-          </button>
-          <button id="clearSearchBtn" class="secondary" style="display:none;">Clear</button>
-          <button id="exportBtn" class="secondary" title="Export current view as JSON">
-            <span>⬇</span> Export JSON
-          </button>
+          <!-- Hidden backing elements to keep existing event wireups and state bindings active -->
+          <button id="exportBtn" style="display:none;"></button>
+          <button id="countCollBtn" style="display:none;"></button>
+          <button id="calcAggBtn" style="display:none;"></button>
+          <button id="toggleSchemaHealthBtn" style="display:none;"></button>
+          <button id="openDataGraphBtn" style="display:none;"></button>
+          <button id="toggleProtoBtn" style="display:none;"></button>
+          <button id="toggleEnvBtn" style="display:none;"></button>
         </div>
       </div>
 
@@ -832,28 +966,59 @@ export function getCollectionTableHtml(
         </div>
       </div>
 
+      <div class="search-lookup-bar">
+        <div class="input-group">
+          <div class="search-wrapper">
+            <input id="searchInput" type="text" placeholder="🔍 Filter loaded rows..." style="width: 200px;" />
+          </div>
+          <button id="searchBtn" style="display:none;">Filter</button>
+          <button id="clearSearchBtn" class="secondary" style="display:none;">✕ Clear</button>
+        </div>
+        <div class="input-group" style="gap: 6px; flex-wrap: wrap;">
+          <button id="lookupToggleBtn" class="secondary" title="Direct single-read fetch by exact Document ID">
+            <span>🎯</span> Lookup ID
+          </button>
+          <div id="lookupBox" class="lookup-box" style="display:none;">
+            <div class="search-wrapper">
+              <input id="jumpInput" type="text" placeholder="Enter exact Doc ID..." style="width: 160px;" />
+            </div>
+            <button id="jumpBtn" title="Direct single-read fetch of document ID">Go</button>
+            <button id="lookupCloseBtn" class="secondary lookup-close-btn" title="Close Doc ID lookup">✕</button>
+          </div>
+          <button id="toggleFilterBtn" class="secondary toggle-btn" title="Build server-side Firestore query filters">
+            <span>⚡</span> Where Query
+          </button>
+          <button id="toggleVectorSearchBtn" class="secondary toggle-btn" title="Run kNN similarity vector search (findNearest) against embeddings">
+            <span>🧠</span> Vector kNN
+          </button>
+        </div>
+      </div>
+
       <div id="queryBuilderPanel" class="query-builder-panel" style="display:none;">
         <div class="query-header">
-          <span>Server-Side Firestore Query Builder</span>
-          <div style="display:flex; gap:8px; align-items:center;">
-            <span style="font-size:0.85em; opacity:0.8;">Presets:</span>
-            <button id="presetActiveBtn" class="secondary icon-btn" title="Filter docs where __.active == true" style="font-size:0.82em; padding:3px 8px;">⚡ Active Only</button>
-            <button id="presetExpiredBtn" class="secondary icon-btn" title="Filter docs where __.active == false" style="font-size:0.82em; padding:3px 8px;">⏱ Inactive</button>
-            <button id="bookmarkCurrentBtn" class="secondary icon-btn" title="Save current query as a named bookmark" style="font-size:0.82em; padding:3px 8px;">⭐ Bookmark</button>
-            <select id="bookmarksDropdown" style="font-size:0.82em; padding:3px 8px; max-width:140px;">
-              <option value="">Saved Queries...</option>
-            </select>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span>⚡ Firestore Where Query</span>
             <select id="queryMatchMode" style="font-size:0.82em; padding:3px 8px; font-weight:600;" title="Logical match condition between clauses">
               <option value="and">Match: ALL (AND)</option>
               <option value="or">Match: ANY (OR)</option>
             </select>
-            <button id="addClauseBtn" class="secondary icon-btn">+ Add Clause</button>
-            <button id="estimateQueryCostBtn" class="secondary icon-btn" title="Calculate pre-flight read cost using a 1-read aggregation before fetching documents">💰 Estimate Cost</button>
-            <button id="runQueryBtn">Run Query</button>
-            <button id="resetQueryBtn" class="secondary">Reset</button>
+          </div>
+          <div class="query-header-actions">
+            <select id="bookmarksDropdown" style="font-size:0.82em; padding:3px 8px; max-width:150px;">
+              <option value="">Saved Queries...</option>
+            </select>
+            <button id="bookmarkCurrentBtn" class="secondary icon-btn" title="Save current query as a named bookmark" style="font-size:0.82em; padding:3px 8px;">⭐ Save</button>
           </div>
         </div>
         <div id="clauseList"></div>
+        <div class="query-footer">
+          <button id="addClauseBtn" class="secondary icon-btn">+ Add Clause</button>
+          <div class="query-header-actions">
+            <button id="estimateQueryCostBtn" class="secondary icon-btn" title="Calculate pre-flight read cost using a 1-read aggregation before fetching documents">💰 Estimate Cost</button>
+            <button id="resetQueryBtn" class="secondary">Reset</button>
+            <button id="runQueryBtn">▶ Run Query</button>
+          </div>
+        </div>
       </div>
 
       <div id="vectorSearchPanel" class="vector-search-panel" style="display:none;">
@@ -1281,18 +1446,34 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
 
         const protoBtn = document.getElementById('toggleProtoBtn');
         if (protoBtn) protoBtn.style.display = hasProto ? 'inline-flex' : 'none';
+        const moreProtoItem = document.getElementById('moreProtoItem');
+        if (moreProtoItem) moreProtoItem.style.display = hasProto ? 'flex' : 'none';
 
         const envBtn = document.getElementById('toggleEnvBtn');
         if (envBtn) envBtn.style.display = hasEnv ? 'inline-flex' : 'none';
+        const moreEnvItem = document.getElementById('moreEnvItem');
+        if (moreEnvItem) moreEnvItem.style.display = hasEnv ? 'flex' : 'none';
+
+        const moreViewDiv = document.getElementById('moreViewDivider');
+        const moreViewHdr = document.getElementById('moreViewHeader');
+        if (moreViewDiv) moreViewDiv.style.display = (hasProto || hasEnv) ? 'block' : 'none';
+        if (moreViewHdr) moreViewHdr.style.display = (hasProto || hasEnv) ? 'block' : 'none';
 
         const timeBtn = document.getElementById('toggleTimeTravelBtn');
         if (timeBtn) timeBtn.style.display = hasLifecycle ? 'inline-flex' : 'none';
 
         const aggBtn = document.getElementById('calcAggBtn');
+        const moreAggItem = document.getElementById('moreAggItem');
         if (aggBtn) {
           aggBtn.style.display = numFields.length > 0 ? 'inline-flex' : 'none';
           if (numFields.length > 0) {
             aggBtn.title = 'Compute Sum and Average on numeric fields: ' + numFields.join(', ');
+          }
+        }
+        if (moreAggItem) {
+          moreAggItem.style.display = numFields.length > 0 ? 'flex' : 'none';
+          if (numFields.length > 0) {
+            moreAggItem.title = 'Compute Sum and Average on numeric fields: ' + numFields.join(', ');
           }
         }
       }
@@ -1577,6 +1758,36 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           if (typeof updatePitrUi === 'function') {
             updatePitrUi(msg.activeReadTime);
           }
+
+          // Read-Only & Environment shields
+          const roBadge = document.getElementById('readOnlyBadge');
+          if (roBadge) {
+            roBadge.style.display = msg.isReadOnly ? 'inline-block' : 'none';
+          }
+          const envBadge = document.getElementById('envBadge');
+          if (envBadge) {
+            if (msg.environment === 'production') {
+              envBadge.textContent = '🔴 PRODUCTION';
+              envBadge.style.background = 'rgba(241, 76, 76, 0.18)';
+              envBadge.style.color = '#f14c4c';
+              envBadge.style.border = '1px solid rgba(241, 76, 76, 0.45)';
+              envBadge.style.display = 'inline-block';
+            } else if (msg.environment === 'staging') {
+              envBadge.textContent = '🟡 STAGING';
+              envBadge.style.background = 'rgba(255, 193, 7, 0.18)';
+              envBadge.style.color = '#ffc107';
+              envBadge.style.border = '1px solid rgba(255, 193, 7, 0.45)';
+              envBadge.style.display = 'inline-block';
+            } else if (msg.environment === 'development') {
+              envBadge.textContent = '🟢 DEV';
+              envBadge.style.background = 'rgba(46, 204, 113, 0.18)';
+              envBadge.style.color = '#2ecc71';
+              envBadge.style.border = '1px solid rgba(46, 204, 113, 0.45)';
+              envBadge.style.display = 'inline-block';
+            } else {
+              envBadge.style.display = 'none';
+            }
+          }
         }
 
         if (msg.type === 'queryCostEstimateResult') {
@@ -1603,6 +1814,11 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           if (btn) {
             btn.disabled = false;
             btn.innerHTML = '<span>📊</span> Count';
+          }
+          const moreItem = document.getElementById('moreCountItem');
+          if (moreItem) {
+            moreItem.classList.remove('disabled');
+            moreItem.innerHTML = '<span>📊</span> Count Documents';
           }
           const badge = document.getElementById('total-count-badge');
           if (badge) {
@@ -1819,7 +2035,7 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
             const td = tr.querySelector('td.data-cell[data-field="' + CSS.escape(field) + '"]');
             if (td) {
               td.classList.remove('editing');
-              td.innerHTML = formatCell(value);
+              td.innerHTML = formatCell(value, field);
               td.classList.add('cell-flash-success');
               setTimeout(() => td.classList.remove('cell-flash-success'), 1400);
             }
@@ -1834,7 +2050,7 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
             if (td) {
               td.classList.remove('editing');
               const doc = allLoadedDocs.find(d => d.__path === docPath);
-              td.innerHTML = formatCell(doc ? doc[field] : null);
+              td.innerHTML = formatCell(doc ? doc[field] : null, field);
               td.classList.add('cell-flash-error');
               setTimeout(() => td.classList.remove('cell-flash-error'), 1400);
             }
@@ -1896,23 +2112,30 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
       document.getElementById('toggleProtoBtn').onclick = function() {
         const isHidden = tableEl.classList.toggle('hide-proto');
         this.classList.toggle('active', isHidden);
+        const item = document.getElementById('moreProtoItem');
+        if (item) item.innerHTML = '<span>🛡️</span> ' + (isHidden ? 'Show __ Protocol' : 'Hide __ Protocol');
       };
 
       document.getElementById('toggleEnvBtn').onclick = function() {
         const isHidden = tableEl.classList.toggle('hide-env');
         this.classList.toggle('active', isHidden);
+        const item = document.getElementById('moreEnvItem');
+        if (item) item.innerHTML = '<span>🏷️</span> ' + (isHidden ? 'Show _ Envelope' : 'Hide _ Envelope');
       };
 
       document.getElementById('toggleLiveWatchBtn').onclick = function() {
         vscode.postMessage({ command: 'toggleLiveWatch' });
       };
 
-      document.getElementById('toggleTimeTravelBtn').onclick = function() {
-        const panel = document.getElementById('timeTravelPanel');
-        isTimeTravelOpen = !isTimeTravelOpen;
-        panel.style.display = isTimeTravelOpen ? 'flex' : 'none';
-        this.classList.toggle('active', isTimeTravelOpen);
-      };
+      const toggleTimeTravelBtn = document.getElementById('toggleTimeTravelBtn');
+      if (toggleTimeTravelBtn) {
+        toggleTimeTravelBtn.onclick = function() {
+          const panel = document.getElementById('timeTravelPanel');
+          isTimeTravelOpen = !isTimeTravelOpen;
+          if (panel) panel.style.display = isTimeTravelOpen ? 'flex' : 'none';
+          this.classList.toggle('active', isTimeTravelOpen);
+        };
+      }
 
       document.getElementById('virtualTimeInput').onchange = function() {
         const val = this.value;
@@ -1949,16 +2172,6 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         filterCurrentDocs();
       };
 
-      document.getElementById('presetActiveBtn').onclick = function() {
-        document.getElementById('clauseList').innerHTML = '';
-        createClauseRow('__.active', '==', 'true');
-      };
-
-      document.getElementById('presetExpiredBtn').onclick = function() {
-        document.getElementById('clauseList').innerHTML = '';
-        createClauseRow('__.active', '==', 'false');
-      };
-
       document.getElementById('bookmarkCurrentBtn').onclick = function() {
         const rows = Array.from(document.querySelectorAll('.clause-row'));
         const clauses = rows.map(r => ({
@@ -1989,6 +2202,11 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
       document.getElementById('countCollBtn').onclick = function() {
         this.disabled = true;
         this.innerHTML = '<span>⏳</span> Counting...';
+        const moreItem = document.getElementById('moreCountItem');
+        if (moreItem) {
+          moreItem.classList.add('disabled');
+          moreItem.innerHTML = '<span>⏳</span> Counting...';
+        }
         vscode.postMessage({ command: 'countCollection' });
       };
 
@@ -2048,6 +2266,7 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         const panel = document.getElementById('queryBuilderPanel');
         const isVisible = panel.style.display !== 'none';
         panel.style.display = isVisible ? 'none' : 'block';
+        this.classList.toggle('active', !isVisible);
         if (!isVisible && document.getElementById('clauseList').children.length === 0) {
           createClauseRow();
         }
@@ -2781,9 +3000,31 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         }
       });
 
+      const lookupToggleBtn = document.getElementById('lookupToggleBtn');
+      const lookupBox = document.getElementById('lookupBox');
+      const lookupCloseBtn = document.getElementById('lookupCloseBtn');
+      const jumpInputEl = document.getElementById('jumpInput');
+
+      if (lookupToggleBtn && lookupBox && jumpInputEl) {
+        lookupToggleBtn.onclick = function() {
+          lookupToggleBtn.style.display = 'none';
+          lookupBox.style.display = 'inline-flex';
+          jumpInputEl.focus();
+        };
+      }
+      if (lookupCloseBtn && lookupToggleBtn && lookupBox && jumpInputEl) {
+        lookupCloseBtn.onclick = function() {
+          lookupBox.style.display = 'none';
+          lookupToggleBtn.style.display = '';
+          jumpInputEl.value = '';
+        };
+      }
+
       document.getElementById('jumpInput').addEventListener('keydown', function(event) {
         if (event.key === 'Enter') {
           document.getElementById('jumpBtn').click();
+        } else if (event.key === 'Escape' && lookupCloseBtn) {
+          lookupCloseBtn.click();
         }
       });
 
@@ -2851,15 +3092,92 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
       const pitrButtonLabel = document.getElementById('pitrButtonLabel');
       const btnPitrExit = document.getElementById('btnPitrExit');
 
+      const btnMoreMenu = document.getElementById('btnMoreMenu');
+      const moreDropdown = document.getElementById('moreMenuDropdown');
+
+      if (btnMoreMenu && moreDropdown) {
+        btnMoreMenu.addEventListener('click', function(e) {
+          e.stopPropagation();
+          if (pitrDropdown) pitrDropdown.style.display = 'none';
+          const isHidden = moreDropdown.style.display === 'none';
+          moreDropdown.style.display = isHidden ? 'block' : 'none';
+        });
+
+        const moreCountItem = document.getElementById('moreCountItem');
+        if (moreCountItem) {
+          moreCountItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            moreDropdown.style.display = 'none';
+            document.getElementById('countCollBtn')?.click();
+          });
+        }
+
+        const moreAggItem = document.getElementById('moreAggItem');
+        if (moreAggItem) {
+          moreAggItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            moreDropdown.style.display = 'none';
+            document.getElementById('calcAggBtn')?.click();
+          });
+        }
+
+        const moreSchemaHealthItem = document.getElementById('moreSchemaHealthItem');
+        if (moreSchemaHealthItem) {
+          moreSchemaHealthItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            moreDropdown.style.display = 'none';
+            document.getElementById('toggleSchemaHealthBtn')?.click();
+          });
+        }
+
+        const moreDataGraphItem = document.getElementById('moreDataGraphItem');
+        if (moreDataGraphItem) {
+          moreDataGraphItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            moreDropdown.style.display = 'none';
+            document.getElementById('openDataGraphBtn')?.click();
+          });
+        }
+
+        const moreProtoItem = document.getElementById('moreProtoItem');
+        if (moreProtoItem) {
+          moreProtoItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            moreDropdown.style.display = 'none';
+            document.getElementById('toggleProtoBtn')?.click();
+          });
+        }
+
+        const moreEnvItem = document.getElementById('moreEnvItem');
+        if (moreEnvItem) {
+          moreEnvItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            moreDropdown.style.display = 'none';
+            document.getElementById('toggleEnvBtn')?.click();
+          });
+        }
+
+        const moreExportItem = document.getElementById('moreExportItem');
+        if (moreExportItem) {
+          moreExportItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            moreDropdown.style.display = 'none';
+            document.getElementById('exportBtn')?.click();
+          });
+        }
+      }
+
       if (btnPitrMenu && pitrDropdown) {
         btnPitrMenu.addEventListener('click', function(e) {
           e.stopPropagation();
+          if (moreDropdown) moreDropdown.style.display = 'none';
           const isHidden = pitrDropdown.style.display === 'none';
           pitrDropdown.style.display = isHidden ? 'block' : 'none';
         });
 
         document.addEventListener('click', function() {
           pitrDropdown.style.display = 'none';
+          if (moreDropdown) moreDropdown.style.display = 'none';
         });
 
         pitrDropdown.querySelectorAll('.pitr-item').forEach(function(item) {

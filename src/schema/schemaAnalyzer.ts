@@ -30,6 +30,13 @@ export interface CollectionHealthReport {
   orphanKeysCount: number;
   mixedTypesCount: number;
   generatedAt: string;
+  sampledDocIds?: string[];
+  excludedDocIds?: string[];
+}
+
+export interface DocumentSchemaSnapshot {
+  id: string;
+  fields: { path: string; type: string }[];
 }
 
 /**
@@ -45,13 +52,22 @@ export function detectDetailedValueType(val: any): string {
   if (typeof val === "string") return "string";
   if (Array.isArray(val)) return "array";
   if (typeof val === "object") {
+    if (Buffer.isBuffer(val) || val instanceof Uint8Array) {
+      return "bytes";
+    }
+    if (val instanceof Date) {
+      return "Date";
+    }
     if (val._seconds !== undefined && val._nanoseconds !== undefined) {
       return "Timestamp";
     }
     if (val._latitude !== undefined && val._longitude !== undefined) {
       return "GeoPoint";
     }
-    if (val.path && typeof val.path === "string" && (val.firestore || val.id)) {
+    if (
+      typeof val.path === "string" &&
+      (typeof val.collection === "function" || Boolean(val.firestore) || val.constructor?.name === "DocumentReference")
+    ) {
       return "DocumentReference";
     }
     if (Array.isArray(val._values) && typeof val.isEqual === "function") {
@@ -64,27 +80,28 @@ export function detectDetailedValueType(val: any): string {
 
 /**
  * Flatten document keys up to maxDepth (default 2) using dot notation for nested inspection.
+ * Computes types in a single pass so binary blobs / large values are never traversed or retained.
  */
 export function extractDocumentFieldEntries(
   obj: Record<string, any>,
   prefix = "",
   maxDepth = 2,
   currentDepth = 0,
-  results: { path: string; value: any }[] = []
-): { path: string; value: any }[] {
-  if (!obj || typeof obj !== "object" || Array.isArray(obj) || currentDepth >= maxDepth) {
+  results: { path: string; type: string }[] = []
+): { path: string; type: string }[] {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj) || Buffer.isBuffer(obj) || obj instanceof Uint8Array || currentDepth >= maxDepth) {
     return results;
   }
 
   for (const key in obj) {
     if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
-    if (key.startsWith("__") && (key === "__id" || key === "__path")) continue;
+    if (key === "__id" || key === "__path") continue;
     const val = obj[key];
     const fullPath = prefix ? `${prefix}.${key}` : key;
-    results.push({ path: fullPath, value: val });
-
-    // Inspect nested plain map
     const type = detectDetailedValueType(val);
+    results.push({ path: fullPath, type });
+
+    // Inspect nested plain map only
     if (type === "map" && currentDepth + 1 < maxDepth) {
       extractDocumentFieldEntries(val, fullPath, maxDepth, currentDepth + 1, results);
     }
@@ -93,15 +110,30 @@ export function extractDocumentFieldEntries(
 }
 
 /**
- * Compute the full collection schema drift and anomaly health report from sampled documents.
+ * Extract a lightweight schema-only snapshot of a document (discards raw values to minimize memory).
  */
-export function analyzeCollectionSchemaHealth(
+export function extractDocumentSchemaSnapshot(docId: string, data: Record<string, any>, maxDepth = 2): DocumentSchemaSnapshot {
+  return {
+    id: docId,
+    fields: extractDocumentFieldEntries(data, "", maxDepth),
+  };
+}
+
+/**
+ * Compute the full collection schema drift and anomaly health report from lightweight document snapshots.
+ */
+export function analyzeSchemaSnapshots(
   collectionPath: string,
   connectionId: string,
   connectionName: string,
-  documents: Record<string, any>[]
+  snapshots: DocumentSchemaSnapshot[],
+  excludedDocIds: string[] = []
 ): CollectionHealthReport {
-  const sampledCount = documents.length;
+  const sampledDocIds = snapshots.map((s) => s.id).filter(Boolean);
+  const excludedSet = new Set(excludedDocIds);
+  const activeDocs = snapshots.filter((s) => !s.id || !excludedSet.has(s.id));
+
+  const sampledCount = activeDocs.length;
   if (sampledCount === 0) {
     return {
       collectionPath,
@@ -115,6 +147,8 @@ export function analyzeCollectionSchemaHealth(
       orphanKeysCount: 0,
       mixedTypesCount: 0,
       generatedAt: new Date().toISOString(),
+      sampledDocIds,
+      excludedDocIds,
     };
   }
 
@@ -124,15 +158,14 @@ export function analyzeCollectionSchemaHealth(
     {
       occurrences: number;
       nulls: number;
-      types: Map<string, { count: number; samples: any[] }>;
+      types: Map<string, number>;
     }
   >();
 
-  for (const doc of documents) {
-    const entries = extractDocumentFieldEntries(doc);
+  for (const doc of activeDocs) {
     const seenInDoc = new Set<string>();
 
-    for (const { path, value } of entries) {
+    for (const { path, type } of doc.fields) {
       if (seenInDoc.has(path)) continue;
       seenInDoc.add(path);
 
@@ -143,20 +176,11 @@ export function analyzeCollectionSchemaHealth(
       }
       tracker.occurrences += 1;
 
-      const type = detectDetailedValueType(value);
       if (type === "null") {
         tracker.nulls += 1;
       }
 
-      let typeBucket = tracker.types.get(type);
-      if (!typeBucket) {
-        typeBucket = { count: 0, samples: [] };
-        tracker.types.set(type, typeBucket);
-      }
-      typeBucket.count += 1;
-      if (typeBucket.samples.length < 3 && value !== undefined && value !== null) {
-        typeBucket.samples.push(value);
-      }
+      tracker.types.set(type, (tracker.types.get(type) || 0) + 1);
     }
   }
 
@@ -164,20 +188,24 @@ export function analyzeCollectionSchemaHealth(
   let mixedTypesCount = 0;
   let orphanKeysCount = 0;
   let anomaliesCount = 0;
+  let otherAnomaliesCount = 0;
 
   for (const [path, tracker] of fieldMap.entries()) {
-    const presencePercentage = Math.round((tracker.occurrences / sampledCount) * 100);
+    const presencePercentage =
+      tracker.occurrences === sampledCount
+        ? 100
+        : Math.min(99, Math.round((tracker.occurrences / sampledCount) * 100));
     const missingCount = sampledCount - tracker.occurrences;
     const typeDistributions: FieldTypeDistribution[] = [];
 
     // Filter out null from pure type comparison unless all null
     const nonNullTypes: string[] = [];
-    for (const [type, info] of tracker.types.entries()) {
+    for (const [type, count] of tracker.types.entries()) {
       typeDistributions.push({
         type,
-        count: info.count,
-        percentage: Math.round((info.count / tracker.occurrences) * 100),
-        sampleValues: info.samples,
+        count,
+        percentage: Math.round((count / tracker.occurrences) * 100),
+        sampleValues: [],
       });
       if (type !== "null") {
         nonNullTypes.push(type);
@@ -189,7 +217,7 @@ export function analyzeCollectionSchemaHealth(
     const isPrimaryTypeMixed = nonNullTypes.length > 1;
     if (isPrimaryTypeMixed) mixedTypesCount += 1;
 
-    // Orphan / zombie key: present in < 5% of documents (or <= 2 documents if small sample)
+    // Orphan / zombie key: present in < 5% of documents (or 1 doc if small sample > 3)
     const isZombieOrOrphan = sampledCount >= 10
       ? presencePercentage < 5
       : tracker.occurrences === 1 && sampledCount > 3;
@@ -211,6 +239,9 @@ export function analyzeCollectionSchemaHealth(
 
     if (anomalies.length > 0) {
       anomaliesCount += 1;
+      if (!isPrimaryTypeMixed && !isZombieOrOrphan) {
+        otherAnomaliesCount += 1;
+      }
     }
 
     fieldMetrics.push({
@@ -235,8 +266,8 @@ export function analyzeCollectionSchemaHealth(
     return a.fieldPath.localeCompare(b.fieldPath);
   });
 
-  // Calculate health score: 100 minus penalties for mixed types and orphan keys
-  const penalty = Math.min(100, (mixedTypesCount * 15) + (orphanKeysCount * 10) + (anomaliesCount * 5));
+  // Calculate health score without double-counting mixed/orphan fields in otherAnomaliesCount
+  const penalty = Math.min(100, (mixedTypesCount * 15) + (orphanKeysCount * 10) + (otherAnomaliesCount * 5));
   const overallHealthScore = Math.max(0, 100 - penalty);
 
   return {
@@ -251,5 +282,21 @@ export function analyzeCollectionSchemaHealth(
     orphanKeysCount,
     mixedTypesCount,
     generatedAt: new Date().toISOString(),
+    sampledDocIds,
+    excludedDocIds,
   };
+}
+
+/**
+ * Compute the full collection schema drift and anomaly health report from raw sampled documents.
+ */
+export function analyzeCollectionSchemaHealth(
+  collectionPath: string,
+  connectionId: string,
+  connectionName: string,
+  documents: Record<string, any>[],
+  excludedDocIds: string[] = []
+): CollectionHealthReport {
+  const snapshots = documents.map((d) => extractDocumentSchemaSnapshot(d.__id || d.id || "", d));
+  return analyzeSchemaSnapshots(collectionPath, connectionId, connectionName, snapshots, excludedDocIds);
 }

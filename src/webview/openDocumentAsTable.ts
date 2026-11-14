@@ -136,6 +136,7 @@ export async function openDocumentAsTable(
         if (!docData) {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
           const docSnap = await firestore.doc(docPath).get();
+          CostService.getInstance().recordOperation(connectionId, "read", 1);
           if (docSnap.exists) {
             docData = docSnap.data() || {};
           } else {
@@ -175,6 +176,7 @@ export async function openDocumentAsTable(
     fields,
   };
   activeDocumentPanels.set(panelKey, ctx);
+  let suppressNextFileChange = false;
 
   async function getDocRef() {
     const conn = ConnectionManager.getInstance().getConnection(connectionId);
@@ -206,6 +208,7 @@ export async function openDocumentAsTable(
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
           const snap = await firestore.doc(docPath).get();
+          CostService.getInstance().recordOperation(connectionId, "read", 1);
           if (snap.exists) {
             freshData = snap.data() || {};
           }
@@ -231,6 +234,13 @@ export async function openDocumentAsTable(
 
     if (message.command === "openInEditor") {
       await openPath(docPath, connectionId);
+      return;
+    }
+
+    if (message.command === "copyPath") {
+      const pathToCopy = message.path || docPath;
+      await vscode.env.clipboard.writeText(pathToCopy);
+      vscode.window.showInformationMessage(`Copied document path to clipboard: ${pathToCopy}`);
       return;
     }
 
@@ -298,6 +308,17 @@ export async function openDocumentAsTable(
     }
 
     if (message.command === "updateField") {
+      const conn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (conn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to edit fields.`
+        );
+        panel.webview.postMessage({
+          type: "error",
+          message: `Connection '${conn.name}' is in Read-Only mode.`,
+        });
+        return;
+      }
       const { field, value } = message;
       try {
         let writeVal: any = value;
@@ -332,6 +353,7 @@ export async function openDocumentAsTable(
         ctx.docData[field] = writeVal;
         ctx.fields = parseFields(ctx.docData);
 
+        suppressNextFileChange = true;
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docPath);
 
         panel.webview.postMessage({
@@ -350,6 +372,13 @@ export async function openDocumentAsTable(
     }
 
     if (message.command === "deleteField") {
+      const conn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (conn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete fields.`
+        );
+        return;
+      }
       const { field } = message;
       const confirm = await vscode.window.showWarningMessage(
         `Are you sure you want to delete field '${field}' from '${docPath}'?`,
@@ -373,6 +402,7 @@ export async function openDocumentAsTable(
         delete ctx.docData[field];
         ctx.fields = parseFields(ctx.docData);
 
+        suppressNextFileChange = true;
         DocumentFileSystemProvider.getInstance().invalidateAndNotifyFieldDeleted(connectionId, docPath, field);
 
         panel.webview.postMessage({
@@ -391,6 +421,13 @@ export async function openDocumentAsTable(
     }
 
     if (message.command === "addField") {
+      const addConn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (addConn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${addConn.name}' is in Read-Only mode. Unlock it from the connection context menu to add fields.`
+        );
+        return;
+      }
       try {
         const keyInput = await vscode.window.showInputBox({
           prompt: `Enter new field name for '${documentId}'`,
@@ -494,6 +531,7 @@ export async function openDocumentAsTable(
         ctx.docData[newFieldName] = entryVal;
         ctx.fields = parseFields(ctx.docData);
 
+        suppressNextFileChange = true;
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docPath);
 
         panel.webview.postMessage({
@@ -515,6 +553,13 @@ export async function openDocumentAsTable(
     }
 
     if (message.command === "deleteDocument") {
+      const delConn = ConnectionManager.getInstance().getConnection(connectionId);
+      if (delConn?.readOnly) {
+        vscode.window.showErrorMessage(
+          `Connection '${delConn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete documents.`
+        );
+        return;
+      }
       const confirm = await vscode.window.showWarningMessage(
         `Are you sure you want to delete entire document '${docPath}'?`,
         { modal: true },
@@ -558,15 +603,6 @@ export async function openDocumentAsTable(
     errorMessage: fetchError,
   });
 
-  // Fallback initial postMessage
-  panel.webview.postMessage({
-    type: "init",
-    documentId,
-    docPath,
-    parentCollectionPath,
-    fields,
-  });
-
   // Listen to file changes from DocumentFileSystemProvider to keep open table in live sync
   let fileChangeDebounce: NodeJS.Timeout | undefined;
   const fileChangeSubscription = DocumentFileSystemProvider.getInstance().onDidChangeFile((events) => {
@@ -574,6 +610,10 @@ export async function openDocumentAsTable(
       if (ev.type === vscode.FileChangeType.Changed && ev.uri.scheme === "ketrik-firestore-studio" && ev.uri.authority === connectionId) {
         const parsed = DocumentFileSystemProvider.getInstance().parseUri(ev.uri);
         if (parsed.docPath === docPath) {
+          if (suppressNextFileChange) {
+            suppressNextFileChange = false;
+            return;
+          }
           if (fileChangeDebounce) clearTimeout(fileChangeDebounce);
           fileChangeDebounce = setTimeout(async () => {
             try {
@@ -584,6 +624,7 @@ export async function openDocumentAsTable(
               } else {
                 const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
                 const snap = await firestore.doc(docPath).get();
+                CostService.getInstance().recordOperation(connectionId, "read", 1);
                 if (snap.exists) {
                   freshData = snap.data() || {};
                 }

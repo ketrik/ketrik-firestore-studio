@@ -38,33 +38,58 @@ export class ConnectionTreeItem extends Item {
   constructor(public config: FirestoreConnectionConfig) {
     super(config.name, vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `connection:${config.id}`;
-    this.contextValue = "connection";
+    this.contextValue = config.readOnly ? "connectionReadOnly" : "connection";
 
     const detail = config.isLocalJson
       ? `Local JSON (${config.localJsonPath || ""})`
       : config.isEmulator
-      ? `Emulator (${config.emulatorHost || "localhost:8080"})${config.projectId ? ` [${config.projectId}]` : ""}`
-      : config.databaseId && config.databaseId !== "(default)"
-      ? `${config.projectId || "Project"} [${config.databaseId}]`
-      : config.projectId || "Production";
+        ? `Emulator (${config.emulatorHost || "localhost:8080"})${config.projectId ? ` [${config.projectId}]` : ""}`
+        : config.databaseId && config.databaseId !== "(default)"
+          ? `${config.projectId || "Project"} [${config.databaseId}]`
+          : config.projectId || "Production";
 
-    this.description = detail;
-    this.tooltip = `Connection: ${config.name}\nID: ${config.id}\nTarget: ${detail}${
-      config.isLocalJson
+    // Format environment prefix and lock status
+    let envPrefix = "";
+    if (config.environment === "production") {
+      envPrefix = "🔴 [PROD]";
+    } else if (config.environment === "staging") {
+      envPrefix = "🟡 [STAGING]";
+    } else if (config.environment === "development") {
+      envPrefix = "🟢 [DEV]";
+    }
+
+    const lockBadge = config.readOnly ? "🔒" : "";
+    const badges = [envPrefix, lockBadge].filter(Boolean).join(" ");
+    this.description = badges ? `${badges} ${detail}` : detail;
+
+    this.tooltip = `Connection: ${config.name}\nID: ${config.id}\nTarget: ${detail}${config.environment ? `\nEnvironment: ${config.environment.toUpperCase()}` : ""
+      }${config.readOnly ? "\nStatus: 🔒 Read-Only Shield Enabled (All writes/mutations blocked)" : "\nStatus: Read/Write"}${config.isLocalJson
         ? `\nType: Local JSON Database\nPath: ${config.localJsonPath}`
         : config.isEmulator
-        ? `\nType: Local Emulator Client (Requires running emulator process on ${config.emulatorHost || "localhost:8080"})${
-            config.authEmulatorHost ? `\nAuth Emulator: ${config.authEmulatorHost}` : ""
+          ? `\nType: Local Emulator Client (Requires running emulator process on ${config.emulatorHost || "localhost:8080"})${config.authEmulatorHost ? `\nAuth Emulator: ${config.authEmulatorHost}` : ""
           }`
-        : ""
-    }`;
-    this.iconPath = new vscode.ThemeIcon(
-      config.isLocalJson
-        ? "file-code"
-        : config.isEmulator
-        ? "server-process"
-        : "database"
-    );
+          : ""
+      }`;
+
+    if (config.readOnly) {
+      this.iconPath = new vscode.ThemeIcon(
+        "lock",
+        config.environment === "production" ? new vscode.ThemeColor("errorForeground") : undefined
+      );
+    } else {
+      this.iconPath = new vscode.ThemeIcon(
+        config.isLocalJson
+          ? "file-code"
+          : config.isEmulator
+            ? "server-process"
+            : "database",
+        config.environment === "production"
+          ? new vscode.ThemeColor("errorForeground")
+          : config.environment === "staging"
+            ? new vscode.ThemeColor("editorWarning.foreground")
+            : undefined
+      );
+    }
   }
 }
 
@@ -127,10 +152,9 @@ export class DocumentItem extends Item {
         `Document: ${documentId}\n` +
         `Path: [${connectionId}] ${reference.path}\n` +
         `Size: ${sizeInfo.formatted} (${sizeInfo.bytes.toLocaleString()} bytes)\n` +
-        `Limit: ${sizeInfo.percentageOfLimit}% of 1 MB max${
-          isExceeded
-            ? `\n⚠️ High Document Size: Exceeds 750 KB quota threshold.`
-            : ""
+        `Limit: ${sizeInfo.percentageOfLimit}% of 1 MB max${isExceeded
+          ? `\n⚠️ High Document Size: Exceeds 750 KB quota threshold.`
+          : ""
         }`;
     } else {
       this.tooltip = `[${connectionId}] ${reference.path}`;
@@ -181,10 +205,10 @@ export class DocumentFieldItem extends Item {
     const valType = Array.isArray(value)
       ? "array"
       : isVector
-      ? "vector"
-      : value === null
-      ? "null"
-      : typeof value;
+        ? "vector"
+        : value === null
+          ? "null"
+          : typeof value;
 
     const isArray = valType === "array";
     const isMap = valType === "object" && !isTimestamp && !isVector;
@@ -230,16 +254,16 @@ export class DocumentFieldItem extends Item {
       iconColor = isProtocol
         ? new vscode.ThemeColor("charts.red")
         : isEnvelope
-        ? new vscode.ThemeColor("charts.purple")
-        : new vscode.ThemeColor("charts.blue");
+          ? new vscode.ThemeColor("charts.purple")
+          : new vscode.ThemeColor("charts.blue");
       this.description = `${formatDateTime(timestampDate)} (${formatRelativeTime(timestampDate)})`;
     } else if (isVector) {
       icon = isProtocol ? "shield" : isEnvelope ? "tag" : "zap";
       iconColor = isProtocol
         ? new vscode.ThemeColor("charts.red")
         : isEnvelope
-        ? new vscode.ThemeColor("charts.purple")
-        : new vscode.ThemeColor("charts.orange");
+          ? new vscode.ThemeColor("charts.purple")
+          : new vscode.ThemeColor("charts.orange");
       const dims =
         value.values?.length ||
         value._values?.length ||
@@ -262,8 +286,8 @@ export class DocumentFieldItem extends Item {
       iconColor = isProtocol
         ? new vscode.ThemeColor("charts.red")
         : isEnvelope
-        ? new vscode.ThemeColor("charts.purple")
-        : new vscode.ThemeColor("symbolIcon.arrayForeground");
+          ? new vscode.ThemeColor("charts.purple")
+          : new vscode.ThemeColor("symbolIcon.arrayForeground");
       this.description = `[${value.length}]`;
     } else if (typeof value === "string" && ((value.startsWith("projects/") && value.includes("/secrets/")) || value.startsWith("gcp-secret://"))) {
       icon = "key";
@@ -277,32 +301,32 @@ export class DocumentFieldItem extends Item {
       iconColor = isProtocol
         ? new vscode.ThemeColor("charts.red")
         : isEnvelope
-        ? new vscode.ThemeColor("charts.purple")
-        : new vscode.ThemeColor("symbolIcon.stringForeground");
+          ? new vscode.ThemeColor("charts.purple")
+          : new vscode.ThemeColor("symbolIcon.stringForeground");
       this.description = `"${value.length > 20 ? value.slice(0, 17) + "..." : value}"`;
     } else if (valType === "number") {
       icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-number";
       iconColor = isProtocol
         ? new vscode.ThemeColor("charts.red")
         : isEnvelope
-        ? new vscode.ThemeColor("charts.purple")
-        : new vscode.ThemeColor("symbolIcon.numberForeground");
+          ? new vscode.ThemeColor("charts.purple")
+          : new vscode.ThemeColor("symbolIcon.numberForeground");
       this.description = String(value);
     } else if (valType === "boolean") {
       icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-boolean";
       iconColor = isProtocol
         ? new vscode.ThemeColor("charts.red")
         : isEnvelope
-        ? new vscode.ThemeColor("charts.purple")
-        : new vscode.ThemeColor("symbolIcon.booleanForeground");
+          ? new vscode.ThemeColor("charts.purple")
+          : new vscode.ThemeColor("symbolIcon.booleanForeground");
       this.description = String(value);
     } else {
       icon = isProtocol ? "shield" : isEnvelope ? "tag" : "symbol-variable";
       iconColor = isProtocol
         ? new vscode.ThemeColor("charts.red")
         : isEnvelope
-        ? new vscode.ThemeColor("charts.purple")
-        : undefined;
+          ? new vscode.ThemeColor("charts.purple")
+          : undefined;
       this.description = String(value);
     }
 
@@ -314,33 +338,33 @@ export class DocumentFieldItem extends Item {
       this.contextValue = isSecretRef
         ? "documentFieldArrayItemSecretRef"
         : isTimestamp
-        ? "documentFieldArrayItemTimestamp"
-        : valType === "object"
-        ? "documentFieldArrayItemMap"
-        : valType === "array"
-        ? "documentFieldArrayItemArray"
-        : valType === "null"
-        ? "documentFieldArrayItemNull"
-        : "documentFieldArrayItemScalar";
+          ? "documentFieldArrayItemTimestamp"
+          : valType === "object"
+            ? "documentFieldArrayItemMap"
+            : valType === "array"
+              ? "documentFieldArrayItemArray"
+              : valType === "null"
+                ? "documentFieldArrayItemNull"
+                : "documentFieldArrayItemScalar";
     } else {
       this.contextValue = isSecretRef
         ? "documentFieldSecretRef"
         : isTimestamp
-        ? "documentFieldTimestamp"
-        : isVector
-        ? "documentFieldVector"
-        : valType === "object"
-        ? "documentFieldMap"
-        : valType === "array"
-        ? "documentFieldArray"
-        : "documentField";
+          ? "documentFieldTimestamp"
+          : isVector
+            ? "documentFieldVector"
+            : valType === "object"
+              ? "documentFieldMap"
+              : valType === "array"
+                ? "documentFieldArray"
+                : "documentField";
     }
 
     const tierLabel = isProtocol
       ? " [Protocol / Operational]"
       : isEnvelope
-      ? " [System Envelope / Index]"
-      : "";
+        ? " [System Envelope / Index]"
+        : "";
     const typeLabel = isTimestamp ? "timestamp" : valType;
     if (isSecretRef) {
       this.tooltip = `Field: ${this.fullFieldPath} (Google Secret Link)${tierLabel}\nSecret: ${value}\nDoc: ${parentDocRef.path}`;
@@ -508,8 +532,8 @@ export class AuthUserItem extends Item {
       user.customClaims?.admin
         ? new vscode.ThemeColor("charts.red")
         : hasProfileDoc
-        ? new vscode.ThemeColor("charts.green")
-        : new vscode.ThemeColor("charts.yellow")
+          ? new vscode.ThemeColor("charts.green")
+          : new vscode.ThemeColor("charts.yellow")
     );
 
     this.command = {
@@ -611,8 +635,7 @@ export class CompositeIndexItem extends Item {
       `Fields:\n${index.fields
         .map(
           (f) =>
-            `  - ${f.fieldPath} (${
-              f.arrayConfig === "CONTAINS" ? "ARRAY_CONTAINS" : f.order || "ASCENDING"
+            `  - ${f.fieldPath} (${f.arrayConfig === "CONTAINS" ? "ARRAY_CONTAINS" : f.order || "ASCENDING"
             })`
         )
         .join("\n")}`,
@@ -724,8 +747,8 @@ export class StorageFileTreeItem extends Item {
       size < 1024
         ? `${size} B`
         : size < 1024 * 1024
-        ? `${(size / 1024).toFixed(1)} KB`
-        : `${(size / (1024 * 1024)).toFixed(1)} MB`;
+          ? `${(size / 1024).toFixed(1)} KB`
+          : `${(size / (1024 * 1024)).toFixed(1)} MB`;
 
     this.description = formattedSize;
 
@@ -830,8 +853,8 @@ export class SecretVersionTreeItem extends Item {
     this.contextValue = isEnabled
       ? "secretVersionEnabled"
       : isDisabled
-      ? "secretVersionDisabled"
-      : "secretVersionDestroyed";
+        ? "secretVersionDisabled"
+        : "secretVersionDestroyed";
 
     let icon = "symbol-variable";
     let iconColor: vscode.ThemeColor | undefined;

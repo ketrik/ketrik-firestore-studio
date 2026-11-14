@@ -192,6 +192,23 @@ async function copyFirestoreDocHierarchy(
  * Recursively copies subcollections from Firestore to Local JSON.
  * If allowedSubcollections is provided, only those top-level subcollections will be traversed.
  */
+function setLocalDocumentWithStrategy(
+  targetConn: FirestoreConnectionConfig,
+  docPath: string,
+  data: Record<string, any>,
+  merge: boolean
+): void {
+  const localJson = LocalJsonService.getInstance();
+  if (merge) {
+    const existing = localJson.getDocument(targetConn, docPath);
+    if (existing && typeof existing === "object") {
+      localJson.setDocument(targetConn, docPath, { ...existing, ...data });
+      return;
+    }
+  }
+  localJson.setDocument(targetConn, docPath, data);
+}
+
 async function copyFirestoreDocToLocalHierarchy(
   sourceDocRef: FirebaseFirestore.DocumentReference,
   targetConn: FirestoreConnectionConfig,
@@ -200,7 +217,8 @@ async function copyFirestoreDocToLocalHierarchy(
   token: vscode.CancellationToken,
   onDocCopied: (path: string) => void,
   onSubCollFound: (id: string) => void,
-  allowedSubcollections?: string[]
+  allowedSubcollections?: string[],
+  merge = false
 ): Promise<void> {
   if (token.isCancellationRequested) return;
 
@@ -234,7 +252,7 @@ async function copyFirestoreDocToLocalHierarchy(
         for (const childDoc of snap.docs) {
           if (token.isCancellationRequested) break;
           const childTargetPath = `${targetDocPath}/${subColl.id}/${childDoc.id}`;
-          LocalJsonService.getInstance().setDocument(targetConn, childTargetPath, childDoc.data());
+          setLocalDocumentWithStrategy(targetConn, childTargetPath, childDoc.data(), merge);
           onDocCopied(childTargetPath);
 
           await copyFirestoreDocToLocalHierarchy(
@@ -244,7 +262,9 @@ async function copyFirestoreDocToLocalHierarchy(
             pageSize,
             token,
             onDocCopied,
-            onSubCollFound
+            onSubCollFound,
+            undefined,
+            merge
           );
         }
 
@@ -453,6 +473,9 @@ export async function copyDocumentToInstanceCommand(
 
   if (!targetPick) return;
   const targetConn = targetPick.config;
+  if (!connectionManager.ensureWritable(targetConn.id, "copy document into target database")) {
+    return;
+  }
   const isSameConnection = targetConn.id === sourceConnId;
 
   // 3. Discover available destination collections
@@ -768,7 +791,7 @@ export async function copyDocumentToInstanceCommand(
 
           if (targetConn.isLocalJson) {
             // Local JSON -> Local JSON
-            LocalJsonService.getInstance().setDocument(targetConn, targetDocPath, sourceData);
+            setLocalDocumentWithStrategy(targetConn, targetDocPath, sourceData, strategyPick.merge);
             onDocCopied(targetDocPath);
           } else {
             // Local JSON -> Firestore / Emulator
@@ -812,10 +835,11 @@ export async function copyDocumentToInstanceCommand(
           if (targetConn.isLocalJson) {
             // Firestore -> Local JSON
             if (sourceSnap.exists) {
-              LocalJsonService.getInstance().setDocument(
+              setLocalDocumentWithStrategy(
                 targetConn,
                 targetDocPath,
-                sourceSnap.data() || {}
+                sourceSnap.data() || {},
+                strategyPick.merge
               );
               onDocCopied(targetDocPath);
             }
@@ -829,7 +853,8 @@ export async function copyDocumentToInstanceCommand(
                 token,
                 onDocCopied,
                 onSubCollFound,
-                allowedSubcollections
+                allowedSubcollections,
+                strategyPick.merge
               );
             }
           } else {

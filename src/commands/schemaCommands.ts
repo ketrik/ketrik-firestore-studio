@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { CollectionItem, DocumentItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
+import { LocalJsonService } from "../services/LocalJsonService";
 import { getDefaultExportUri } from "../webview/common/tableUtils";
 
 export interface InferredField {
@@ -197,6 +198,30 @@ export function generateTypeScriptCode(
   return lines.join("\n");
 }
 
+function toZodType(t: string): string {
+  switch (t) {
+    case "string":
+      return "z.string()";
+    case "number":
+      return "z.number()";
+    case "boolean":
+      return "z.boolean()";
+    case "Timestamp":
+      return "z.union([z.date(), z.custom<any>()])";
+    case "GeoPoint":
+    case "DocumentReference":
+      return "z.custom<any>()";
+    case "object":
+      return "z.record(z.string(), z.any())";
+    case "array":
+      return "z.array(z.any())";
+    case "null":
+      return "z.null()";
+    default:
+      return "z.any()";
+  }
+}
+
 /**
  * Generate Zod Schema definitions.
  */
@@ -229,20 +254,19 @@ export function generateZodCode(
       const concreteTypes = Array.from(field.types).filter((t) => t !== "null");
       if (concreteTypes.length === 1) {
         const t = concreteTypes[0];
-        if (t === "string") zodType = "z.string()";
-        else if (t === "number") zodType = "z.number()";
-        else if (t === "boolean") zodType = "z.boolean()";
-        else if (t === "Timestamp") zodType = "z.union([z.date(), z.custom<any>()])";
-        else if (t === "GeoPoint") zodType = "z.custom<any>()";
-        else if (t === "DocumentReference") zodType = "z.custom<any>()";
-        else if (t === "array") {
+        if (t === "array") {
           const elTypes = field.arrayElementTypes ? Array.from(field.arrayElementTypes) : ["any"];
-          zodType = elTypes.length === 1 && elTypes[0] !== "any" ? `z.array(z.${elTypes[0]}())` : "z.array(z.any())";
-        } else if (t === "object") {
-          zodType = "z.record(z.string(), z.any())";
+          if (elTypes.length === 1) {
+            zodType = `z.array(${toZodType(elTypes[0])})`;
+          } else {
+            const elUnion = Array.from(new Set(elTypes.map(toZodType))).join(", ");
+            zodType = `z.array(z.union([${elUnion}]))`;
+          }
+        } else {
+          zodType = toZodType(t);
         }
       } else if (concreteTypes.length > 1) {
-        const unionArgs = concreteTypes.map((t) => `z.${t}()`).join(", ");
+        const unionArgs = Array.from(new Set(concreteTypes.map(toZodType))).join(", ");
         zodType = `z.union([${unionArgs}])`;
       }
     }
@@ -328,19 +352,37 @@ export async function generateSchemaCommand(item?: CollectionItem | DocumentItem
     },
     async () => {
       try {
-        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-        if (isSingleDoc && item instanceof DocumentItem) {
-          const snapshot = await item.reference.get();
-          if (snapshot.exists && snapshot.data()) {
-            sampleDocs.push(snapshot.data()!);
+        const conn = ConnectionManager.getInstance().getConnection(connectionId);
+        if (conn?.isLocalJson) {
+          const localJson = LocalJsonService.getInstance();
+          if (isSingleDoc && item instanceof DocumentItem) {
+            const docData = localJson.getDocument(conn, item.reference.path);
+            if (docData) {
+              sampleDocs.push(docData);
+            }
+          } else {
+            const collData = localJson.getCollectionData(conn, collectionPath);
+            for (const docData of Object.values(collData).slice(0, sampleSize)) {
+              if (docData && typeof docData === "object") {
+                sampleDocs.push(docData as Record<string, any>);
+              }
+            }
           }
         } else {
-          const snapshot = await firestore.collection(collectionPath).limit(sampleSize).get();
-          snapshot.docs.forEach((doc) => {
-            if (doc.exists) {
-              sampleDocs.push(doc.data());
+          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          if (isSingleDoc && item instanceof DocumentItem) {
+            const snapshot = await item.reference.get();
+            if (snapshot.exists && snapshot.data()) {
+              sampleDocs.push(snapshot.data()!);
             }
-          });
+          } else {
+            const snapshot = await firestore.collection(collectionPath).limit(sampleSize).get();
+            snapshot.docs.forEach((doc) => {
+              if (doc.exists) {
+                sampleDocs.push(doc.data());
+              }
+            });
+          }
         }
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to sample collection '${collectionName}': ${err.message}`);

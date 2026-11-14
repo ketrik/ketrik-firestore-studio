@@ -49,6 +49,9 @@ export async function jumpToDocumentCommand(
         "Cancel"
       );
       if (createChoice === "Create") {
+        if (!ConnectionManager.getInstance().ensureWritable(item.connectionId, "create document")) {
+          return;
+        }
         LocalJsonService.getInstance().setDocument(conn, docPath, {});
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, docPath);
         await openPath(docPath, item.connectionId);
@@ -70,7 +73,7 @@ export async function jumpToDocumentCommand(
           await openPath(docRef.path, item.connectionId);
           return;
         }
-      } catch {}
+      } catch { }
 
       const createChoice = await vscode.window.showWarningMessage(
         `Document '${trimmedId}' does not exist in collection '${item.collectionId}'. Would you like to create it?`,
@@ -78,6 +81,9 @@ export async function jumpToDocumentCommand(
         "Cancel"
       );
       if (createChoice === "Create") {
+        if (!ConnectionManager.getInstance().ensureWritable(item.connectionId, "create document")) {
+          return;
+        }
         await docRef.set({});
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, docRef.path);
         await openPath(docRef.path, item.connectionId);
@@ -101,6 +107,14 @@ export async function createDocumentCommand(
 ) {
   if (!item?.collectionId) {
     vscode.window.showErrorMessage("No collection selected.");
+    return;
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to create documents.`
+    );
     return;
   }
 
@@ -147,7 +161,6 @@ export async function createDocumentCommand(
     }
   }
 
-  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
   if (conn?.isLocalJson) {
     const finalDocId = docId && docId.trim() ? docId.trim() : `doc_${Date.now()}`;
     const colPath = item.reference?.path || item.collectionId;
@@ -189,6 +202,12 @@ export async function deleteDocumentCommand(
   }
 
   const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete documents.`
+    );
+    return;
+  }
   if (conn?.isLocalJson) {
     const confirm = await vscode.window.showWarningMessage(
       `Are you sure you want to delete local document "${item.documentId}"?`,
@@ -213,7 +232,13 @@ export async function deleteDocumentCommand(
     return;
   }
 
-  const subcollections = await item.reference.listCollections();
+  let subcollections: FirebaseFirestore.CollectionReference[];
+  try {
+    subcollections = await item.reference.listCollections();
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to inspect subcollections: ${err.message}`);
+    return;
+  }
   const hasSubcollections = subcollections.length > 0;
 
   let confirm: string | undefined;
@@ -245,7 +270,7 @@ export async function deleteDocumentCommand(
       if (snap.exists) {
         await promptAndCleanupOrphanStorageFiles(item.connectionId, snap.data(), item.label as string);
       }
-    } catch {}
+    } catch { }
 
     await vscode.window.withProgress(
       {
@@ -272,7 +297,7 @@ export async function deleteDocumentCommand(
       if (snap.exists) {
         await promptAndCleanupOrphanStorageFiles(item.connectionId, snap.data(), item.label as string);
       }
-    } catch {}
+    } catch { }
 
     try {
       await item.reference.delete();
@@ -300,6 +325,12 @@ export async function duplicateDocumentCommand(
   }
 
   const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to duplicate documents.`
+    );
+    return;
+  }
   const newDocId = await vscode.window.showInputBox({
     prompt: `Duplicate document "${item.documentId}"`,
     value: `${item.documentId}_copy`,
@@ -330,7 +361,13 @@ export async function duplicateDocumentCommand(
     return;
   }
 
-  const snapshot = await item.reference.get();
+  let snapshot: FirebaseFirestore.DocumentSnapshot;
+  try {
+    snapshot = await item.reference.get();
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to read document: ${err.message}`);
+    return;
+  }
   if (!snapshot.exists) {
     vscode.window.showErrorMessage(`Document "${item.documentId}" does not exist.`);
     return;
@@ -418,6 +455,14 @@ export async function pasteDocumentCommand(
     return;
   }
 
+  const targetConn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (targetConn?.readOnly) {
+    vscode.window.showErrorMessage(
+      `Connection '${targetConn.name}' is in Read-Only mode. Unlock it from the connection context menu to paste documents.`
+    );
+    return;
+  }
+
   const clipboard = DocumentClipboard.getInstance().get();
   if (!clipboard) {
     vscode.window.showWarningMessage(
@@ -438,10 +483,10 @@ export async function pasteDocumentCommand(
     const entryKey = isArray
       ? undefined
       : await vscode.window.showInputBox({
-          prompt,
-          value: clipboard.sourceDocId,
-          placeHolder: "Enter key / ID for this entry",
-        });
+        prompt,
+        value: clipboard.sourceDocId,
+        placeHolder: "Enter key / ID for this entry",
+      });
 
     if (!isArray && entryKey === undefined) {
       return; // cancelled

@@ -10,12 +10,29 @@ export interface CostSimulatorInitialData {
   historicalUsage?: HistoricalUsageData;
 }
 
+function escapeHtmlCost(val: unknown): string {
+  return String(val ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeJsonEmbed(val: unknown): string {
+  return JSON.stringify(val)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Firestore Cost Simulator & Quota Usage</title>
   <style>
@@ -603,8 +620,8 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
         }</span>
       </div>
       <div style="font-size: 0.85rem; color: var(--muted); margin-top: 4px;">
-        Connection: <strong>${data.connectionName}</strong> ${
-    data.projectId ? `(${data.projectId})` : ""
+        Connection: <strong>${escapeHtmlCost(data.connectionName)}</strong> ${
+    data.projectId ? `(${escapeHtmlCost(data.projectId)})` : ""
   } &bull; Target: ${
     data.isEmulator ? "Local Emulator" : data.isLocalJson ? "Local JSON" : "Cloud Firestore"
   }
@@ -615,7 +632,7 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
         <div class="monitoring-notice-content">
           <span>⚠️ <strong>Live Cloud Monitoring Unavailable</strong> &mdash; displaying operations recorded in this local VS Code session.</span>
           <span class="monitoring-notice-error" id="monitoringErrorText">${
-            data.usageSnapshot.monitoringError ? `Reason: ${data.usageSnapshot.monitoringError}` : "Could not reach Google Cloud Monitoring API"
+            data.usageSnapshot.monitoringError ? `Reason: ${escapeHtmlCost(data.usageSnapshot.monitoringError)}` : "Could not reach Google Cloud Monitoring API"
           }</span>
         </div>
         <button id="bannerRetryBtn" class="btn-inline-retry" title="Retry connecting to Google Cloud Monitoring API">🔄 Try Again</button>
@@ -880,9 +897,9 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
   <script>
     const vscode = acquireVsCodeApi();
 
-    let usageData = ${JSON.stringify(data.usageSnapshot)};
-    const SPARK_FREE_QUOTA = ${JSON.stringify(SPARK_FREE_QUOTA)};
-    const BLAZE_PRICING = ${JSON.stringify(BLAZE_PRICING)};
+    let usageData = ${safeJsonEmbed(data.usageSnapshot)};
+    const SPARK_FREE_QUOTA = ${safeJsonEmbed(SPARK_FREE_QUOTA)};
+    const BLAZE_PRICING = ${safeJsonEmbed(BLAZE_PRICING)};
 
     function updateMeters() {
       const reads = usageData.reads || 0;
@@ -1050,7 +1067,7 @@ export function getCostSimulatorHtml(data: CostSimulatorInitialData): string {
     }
 
     // Historical Trend Data & SVG Renderer
-    let historyData = ${JSON.stringify(data.historicalUsage || { days: 7, points: [], source: "simulated" })};
+    let historyData = ${safeJsonEmbed(data.historicalUsage || { days: 7, points: [], source: "simulated" })};
 
     function renderHistoricalChart() {
       const svg = document.getElementById('trendSvg');

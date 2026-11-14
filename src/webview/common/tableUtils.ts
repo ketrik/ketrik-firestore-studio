@@ -43,6 +43,21 @@ export function sortHeaders(headerList: string[]): string[] {
  */
 export function parseFilterValue(valStr: string, op?: WhereFilterOp): any {
   const trimmed = valStr.trim();
+
+  // If operator requires an array ('in', 'not-in', 'array-contains-any'), handle array coercion first
+  if (op === "in" || op === "not-in" || op === "array-contains-any") {
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsedJson = JSON.parse(trimmed);
+        if (Array.isArray(parsedJson)) return parsedJson;
+      } catch {}
+    }
+    if (trimmed.includes(",")) {
+      return trimmed.split(",").map((s) => parseFilterValue(s.trim()));
+    }
+    return [parseFilterValue(trimmed)];
+  }
+
   if (trimmed === "true") { return true; }
   if (trimmed === "false") { return false; }
   if (trimmed === "null") { return null; }
@@ -62,14 +77,6 @@ export function parseFilterValue(valStr: string, op?: WhereFilterOp): any {
       const parsedJson = JSON.parse(trimmed);
       return parsedJson;
     } catch {}
-  }
-
-  // If operator requires an array ('in', 'not-in', 'array-contains-any'), coerce comma-separated or single values
-  if (op === "in" || op === "not-in" || op === "array-contains-any") {
-    if (trimmed.includes(",")) {
-      return trimmed.split(",").map((s) => parseFilterValue(s.trim()));
-    }
-    return [trimmed];
   }
 
   return trimmed;
