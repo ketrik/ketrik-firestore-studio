@@ -32,8 +32,50 @@ export interface SecretVersionMetadata {
 export class SecretManagerService implements vscode.Disposable {
   private static instance: SecretManagerService;
   private clientMap = new Map<string, SecretManagerServiceClient>();
+  private extensionContext?: vscode.ExtensionContext;
+  private lockedSecretsCache = new Map<string, Set<string>>();
 
   private constructor() {}
+
+  public init(context: vscode.ExtensionContext): void {
+    this.extensionContext = context;
+  }
+
+  private _getLockStorageKey(connectionId: string): string {
+    return `ketrik.lockedSecrets.${connectionId}`;
+  }
+
+  public getLockedSecrets(connectionId: string): Set<string> {
+    if (!this.lockedSecretsCache.has(connectionId)) {
+      const stored = this.extensionContext?.globalState.get<string[]>(
+        this._getLockStorageKey(connectionId),
+        []
+      ) || [];
+      this.lockedSecretsCache.set(connectionId, new Set(stored));
+    }
+    return this.lockedSecretsCache.get(connectionId)!;
+  }
+
+  public isSecretLocked(connectionId: string, secretId: string): boolean {
+    return this.getLockedSecrets(connectionId).has(secretId);
+  }
+
+  public async toggleSecretLock(connectionId: string, secretId: string): Promise<boolean> {
+    const set = this.getLockedSecrets(connectionId);
+    const nowLocked = !set.has(secretId);
+    if (nowLocked) {
+      set.add(secretId);
+    } else {
+      set.delete(secretId);
+    }
+    if (this.extensionContext) {
+      await this.extensionContext.globalState.update(
+        this._getLockStorageKey(connectionId),
+        Array.from(set)
+      );
+    }
+    return nowLocked;
+  }
 
   public static getInstance(): SecretManagerService {
     if (!SecretManagerService.instance) {
@@ -232,6 +274,41 @@ export class SecretManagerService implements vscode.Disposable {
   }
 
   /**
+   * Execute a Secret Manager operation trying GCP user session / ADC first,
+   * automatically falling back to the connection's Service Account credentials on error.
+   */
+  private async _withClientFallback<T>(
+    connectionId: string,
+    op: (client: SecretManagerServiceClient) => Promise<T>
+  ): Promise<T> {
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    const hasSa = Boolean(conn && (conn.useSecretStorage || conn.serviceAccountKeyPath));
+
+    let client: SecretManagerServiceClient;
+    let usedUserAuth = false;
+    try {
+      client = await this.getClient(connectionId, true);
+      usedUserAuth = true;
+    } catch (err) {
+      if (!hasSa) {
+        throw err;
+      }
+      client = await this.getClient(connectionId, false);
+      return op(client);
+    }
+
+    try {
+      return await op(client);
+    } catch (err) {
+      if (usedUserAuth && hasSa) {
+        const saClient = await this.getClient(connectionId, false);
+        return await op(saClient);
+      }
+      throw err;
+    }
+  }
+
+  /**
    * List all secrets within the project belonging to the connection.
    */
   public async listSecrets(
@@ -240,22 +317,17 @@ export class SecretManagerService implements vscode.Disposable {
     pageToken?: string
   ): Promise<{ secrets: SecretMetadata[]; nextPageToken?: string }> {
     const projectId = await this.ensureProjectId(connectionId, true);
-    // Secret Manager listing defaults to the GCP user session / ADC first to avoid SA permission restrictions
-    let client: SecretManagerServiceClient;
-    try {
-      client = await this.getClient(connectionId, true);
-    } catch {
-      client = await this.getClient(connectionId, false);
-    }
     const parent = `projects/${projectId}`;
 
-    const [secrets, , response] = await client.listSecrets(
-      {
-        parent,
-        pageSize,
-        pageToken,
-      },
-      { autoPaginate: false }
+    const [secrets, , response] = await this._withClientFallback(connectionId, (client) =>
+      client.listSecrets(
+        {
+          parent,
+          pageSize,
+          pageToken,
+        },
+        { autoPaginate: false }
+      )
     );
 
     const parsedSecrets: SecretMetadata[] = (secrets || []).map((sec) => {
@@ -292,15 +364,11 @@ export class SecretManagerService implements vscode.Disposable {
    */
   public async listSecretVersions(connectionId: string, secretId: string): Promise<SecretVersionMetadata[]> {
     const projectId = await this.ensureProjectId(connectionId, true);
-    let client: SecretManagerServiceClient;
-    try {
-      client = await this.getClient(connectionId, true);
-    } catch {
-      client = await this.getClient(connectionId, false);
-    }
     const parent = `projects/${projectId}/secrets/${secretId}`;
 
-    const [versions] = await client.listSecretVersions({ parent, pageSize: 50 }, { autoPaginate: false });
+    const [versions] = await this._withClientFallback(connectionId, (client) =>
+      client.listSecretVersions({ parent, pageSize: 50 }, { autoPaginate: false })
+    );
 
     return (versions || []).map((v) => {
       const fullName = v.name || "";
@@ -334,34 +402,10 @@ export class SecretManagerService implements vscode.Disposable {
     const secretId = parsed?.secretId || secretIdOrPath;
     const effectiveVersion = parsed?.versionId || version || "latest";
 
-    // Attempt accessing secret version: first via GCP user session / ADC, fallback to SA
-    let client: SecretManagerServiceClient;
-    let usedUserAuth = false;
-    try {
-      client = await this.getClient(connectionId, true);
-      usedUserAuth = true;
-    } catch {
-      client = await this.getClient(connectionId, false);
-    }
     const name = `projects/${projectId}/secrets/${secretId}/versions/${effectiveVersion}`;
-
-    let versionData;
-    try {
-      [versionData] = await client.accessSecretVersion({ name });
-    } catch (err: any) {
-      // If user auth threw permission error and connection has SA credentials, try with SA credentials
-      if (usedUserAuth) {
-        let saClient: SecretManagerServiceClient;
-        try {
-          saClient = await this.getClient(connectionId, false);
-        } catch {
-          throw err;
-        }
-        [versionData] = await saClient.accessSecretVersion({ name });
-      } else {
-        throw err;
-      }
-    }
+    const [versionData] = await this._withClientFallback(connectionId, (client) =>
+      client.accessSecretVersion({ name })
+    );
     const payload = versionData?.payload?.data;
     if (!payload) {
       return "";
@@ -384,25 +428,20 @@ export class SecretManagerService implements vscode.Disposable {
   ): Promise<SecretMetadata> {
     ConnectionManager.getInstance().throwIfReadOnly(connectionId, "create secret");
     const projectId = await this.ensureProjectId(connectionId, true);
-
-    let client: SecretManagerServiceClient;
-    try {
-      client = await this.getClient(connectionId, true);
-    } catch {
-      client = await this.getClient(connectionId, false);
-    }
     const parent = `projects/${projectId}`;
 
-    const [createdSecret] = await client.createSecret({
-      parent,
-      secretId,
-      secret: {
-        labels: labels || {},
-        replication: {
-          automatic: {},
+    const [createdSecret] = await this._withClientFallback(connectionId, (client) =>
+      client.createSecret({
+        parent,
+        secretId,
+        secret: {
+          labels: labels || {},
+          replication: {
+            automatic: {},
+          },
         },
-      },
-    });
+      })
+    );
 
     if (initialPayload !== undefined && initialPayload !== null) {
       await this.addSecretVersion(connectionId, secretId, initialPayload);
@@ -432,21 +471,16 @@ export class SecretManagerService implements vscode.Disposable {
     const parsed = this.parseSecretResource(secretId);
     const projectId = parsed?.projectId || defaultProjectId;
     const targetSecretId = parsed?.secretId || secretId;
-
-    let client: SecretManagerServiceClient;
-    try {
-      client = await this.getClient(connectionId, true);
-    } catch {
-      client = await this.getClient(connectionId, false);
-    }
     const parent = `projects/${projectId}/secrets/${targetSecretId}`;
 
-    const [version] = await client.addSecretVersion({
-      parent,
-      payload: {
-        data: Buffer.from(payloadText, "utf8"),
-      },
-    });
+    const [version] = await this._withClientFallback(connectionId, (client) =>
+      client.addSecretVersion({
+        parent,
+        payload: {
+          data: Buffer.from(payloadText, "utf8"),
+        },
+      })
+    );
 
     const fullName = version.name || "";
     const versionId = fullName.split("/").pop() || "";
@@ -464,14 +498,6 @@ export class SecretManagerService implements vscode.Disposable {
   /**
    * Disable a specific secret version.
    */
-  private async _getMutationClient(connectionId: string): Promise<SecretManagerServiceClient> {
-    try {
-      return await this.getClient(connectionId, true);
-    } catch {
-      return await this.getClient(connectionId, false);
-    }
-  }
-
   public async disableSecretVersion(
     connectionId: string,
     secretIdOrPath: string,
@@ -479,8 +505,9 @@ export class SecretManagerService implements vscode.Disposable {
   ): Promise<void> {
     ConnectionManager.getInstance().throwIfReadOnly(connectionId, "disable secret version");
     const fullName = this._resolveVersionFullName(connectionId, secretIdOrPath, versionId);
-    const client = await this._getMutationClient(connectionId);
-    await client.disableSecretVersion({ name: fullName });
+    await this._withClientFallback(connectionId, (client) =>
+      client.disableSecretVersion({ name: fullName })
+    );
   }
 
   /**
@@ -493,8 +520,9 @@ export class SecretManagerService implements vscode.Disposable {
   ): Promise<void> {
     ConnectionManager.getInstance().throwIfReadOnly(connectionId, "enable secret version");
     const fullName = this._resolveVersionFullName(connectionId, secretIdOrPath, versionId);
-    const client = await this._getMutationClient(connectionId);
-    await client.enableSecretVersion({ name: fullName });
+    await this._withClientFallback(connectionId, (client) =>
+      client.enableSecretVersion({ name: fullName })
+    );
   }
 
   /**
@@ -506,9 +534,42 @@ export class SecretManagerService implements vscode.Disposable {
     versionId?: string
   ): Promise<void> {
     ConnectionManager.getInstance().throwIfReadOnly(connectionId, "destroy secret version");
+    const parsed = this.parseSecretResource(secretIdOrPath);
+    const secretId = parsed?.secretId || secretIdOrPath;
+    if (secretId && this.isSecretLocked(connectionId, secretId)) {
+      throw new Error(`Secret '${secretId}' is locked against deletion/destruction. Unlock it first.`);
+    }
     const fullName = this._resolveVersionFullName(connectionId, secretIdOrPath, versionId);
-    const client = await this._getMutationClient(connectionId);
-    await client.destroySecretVersion({ name: fullName });
+    await this._withClientFallback(connectionId, (client) =>
+      client.destroySecretVersion({ name: fullName })
+    );
+  }
+
+  /**
+   * Permanently delete a secret and all of its versions.
+   */
+  public async deleteSecret(
+    connectionId: string,
+    secretIdOrPath: string
+  ): Promise<void> {
+    ConnectionManager.getInstance().throwIfReadOnly(connectionId, "delete secret");
+    const parsed = this.parseSecretResource(secretIdOrPath);
+    const connMgr = ConnectionManager.getInstance();
+    const conn = connMgr.getConnection(connectionId);
+    const projectId = parsed?.projectId || connMgr.getEffectiveProjectId(conn);
+    const secretId = parsed?.secretId || secretIdOrPath;
+
+    if (!projectId || !secretId) {
+      throw new Error(`Incomplete secret resource specifier: ${secretIdOrPath}`);
+    }
+    if (this.isSecretLocked(connectionId, secretId)) {
+      throw new Error(`Secret '${secretId}' is locked against deletion. Unlock it first to delete.`);
+    }
+
+    const fullName = `projects/${projectId}/secrets/${secretId}`;
+    await this._withClientFallback(connectionId, (client) =>
+      client.deleteSecret({ name: fullName })
+    );
   }
 
   private _resolveVersionFullName(

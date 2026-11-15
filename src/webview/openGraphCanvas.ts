@@ -84,6 +84,9 @@ export async function openGraphCanvas(
   }
 
   const panelTitle = `Graph: ${rootPath}`;
+  const retainContextWhenHidden = vscode.workspace
+    .getConfiguration("ketrik-firestore-studio")
+    .get<boolean>("retainWebviewTabs", true);
 
   const panel = vscode.window.createWebviewPanel(
     "firestoreDataGraph",
@@ -91,7 +94,7 @@ export async function openGraphCanvas(
     vscode.ViewColumn.One,
     {
       enableScripts: true,
-      retainContextWhenHidden: true,
+      retainContextWhenHidden,
     }
   );
   activeGraphPanels.set(panelKey, panel);

@@ -86,3 +86,20 @@ Ketrik Firestore Studio includes full support for vector embeddings (`FieldValue
 6. Click **Execute kNN Search**.
 
 Results are returned sorted by similarity, featuring a dedicated **`🎯 __vector_distance`** badge column showing the exact score. Click **Reset** or **Clear** to return to standard collection browsing. Fully compatible with Cloud Firestore, the Firebase Emulator Suite, and offline Local JSON databases.
+
+---
+
+## Interactive Document-as-Table (`openDocumentAsTable`)
+
+Open any Firestore or Local JSON document directly as an interactive webview table from the Explorer Tree, editor title bar (`$(table)`), or command palette (`ketrik-firestore-studio.openDocumentAsTable`):
+- **Vertical Property Sheet (Fields View)**: Inspect all fields in a structured key-type-value view with inline cell editing, field type badges, and atomic property deletion.
+- **Horizontal Record View**: Single-row spreadsheet layout matching collection grid column semantics.
+- **Direct Breadcrumb & Field Drill-Down**: 1-click navigation to the parent collection table (`openCollectionAsTable`) and nested field tables (`openFieldAsTable`) for Maps and Arrays.
+- **Atomic Partial Updates**: Double-click cell editing writes partial updates via `FieldPath` without rewriting or downloading the entire document.
+
+---
+
+## Bulk Field Transformer & Schema Auto-Fix
+
+- **Bulk Field Transformer (`ketrik-firestore-studio.transformCollectionField`)**: Accessible from the Collection context menu or table toolbar, allowing you to transform and normalize field values across multiple documents in a collection in bulk.
+- **Schema Auto-Fix**: Automated schema repair suggestions and 1-click fixes directly inside the Schema Analyzer.

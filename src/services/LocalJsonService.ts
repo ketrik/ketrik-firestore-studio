@@ -16,6 +16,8 @@ export class LocalJsonService {
 
   /** In-memory cache for parsed JSON files to avoid synchronous disk I/O and JSON.parse on every lookup. */
   private _fileCache: Map<string, { mtimeMs: number; size: number; parsed: any }> = new Map();
+  /** Cached directory-mode checks keyed by localJsonPath. */
+  private _dirModeCache: Map<string, { mtimeMs: number; isDir: boolean }> = new Map();
 
   public static getInstance(): LocalJsonService {
     if (!LocalJsonService.instance) {
@@ -44,17 +46,24 @@ export class LocalJsonService {
    */
   public clearCache(): void {
     this._fileCache.clear();
+    this._dirModeCache.clear();
+  }
+
+  private _setBoundedCache<V>(map: Map<string, V>, key: string, value: V): void {
+    map.delete(key);
+    map.set(key, value);
+    if (map.size > LocalJsonService.MAX_CACHE_SIZE) {
+      const oldest = map.keys().next().value;
+      if (oldest !== undefined) {
+        map.delete(oldest);
+      }
+    }
   }
 
   /**
    * Safely read and parse a JSON file with mtime/size caching.
    */
   private _readJsonFile(filePath: string): any {
-    if (!fs.existsSync(filePath)) {
-      this._fileCache.delete(filePath);
-      return undefined;
-    }
-
     try {
       const stat = fs.statSync(filePath);
       const cached = this._fileCache.get(filePath);
@@ -65,22 +74,15 @@ export class LocalJsonService {
       const content = fs.readFileSync(filePath, "utf8");
       const parsed = JSON.parse(content);
 
-      this._fileCache.delete(filePath);
-      this._fileCache.set(filePath, {
+      this._setBoundedCache(this._fileCache, filePath, {
         mtimeMs: stat.mtimeMs,
         size: stat.size,
         parsed,
       });
 
-      if (this._fileCache.size > LocalJsonService.MAX_CACHE_SIZE) {
-        const oldest = this._fileCache.keys().next().value;
-        if (oldest !== undefined) {
-          this._fileCache.delete(oldest);
-        }
-      }
-
       return parsed;
     } catch {
+      this._fileCache.delete(filePath);
       return undefined;
     }
   }
@@ -98,19 +100,11 @@ export class LocalJsonService {
 
     try {
       const stat = fs.statSync(filePath);
-      this._fileCache.delete(filePath);
-      this._fileCache.set(filePath, {
+      this._setBoundedCache(this._fileCache, filePath, {
         mtimeMs: stat.mtimeMs,
         size: stat.size,
         parsed: data,
       });
-
-      if (this._fileCache.size > LocalJsonService.MAX_CACHE_SIZE) {
-        const oldest = this._fileCache.keys().next().value;
-        if (oldest !== undefined) {
-          this._fileCache.delete(oldest);
-        }
-      }
     } catch {
       this._fileCache.delete(filePath);
     }
@@ -120,11 +114,25 @@ export class LocalJsonService {
    * Determine whether a connection path points to a single file or a directory.
    */
   public isDirectoryMode(config: FirestoreConnectionConfig): boolean {
-    if (!config.localJsonPath || !fs.existsSync(config.localJsonPath)) {
+    if (!config.localJsonPath) {
       return false;
     }
-    const stat = fs.statSync(config.localJsonPath);
-    return stat.isDirectory();
+    try {
+      const stat = fs.statSync(config.localJsonPath);
+      const cached = this._dirModeCache.get(config.localJsonPath);
+      if (cached && cached.mtimeMs === stat.mtimeMs) {
+        return cached.isDir;
+      }
+      const isDir = stat.isDirectory();
+      this._setBoundedCache(this._dirModeCache, config.localJsonPath, {
+        mtimeMs: stat.mtimeMs,
+        isDir,
+      });
+      return isDir;
+    } catch {
+      this._dirModeCache.delete(config.localJsonPath);
+      return false;
+    }
   }
 
   /**

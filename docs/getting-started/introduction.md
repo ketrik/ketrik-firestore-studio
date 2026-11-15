@@ -64,6 +64,10 @@ Ketrik Firestore Studio solves this by bringing your databases directly into VS 
 | **Security Rules Governance** | Fetch, diff against workspace `firestore.rules`, and deploy security rules directly to Cloud Firestore. |
 | **Cloud Storage Explorer** | Browse bucket hierarchies, upload/delete files, inspect metadata, and mint signed download URLs. |
 | **Cost & Quota Simulator** | Monitor real-time read/write billable counters with daily warning thresholds against Google Cloud limits. |
+| **Time-Travel & PITR** | Inspect historical document snapshots at any microsecond in the past 7 days (`readTime`), diff against live state, restore deleted/modified documents, and toggle PITR & Delete Protection. |
+| **Read-Only Shield & Env Badges** | Lock connections against unintended writes with a single click and distinguish dev/staging/prod databases with visual environment badges. |
+| **Bulk Field Transformer & Schema Auto-Fix** | Transform and normalize fields across collections in bulk, and apply automated schema repair suggestions in the Schema Analyzer. |
+| **Google Secret Manager** | Browse secrets and versions in the tree, reveal payloads ephemerally, link fields to secrets, and migrate plaintext secrets safely. |
 
 ---
 

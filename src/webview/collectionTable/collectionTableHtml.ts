@@ -1735,6 +1735,29 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         });
       }
 
+      function applyConnectionShields(isReadOnly, environment) {
+        const roBadge = document.getElementById('readOnlyBadge');
+        if (roBadge) {
+          roBadge.style.display = isReadOnly ? 'inline-block' : 'none';
+        }
+        const envBadge = document.getElementById('envBadge');
+        if (!envBadge) return;
+        const envStyles = {
+          production: { text: '🔴 PRODUCTION', bg: 'rgba(241, 76, 76, 0.18)', color: '#f14c4c', border: '1px solid rgba(241, 76, 76, 0.45)' },
+          staging: { text: '🟡 STAGING', bg: 'rgba(255, 193, 7, 0.18)', color: '#ffc107', border: '1px solid rgba(255, 193, 7, 0.45)' },
+          development: { text: '🟢 DEV', bg: 'rgba(46, 204, 113, 0.18)', color: '#2ecc71', border: '1px solid rgba(46, 204, 113, 0.45)' },
+        }[environment];
+        if (envStyles) {
+          envBadge.textContent = envStyles.text;
+          envBadge.style.background = envStyles.bg;
+          envBadge.style.color = envStyles.color;
+          envBadge.style.border = envStyles.border;
+          envBadge.style.display = 'inline-block';
+        } else {
+          envBadge.style.display = 'none';
+        }
+      }
+
       // ── message handler ───────────────────────────────────────────
       window.addEventListener('message', function(event) {
         const msg = event.data;
@@ -1759,35 +1782,11 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
             updatePitrUi(msg.activeReadTime);
           }
 
-          // Read-Only & Environment shields
-          const roBadge = document.getElementById('readOnlyBadge');
-          if (roBadge) {
-            roBadge.style.display = msg.isReadOnly ? 'inline-block' : 'none';
-          }
-          const envBadge = document.getElementById('envBadge');
-          if (envBadge) {
-            if (msg.environment === 'production') {
-              envBadge.textContent = '🔴 PRODUCTION';
-              envBadge.style.background = 'rgba(241, 76, 76, 0.18)';
-              envBadge.style.color = '#f14c4c';
-              envBadge.style.border = '1px solid rgba(241, 76, 76, 0.45)';
-              envBadge.style.display = 'inline-block';
-            } else if (msg.environment === 'staging') {
-              envBadge.textContent = '🟡 STAGING';
-              envBadge.style.background = 'rgba(255, 193, 7, 0.18)';
-              envBadge.style.color = '#ffc107';
-              envBadge.style.border = '1px solid rgba(255, 193, 7, 0.45)';
-              envBadge.style.display = 'inline-block';
-            } else if (msg.environment === 'development') {
-              envBadge.textContent = '🟢 DEV';
-              envBadge.style.background = 'rgba(46, 204, 113, 0.18)';
-              envBadge.style.color = '#2ecc71';
-              envBadge.style.border = '1px solid rgba(46, 204, 113, 0.45)';
-              envBadge.style.display = 'inline-block';
-            } else {
-              envBadge.style.display = 'none';
-            }
-          }
+          applyConnectionShields(!!msg.isReadOnly, msg.environment);
+        }
+
+        if (msg.type === 'connectionState') {
+          applyConnectionShields(!!msg.isReadOnly, msg.environment);
         }
 
         if (msg.type === 'queryCostEstimateResult') {

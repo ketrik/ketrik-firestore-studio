@@ -186,3 +186,8 @@ Ketrik Firestore Studio provides granular workspace and user-level settings to c
 - **Type**: `string`
 - **Example**: `"projects/my-gcp-project/secrets/firestore-sa/versions/latest"`
 - **Description**: Google Cloud Secret Manager canonical resource path. When set, dynamically fetches the connection's credentials from Secret Manager in-memory upon startup without storing any files on disk.
+
+### `ketrik-firestore-studio.serviceAccountKeyPath`
+- **Type**: `string`
+- **Default**: `""`
+- **Description**: Optional default path to a Firebase / Google Cloud service account JSON key file used when initializing or connecting without a per-connection key path.

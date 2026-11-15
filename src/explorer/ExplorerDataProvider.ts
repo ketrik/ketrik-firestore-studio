@@ -423,9 +423,46 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     } else if (element instanceof ConnectionTreeItem) {
       this._treeCache.delete(`conn:${element.config.id}`);
       this._onDidChangeTreeData.fire(element);
+    } else if (element instanceof SecretManagerBranchItem) {
+      this.refreshSecrets(element.connectionId, element);
+    } else if (element instanceof SecretTreeItem) {
+      this._treeCache.delete(`secrets:${element.connectionId}`);
+      this._treeCache.delete(`secretVersions:${element.connectionId}:${element.secret.id}`);
+      const connCache = this._treeCache.get(`conn:${element.connectionId}`);
+      const branch = connCache?.items.find(
+        (it) => it instanceof SecretManagerBranchItem && it.connectionId === element.connectionId
+      );
+      this._onDidChangeTreeData.fire(branch ?? undefined);
+    } else if (element instanceof SecretVersionTreeItem) {
+      this._treeCache.delete(`secretVersions:${element.connectionId}:${element.version.secretId}`);
+      const secretsCache = this._treeCache.get(`secrets:${element.connectionId}`);
+      const secretNode = secretsCache?.items.find(
+        (it) => it instanceof SecretTreeItem && it.secret.id === element.version.secretId
+      );
+      this._onDidChangeTreeData.fire(secretNode ?? undefined);
     } else {
       this.refresh();
     }
+  }
+
+  /**
+   * Granularly invalidate and refresh the Google Secret Manager branch (and its version caches)
+   * for a specific connection without discarding unrelated tree caches or paging state.
+   */
+  public refreshSecrets(connectionId: string, branchElement?: SecretManagerBranchItem): void {
+    this._treeCache.delete(`secrets:${connectionId}`);
+    const versionsPrefix = `secretVersions:${connectionId}:`;
+    for (const k of this._treeCache.keys()) {
+      if (k.startsWith(versionsPrefix)) {
+        this._treeCache.delete(k);
+      }
+    }
+    const targetBranch =
+      branchElement ??
+      this._treeCache.get(`conn:${connectionId}`)?.items.find(
+        (it) => it instanceof SecretManagerBranchItem && it.connectionId === connectionId
+      );
+    this._onDidChangeTreeData.fire(targetBranch ?? undefined);
   }
 
   public isDocumentExpanded(connectionId: string, docPath: string): boolean {
@@ -509,10 +546,18 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       element instanceof AuthUsersBranchItem ||
       element instanceof CompositeIndexesBranchItem ||
       element instanceof CostQuotaBranchItem ||
-      element instanceof StorageBucketsBranchItem
+      element instanceof StorageBucketsBranchItem ||
+      element instanceof SecretManagerBranchItem
     ) {
       const conn = this._connectionManager.getConnection(element.connectionId);
       return conn ? new ConnectionTreeItem(conn) : undefined;
+    } else if (element instanceof SecretTreeItem) {
+      return new SecretManagerBranchItem(element.connectionId);
+    } else if (element instanceof SecretVersionTreeItem) {
+      const secretsCache = this._treeCache.get(`secrets:${element.connectionId}`);
+      return secretsCache?.items.find(
+        (it) => it instanceof SecretTreeItem && it.secret.id === element.version.secretId
+      );
     } else if (element instanceof CompositeIndexItem) {
       return new CompositeIndexesBranchItem(element.connectionId);
     } else if (element instanceof StorageBucketTreeItem) {

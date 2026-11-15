@@ -43,7 +43,7 @@ export async function openCollectionAsTable(
     (item as any).collectionPath ||
     collectionId;
 
-  const conn = ConnectionManager.getInstance().getConnection(connectionId);
+  const getLiveConn = () => ConnectionManager.getInstance().getConnection(connectionId);
 
   const panelKey = `${connectionId}:${collectionPath}:${isGroup}`;
   const existingPanel = activeCollectionPanels.get(panelKey);
@@ -133,8 +133,9 @@ export async function openCollectionAsTable(
     const effectiveLimit = Math.min(requestedCount && requestedCount > 0 ? requestedCount : limit, 1000);
     // If the user explicitly asks for a larger batch (e.g. 100 or 1000), allow expanding up to 1,000 max
     const effectiveMaxRows = requestedCount && requestedCount > limit ? Math.min(1000, Math.max(maxRows, requestedCount)) : maxRows;
-    if (conn?.isLocalJson) {
-      const rawDocs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
+    const liveConn = getLiveConn();
+    if (liveConn?.isLocalJson) {
+      const rawDocs = LocalJsonService.getInstance().listDocuments(liveConn, collectionPath);
       const offset = loadedDocs.length;
       const targetCount = Math.min(rawDocs.length, effectiveMaxRows);
       const pageSize = Math.min(effectiveLimit, targetCount - offset);
@@ -533,14 +534,15 @@ export async function openCollectionAsTable(
         const { hasMore } = await loadMoreDocs();
         hasMoreState = hasMore;
         const bookmarks = await loadSavedBookmarks();
+        const liveConn = getLiveConn();
         panel.webview.postMessage({
           type: "init",
           headers,
           docs: loadedDocs,
           hasMore: hasMoreState,
           bookmarks,
-          isReadOnly: !!conn?.readOnly,
-          environment: conn?.environment,
+          isReadOnly: !!liveConn?.readOnly,
+          environment: liveConn?.environment,
         });
       } finally {
         isLoading = false;
@@ -584,8 +586,9 @@ export async function openCollectionAsTable(
         const finalDocId = docId.trim() || `doc_${Date.now()}`;
         const newDocPath = `${collectionPath}/${finalDocId}`;
 
-        if (conn?.isLocalJson) {
-          LocalJsonService.getInstance().setDocument(conn, newDocPath, data);
+        const writeConn = getLiveConn();
+        if (writeConn?.isLocalJson) {
+          LocalJsonService.getInstance().setDocument(writeConn, newDocPath, data);
           DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, newDocPath);
           vscode.window.showInformationMessage(`Local document '${finalDocId}' created!`);
         } else {
@@ -605,14 +608,15 @@ export async function openCollectionAsTable(
         const { hasMore } = await loadMoreDocs();
         hasMoreState = hasMore;
         const bookmarks = await loadSavedBookmarks();
+        const liveConn = getLiveConn();
         panel.webview.postMessage({
           type: "init",
           headers,
           docs: loadedDocs,
           hasMore: hasMoreState,
           bookmarks,
-          isReadOnly: !!conn?.readOnly,
-          environment: conn?.environment,
+          isReadOnly: !!liveConn?.readOnly,
+          environment: liveConn?.environment,
         });
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to create document: ${err.message}`);
@@ -644,8 +648,8 @@ export async function openCollectionAsTable(
           writeVal = new Timestamp(value._seconds, value._nanoseconds);
         }
 
-        if (conn?.isLocalJson) {
-          LocalJsonService.getInstance().updateField(conn, docPath, field, writeVal);
+        if (liveConn?.isLocalJson) {
+          LocalJsonService.getInstance().updateField(liveConn, docPath, field, writeVal);
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
           const docRef = firestore.doc(docPath);
@@ -698,8 +702,9 @@ export async function openCollectionAsTable(
       try {
         let fieldVal: any;
         let parentRef: any;
-        if (conn?.isLocalJson) {
-          const docData = LocalJsonService.getInstance().getDocument(conn, message.docPath);
+        const liveConn = getLiveConn();
+        if (liveConn?.isLocalJson) {
+          const docData = LocalJsonService.getInstance().getDocument(liveConn, message.docPath);
           if (!docData) return;
           fieldVal = docData[message.field];
           if (fieldVal === undefined && typeof message.field === "string" && message.field.includes(".")) {
@@ -774,9 +779,10 @@ export async function openCollectionAsTable(
         return;
       }
       try {
-        if (conn?.isLocalJson) {
+        const liveConn = getLiveConn();
+        if (liveConn?.isLocalJson) {
           const fullDocPath = `${collectionPath}/${docId}`;
-          const rawData = LocalJsonService.getInstance().getDocument(conn, fullDocPath);
+          const rawData = LocalJsonService.getInstance().getDocument(liveConn, fullDocPath);
           if (!rawData) {
             panel.webview.postMessage({
               type: "lookupNotFound",
@@ -910,10 +916,10 @@ export async function openCollectionAsTable(
       }
 
       try {
-        const conn = ConnectionManager.getInstance().getConnection(connectionId);
-        if (conn?.isLocalJson) {
+        const liveConn = getLiveConn();
+        if (liveConn?.isLocalJson) {
           // Local JSON Vector Search (in-memory math)
-          const allDocs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
+          const allDocs = LocalJsonService.getInstance().listDocuments(liveConn, collectionPath);
           const scoredDocs: { doc: any; distance: number }[] = [];
 
           const getNestedVal = (obj: any, path: string): any => {
@@ -1077,8 +1083,9 @@ export async function openCollectionAsTable(
 
     if (message.command === "countCollection") {
       try {
-        if (conn?.isLocalJson) {
-          const docs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
+        const liveConn = getLiveConn();
+        if (liveConn?.isLocalJson) {
+          const docs = LocalJsonService.getInstance().listDocuments(liveConn, collectionPath);
           const count = docs.length;
           panel.webview.postMessage({
             type: "countResult",
@@ -1107,8 +1114,9 @@ export async function openCollectionAsTable(
 
     if (message.command === "estimateQueryCost") {
       try {
-        if (conn?.isLocalJson) {
-          const docs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
+        const liveConn = getLiveConn();
+        if (liveConn?.isLocalJson) {
+          const docs = LocalJsonService.getInstance().listDocuments(liveConn, collectionPath);
           const count = docs.length;
           panel.webview.postMessage({
             type: "queryCostEstimateResult",
@@ -1198,8 +1206,9 @@ export async function openCollectionAsTable(
       try {
         panel.webview.postMessage({ type: "aggregateStart" });
 
-        if (conn?.isLocalJson) {
-          const docs = LocalJsonService.getInstance().listDocuments(conn, collectionPath);
+        const liveConn = getLiveConn();
+        if (liveConn?.isLocalJson) {
+          const docs = LocalJsonService.getInstance().listDocuments(liveConn, collectionPath);
           const cleanField = field.trim();
           let sum = 0;
           let validCount = 0;
@@ -1314,13 +1323,13 @@ export async function openCollectionAsTable(
           }
         });
 
-        if (conn?.isLocalJson) {
+        if (liveConn?.isLocalJson) {
           for (const id of docIds) {
             const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
             if (isDeleteField) {
-              LocalJsonService.getInstance().deleteField(conn, targetPath, fieldName.trim());
+              LocalJsonService.getInstance().deleteField(liveConn, targetPath, fieldName.trim());
             } else {
-              LocalJsonService.getInstance().updateField(conn, targetPath, fieldName.trim(), parsedValue);
+              LocalJsonService.getInstance().updateField(liveConn, targetPath, fieldName.trim(), parsedValue);
             }
           }
         } else {
@@ -1408,10 +1417,10 @@ export async function openCollectionAsTable(
           }
         });
 
-        if (conn?.isLocalJson) {
+        if (liveConn?.isLocalJson) {
           for (const id of docIds) {
             const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
-            LocalJsonService.getInstance().deleteDocument(conn, targetPath);
+            LocalJsonService.getInstance().deleteDocument(liveConn, targetPath);
             DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(connectionId, targetPath);
           }
         } else {
@@ -1567,8 +1576,8 @@ export async function openCollectionAsTable(
   }
 
   async function startLiveWatch() {
-    const conn = ConnectionManager.getInstance().getConnection(connectionId);
-    if (conn?.isLocalJson) {
+    const liveConn = getLiveConn();
+    if (liveConn?.isLocalJson) {
       vscode.window.showWarningMessage(
         "Live Watch mode is designed for Cloud Firestore and Firebase Emulators. Local JSON databases update synchronously."
       );
@@ -1703,12 +1712,34 @@ export async function openCollectionAsTable(
     }
   });
 
+  // Keep Read-Only & Environment shields synchronized live when connection settings change
+  let lastReadOnly = !!getLiveConn()?.readOnly;
+  let lastEnv = getLiveConn()?.environment;
+  const connSubscription = ConnectionManager.getInstance().onDidChangeConnections(() => {
+    if (isDisposed) {
+      return;
+    }
+    const liveConn = getLiveConn();
+    const nextReadOnly = !!liveConn?.readOnly;
+    const nextEnv = liveConn?.environment;
+    if (nextReadOnly !== lastReadOnly || nextEnv !== lastEnv) {
+      lastReadOnly = nextReadOnly;
+      lastEnv = nextEnv;
+      panel.webview.postMessage({
+        type: "connectionState",
+        isReadOnly: nextReadOnly,
+        environment: nextEnv,
+      });
+    }
+  });
+
   panel.onDidDispose(() => {
     isDisposed = true;
     activeCollectionPanels.delete(panelKey);
     stopLiveWatch(true);
     messageSubscription.dispose();
     viewStateSubscription.dispose();
+    connSubscription.dispose();
     loadedDocs = [];
     headers = [];
     lastDoc = null;

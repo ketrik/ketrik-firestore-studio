@@ -131,6 +131,7 @@ import { openCostSimulator } from "./webview/openCostSimulator";
 import { openOverviewDashboard } from "./webview/openOverviewDashboard";
 import { OverviewService } from "./analytics/overviewService";
 import { CostStatusBarController } from "./cost/CostStatusBarController";
+import { CostService } from "./cost/costService";
 import { SecretStorageService } from "./secrets/SecretStorageService";
 import { SecretManagerService } from "./secrets/SecretManagerService";
 import { openDatabaseConfiguration } from "./databaseConfig/openDatabaseConfiguration";
@@ -193,6 +194,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Initialize SecretManagerService singleton
   context.subscriptions.push(SecretManagerService.getInstance());
+  context.subscriptions.push(CostService.getInstance());
 
   // Auto-reveal active Firestore document or field in Tree View when switching tabs or opening docs
   context.subscriptions.push(
@@ -857,5 +859,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export async function deactivate(): Promise<void> {
   SecretManagerService.getInstance().clearAll();
+  CostService.getInstance().dispose();
   await ConnectionManager.getInstance().dispose();
 }

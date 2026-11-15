@@ -1087,6 +1087,24 @@
         "icon": "$(trash)"
       },
       {
+        "command": "ketrik-firestore-studio.deleteSecret",
+        "category": "Firestore Studio",
+        "title": "Delete Secret...",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ketrik-firestore-studio.toggleSecretLock",
+        "category": "Firestore Studio",
+        "title": "Lock / Unlock Secret Against Deletion",
+        "icon": "$(lock)"
+      },
+      {
+        "command": "ketrik-firestore-studio.openSecretsAsTable",
+        "category": "Firestore Studio",
+        "title": "Open Secrets as Table",
+        "icon": "$(table)"
+      },
+      {
         "command": "ketrik-firestore-studio.linkFieldToSecret",
         "category": "Firestore Studio",
         "title": "Link to Google Secret...",
@@ -1520,6 +1538,16 @@
           "group": "2_danger@1"
         },
         {
+          "command": "ketrik-firestore-studio.openSecretsAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretManagerBranch'",
+          "group": "inline@0"
+        },
+        {
+          "command": "ketrik-firestore-studio.openSecretsAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretManagerBranch'",
+          "group": "1_actions@0"
+        },
+        {
           "command": "ketrik-firestore-studio.createSecret",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'secretManagerBranch'",
           "group": "inline@1"
@@ -1568,6 +1596,16 @@
           "command": "ketrik-firestore-studio.refreshSecrets",
           "when": "view == ketrik-firestore-studio-view && viewItem == 'secretItem'",
           "group": "7_refresh@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.toggleSecretLock",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretItem'",
+          "group": "8_safety@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteSecret",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'secretItem'",
+          "group": "9_danger@1"
         },
         {
           "command": "ketrik-firestore-studio.inspectSecretPayload",

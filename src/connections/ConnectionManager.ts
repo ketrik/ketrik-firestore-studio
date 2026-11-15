@@ -89,6 +89,7 @@ export class ConnectionManager implements vscode.Disposable {
       this.firestoreInstances.delete(id);
     }
     this._initInFlight.delete(id);
+    SecretManagerService.getInstance().resetClient(id);
 
     const appName = `firestore-app-${id}`;
     const existingApp = getApps().find((app) => app?.name === appName);
@@ -164,21 +165,20 @@ export class ConnectionManager implements vscode.Disposable {
   }
 
   public getConnections(): FirestoreConnectionConfig[] {
-    if (this._cachedConnections !== null) {
-      return this._cachedConnections;
-    }
-    const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
-    const rawConns = config.get<FirestoreConnectionConfig[]>("connections") || [];
-    this._cachedConnections = rawConns.map((conn) => {
-      if (!conn.projectId && conn.serviceAccountKeyPath) {
-        const pid = this.getEffectiveProjectId(conn);
-        if (pid) {
-          return { ...conn, projectId: pid };
+    if (this._cachedConnections === null) {
+      const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
+      const rawConns = config.get<FirestoreConnectionConfig[]>("connections") || [];
+      this._cachedConnections = rawConns.map((conn) => {
+        if (!conn.projectId && conn.serviceAccountKeyPath) {
+          const pid = this.getEffectiveProjectId(conn);
+          if (pid) {
+            return { ...conn, projectId: pid };
+          }
         }
-      }
-      return conn;
-    });
-    return this._cachedConnections;
+        return { ...conn };
+      });
+    }
+    return this._cachedConnections.map((c) => ({ ...c }));
   }
 
   public getConnection(id?: string): FirestoreConnectionConfig | undefined {
@@ -265,20 +265,21 @@ export class ConnectionManager implements vscode.Disposable {
    * Toggle the Read-Only status of a connection.
    */
   public async toggleReadOnly(connectionId: string): Promise<boolean> {
-    const conn = this.getConnection(connectionId);
-    if (!conn) {
+    const connections = this.getConnections();
+    const index = connections.findIndex((c) => c.id === connectionId);
+    if (index === -1) {
       throw new Error(`Connection with ID '${connectionId}' not found.`);
     }
-    conn.readOnly = !conn.readOnly;
-    await this.updateConnection(conn);
-    return conn.readOnly;
+    const nextReadOnly = !connections[index].readOnly;
+    connections[index] = { ...connections[index], readOnly: nextReadOnly };
+    await this.saveConnections(connections);
+    return nextReadOnly;
   }
 
   public async deleteConnection(id: string): Promise<void> {
     const connections = this.getConnections().filter((c) => c.id !== id);
     await this._cleanupInstance(id);
     await SecretStorageService.getInstance().deleteServiceAccount(id).catch(() => {});
-    SecretManagerService.getInstance().resetClient(id);
     await this.saveConnections(connections);
   }
 

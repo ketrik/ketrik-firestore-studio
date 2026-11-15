@@ -4,7 +4,7 @@ import { FirestoreConnectionConfig } from "../connections/ConnectionManager";
 import { RulesService } from "../rules/RulesService";
 import { RulesParser } from "../rules/RulesParser";
 import { isTimestampLike, timestampToDate, formatDateTime, formatRelativeTime } from "../utils/timestampUtils";
-import { SecretMetadata, SecretVersionMetadata } from "../secrets/SecretManagerService";
+import { SecretManagerService, SecretMetadata, SecretVersionMetadata } from "../secrets/SecretManagerService";
 
 export abstract class Item extends vscode.TreeItem {
   abstract reference?: DocumentReference | CollectionReference;
@@ -817,8 +817,9 @@ export class SecretTreeItem extends Item {
     super(secret.id, vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `secret:${connectionId}:${secret.id}`;
     this.contextValue = "secretItem";
-    this.iconPath = new vscode.ThemeIcon("shield-lock", new vscode.ThemeColor("charts.yellow"));
-    this.description = `[${secret.replicationType || "automatic"}]`;
+    const isLocked = SecretManagerService.getInstance().isSecretLocked(connectionId, secret.id);
+    this.iconPath = new vscode.ThemeIcon(isLocked ? "lock" : "shield-lock", new vscode.ThemeColor("charts.yellow"));
+    this.description = `${isLocked ? "🔒 Locked • " : ""}[${secret.replicationType || "automatic"}]`;
     this.tooltip = [
       `Secret: ${secret.id}`,
       `Resource: ${secret.name}`,

@@ -201,3 +201,45 @@ All commands can be executed via the VS Code Command Palette (`Cmd+Shift+P` / `C
 | `ketrik-firestore-studio.migrateFieldToSecret` | **Firestore: Migrate Field to Secret Manager (Extract & Mask)...** | Field Context Menu (`$(shield-lock)`) | Extracts sensitive plaintext field into a new Google Secret and replaces the field with the secret reference link. |
 | `ketrik-firestore-studio.revealFieldSecretPayload` | **Firestore: Reveal Linked Secret Value** | Secret Field Inline Menu (`$(eye)`) | Inline inspection of linked secret values directly from document fields. |
 | `ketrik-firestore-studio.refreshSecrets` | **Firestore: Refresh Secrets** | Secret Branch Menu | Refreshes secrets list and version tree hierarchy from Google Cloud. |
+
+---
+
+## Time-Travel, PITR & Database Configuration
+
+| Command ID | Title | Context / Location | Description |
+| :--- | :--- | :--- | :--- |
+| `ketrik-firestore-studio.openDatabaseConfiguration` | **Firestore: Database Configuration & PITR Settings...** | Connection Context Menu / Table Toolbar / Palette | Opens interactive webview to inspect/toggle PITR, Delete Protection, Concurrency Mode, and infrastructure metadata. |
+| `ketrik-firestore-studio.openTimeTravel` | **Firestore: Time-Travel Explorer (Read at Past Timestamp)...** | Connection / Collection / Document Menu / Palette | Inspects database state at any microsecond in the past 7 days using read-only `readTime` snapshot transactions. |
+| `ketrik-firestore-studio.compareDocumentWithLive` | **Firestore: Compare Historical Snapshot with Live** | Time-Travel Webview / Palette | Native side-by-side diff comparing a historical document snapshot at `readTime` against live state. |
+| `ketrik-firestore-studio.restoreDocumentFromHistory` | **Firestore: Restore Document from History** | Time-Travel Webview / Palette | Atomically reverts a live document (or restores a deleted document) to a historical snapshot. |
+
+---
+
+## Bulk Operations, Read-Only Shield & Table Views
+
+| Command ID | Title | Context / Location | Description |
+| :--- | :--- | :--- | :--- |
+| `ketrik-firestore-studio.toggleConnectionReadOnly` | **Firestore: Toggle Read-Only Shield** | Connection Context Menu / Inline Icon | Locks or unlocks a connection to prevent unintended write/delete mutations. |
+| `ketrik-firestore-studio.transformCollectionField` | **Firestore: Bulk Field Transformer...** | Collection Context Menu / Table Toolbar / Palette | Transforms and normalizes fields across multiple documents in a collection. |
+| `ketrik-firestore-studio.openDocumentAsTable` | **Firestore: Open Document as Table** | Document Inline / Context Menu / Editor Title | Opens any Firestore or Local JSON document as an interactive Property Sheet or Horizontal Record table. |
+| `ketrik-firestore-studio.pushLocalDocumentToFirestore` | **Firestore: Push Local Document to Firestore** | Local JSON Document Menu | Pushes a local JSON document directly to a target Firestore connection. |
+| `ketrik-firestore-studio.snapshotDocumentToLocalJson` | **Firestore: Snapshot Document to Local JSON** | Document Context Menu | Saves a Firestore document snapshot into a Local JSON connection. |
+
+---
+
+## Additional Tree & Utility Commands
+
+| Command ID | Title | Context / Location | Description |
+| :--- | :--- | :--- | :--- |
+| `ketrik-firestore-studio.init` | **Firestore: Initialize / Setup** | Palette | Initializes Ketrik Firestore Studio workspace configuration. |
+| `ketrik-firestore-studio.setServiceAccountKeyPath` | **Firestore: Set Service Account Key Path** | Palette | Sets the default `serviceAccountKeyPath` configuration. |
+| `ketrik-firestore-studio.openPath` | **Firestore: Open Path...** | Palette | Navigates directly to a Firestore collection or document path. |
+| `ketrik-firestore-studio.addCollection` | **Firestore: Add Collection** | Connection / Document Context Menu | Creates a new root collection or subcollection with an initial document. |
+| `ketrik-firestore-studio.orderBy` | **Firestore: Order Collection By...** | Collection Context Menu | Sets an `orderBy` field and direction on a collection node in the Explorer Tree. |
+| `ketrik-firestore-studio.filterCollection` | **Firestore: Filter Collection...** | Collection Context Menu | Applies a quick filter to a collection node in the Explorer Tree. |
+| `ketrik-firestore-studio.clearCollectionFilter` | **Firestore: Clear Collection Filter** | Collection Context Menu | Clears any active filter on a collection node. |
+| `ketrik-firestore-studio.convertDashboardFormat` | **Firestore: Convert Dashboard Format** | Palette | Converts dashboard export formats. |
+| `ketrik-firestore-studio.editArrayItem` | **Firestore: Edit Array Item** | Array Element Context Menu | Edits an individual element within an Array field. |
+| `ketrik-firestore-studio.addArrayItem` | **Firestore: Add Array Item** | Array Field Context Menu | Appends a new element to an Array field. |
+| `ketrik-firestore-studio.duplicateArrayItem` | **Firestore: Duplicate Array Item** | Array Element Context Menu | Duplicates an element within an Array field. |
+| `ketrik-firestore-studio.deleteArrayItem` | **Firestore: Delete Array Item** | Array Element Context Menu | Removes an element from an Array field. |

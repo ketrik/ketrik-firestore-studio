@@ -10,8 +10,19 @@ import {
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import { ConnectionManager } from "../connections/ConnectionManager";
+import { openSecretsAsTable } from "../webview/openSecretsAsTable";
 
 let autoWipeTimer: NodeJS.Timeout | undefined;
+
+/**
+ * Cancel any pending clipboard auto-wipe timer (called on extension dispose/deactivate).
+ */
+export function clearSecretClipboardTimer(): void {
+  if (autoWipeTimer) {
+    clearTimeout(autoWipeTimer);
+    autoWipeTimer = undefined;
+  }
+}
 
 /**
  * Copy text to clipboard with optional automated wipe for security.
@@ -19,16 +30,14 @@ let autoWipeTimer: NodeJS.Timeout | undefined;
 export async function copyWithSecurityWipe(text: string, label: string = "Secret payload", wipeSeconds: number = 20): Promise<void> {
   await vscode.env.clipboard.writeText(text);
 
-  if (autoWipeTimer) {
-    clearTimeout(autoWipeTimer);
-    autoWipeTimer = undefined;
-  }
+  clearSecretClipboardTimer();
 
   vscode.window.showInformationMessage(
     `$(check) ${label} copied to clipboard! (Clipboard will auto-clear in ${wipeSeconds}s for security)`
   );
 
   autoWipeTimer = setTimeout(async () => {
+    autoWipeTimer = undefined;
     try {
       const current = await vscode.env.clipboard.readText();
       if (current === text) {
@@ -99,10 +108,14 @@ export function createSecretCommand(explorerDataProvider?: ExplorerDataProvider)
 
     const initialPayload = await vscode.window.showInputBox({
       title: `Secret Value for '${secretId.trim()}'`,
-      prompt: "Enter initial secret value / payload (optional, press Enter to skip)",
+      prompt: "Enter initial secret value / payload (optional, press Enter for empty or Esc to cancel)",
       password: true,
       placeHolder: "••••••••••••",
     });
+
+    if (initialPayload === undefined) {
+      return;
+    }
 
     try {
       await vscode.window.withProgress(
@@ -120,7 +133,7 @@ export function createSecretCommand(explorerDataProvider?: ExplorerDataProvider)
       );
 
       vscode.window.showInformationMessage(`Secret '${secretId.trim()}' created successfully in Google Secret Manager.`);
-      explorerDataProvider?.refresh(true);
+      explorerDataProvider?.refreshSecrets(connectionId!);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to create secret: ${err.message}`);
     }
@@ -195,7 +208,7 @@ export function addSecretVersionCommand(explorerDataProvider?: ExplorerDataProvi
       );
 
       vscode.window.showInformationMessage(`New version added successfully to '${target.secret.id}'.`);
-      explorerDataProvider?.refresh(true);
+      explorerDataProvider?.refreshSecrets(target.connectionId);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to add secret version: ${err.message}`);
     }
@@ -353,7 +366,7 @@ export function disableSecretVersionCommand(explorerDataProvider?: ExplorerDataP
       vscode.window.showInformationMessage(
         `Version ${target.version.versionId} of secret '${target.version.secretId}' disabled.`
       );
-      explorerDataProvider?.refresh(true);
+      explorerDataProvider?.refreshSecrets(target.connectionId);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to disable secret version: ${err.message}`);
     }
@@ -381,7 +394,7 @@ export function enableSecretVersionCommand(explorerDataProvider?: ExplorerDataPr
       vscode.window.showInformationMessage(
         `Version ${target.version.versionId} of secret '${target.version.secretId}' enabled.`
       );
-      explorerDataProvider?.refresh(true);
+      explorerDataProvider?.refreshSecrets(target.connectionId);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to enable secret version: ${err.message}`);
     }
@@ -399,6 +412,12 @@ export function destroySecretVersionCommand(explorerDataProvider?: ExplorerDataP
     if (!ConnectionManager.getInstance().ensureWritable(target.connectionId, "destroy secret version")) {
       return;
     }
+    if (SecretManagerService.getInstance().isSecretLocked(target.connectionId, target.version.secretId)) {
+      vscode.window.showWarningMessage(
+        `Secret '${target.version.secretId}' is locked against deletion/destruction. Unlock it first.`
+      );
+      return;
+    }
 
     const confirm = await vscode.window.showWarningMessage(
       `Are you sure you want to DESTROY version ${target.version.versionId} of secret '${target.version.secretId}'? The payload will be permanently wiped and cannot be recovered.`,
@@ -411,18 +430,98 @@ export function destroySecretVersionCommand(explorerDataProvider?: ExplorerDataP
     }
 
     try {
-      await SecretManagerService.getInstance().destroySecretVersion(
-        target.connectionId,
-        target.version.secretId,
-        target.version.versionId
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Destroying version ${target.version.versionId} of '${target.version.secretId}'...`,
+        },
+        async () => {
+          await SecretManagerService.getInstance().destroySecretVersion(
+            target.connectionId,
+            target.version.secretId,
+            target.version.versionId
+          );
+        }
       );
       vscode.window.showInformationMessage(
         `Version ${target.version.versionId} of secret '${target.version.secretId}' destroyed.`
       );
-      explorerDataProvider?.refresh(true);
+      explorerDataProvider?.refreshSecrets(target.connectionId);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to destroy secret version: ${err.message}`);
     }
+  };
+}
+
+/**
+ * Command: Permanently Delete a Secret and all its versions
+ */
+export function deleteSecretCommand(explorerDataProvider?: ExplorerDataProvider) {
+  return async (target?: SecretTreeItem) => {
+    if (!target || !(target instanceof SecretTreeItem)) {
+      return;
+    }
+    if (!ConnectionManager.getInstance().ensureWritable(target.connectionId, "delete secret")) {
+      return;
+    }
+    if (SecretManagerService.getInstance().isSecretLocked(target.connectionId, target.secret.id)) {
+      vscode.window.showWarningMessage(
+        `Secret '${target.secret.id}' is locked against deletion. Unlock it first.`
+      );
+      return;
+    }
+
+    const confirm = await vscode.window.showWarningMessage(
+      `Are you sure you want to PERMANENTLY DELETE secret '${target.secret.id}' and ALL of its versions? This action cannot be undone.`,
+      { modal: true },
+      "Delete Secret"
+    );
+
+    if (confirm !== "Delete Secret") {
+      return;
+    }
+
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Deleting secret '${target.secret.id}'...`,
+        },
+        async () => {
+          await SecretManagerService.getInstance().deleteSecret(
+            target.connectionId,
+            target.secret.id
+          );
+        }
+      );
+      vscode.window.showInformationMessage(
+        `Secret '${target.secret.id}' deleted.`
+      );
+      explorerDataProvider?.refreshSecrets(target.connectionId);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to delete secret: ${err.message}`);
+    }
+  };
+}
+
+/**
+ * Command: Toggle deletion lock on a secret
+ */
+export function toggleSecretLockCommand(explorerDataProvider?: ExplorerDataProvider) {
+  return async (target?: SecretTreeItem) => {
+    if (!target || !(target instanceof SecretTreeItem)) {
+      return;
+    }
+    const nowLocked = await SecretManagerService.getInstance().toggleSecretLock(
+      target.connectionId,
+      target.secret.id
+    );
+    vscode.window.showInformationMessage(
+      nowLocked
+        ? `🔒 Locked '${target.secret.id}' against deletion.`
+        : `🔓 Unlocked '${target.secret.id}'.`
+    );
+    explorerDataProvider?.refreshSecrets(target.connectionId);
   };
 }
 
@@ -484,7 +583,7 @@ export function linkFieldToSecretCommand(explorerDataProvider?: ExplorerDataProv
       vscode.window.showInformationMessage(
         `Field '${fieldItem.fullFieldPath}' linked to Google Secret: ${selected.secret.id}`
       );
-      explorerDataProvider?.refresh(true);
+      explorerDataProvider?.refreshNode(fieldItem);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to link field to secret: ${err.message}`);
     }
@@ -564,7 +663,8 @@ export function migrateFieldToSecretCommand(explorerDataProvider?: ExplorerDataP
       vscode.window.showInformationMessage(
         `Field '${fieldItem.fullFieldPath}' successfully migrated to secret '${secretId.trim()}'. Plaintext replaced with secret link.`
       );
-      explorerDataProvider?.refresh(true);
+      explorerDataProvider?.refreshNode(fieldItem);
+      explorerDataProvider?.refreshSecrets(fieldItem.connectionId);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to migrate field to secret: ${err.message}`);
     }
@@ -616,7 +716,9 @@ export function registerSecretCommands(
   context: vscode.ExtensionContext,
   explorerDataProvider: ExplorerDataProvider
 ): void {
+  SecretManagerService.getInstance().init(context);
   context.subscriptions.push(
+    { dispose: clearSecretClipboardTimer },
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.createSecret",
       createSecretCommand(explorerDataProvider)
@@ -650,6 +752,14 @@ export function registerSecretCommands(
       destroySecretVersionCommand(explorerDataProvider)
     ),
     vscode.commands.registerCommand(
+      "ketrik-firestore-studio.deleteSecret",
+      deleteSecretCommand(explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.toggleSecretLock",
+      toggleSecretLockCommand(explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
       "ketrik-firestore-studio.linkFieldToSecret",
       linkFieldToSecretCommand(explorerDataProvider)
     ),
@@ -669,6 +779,15 @@ export function registerSecretCommands(
         } else {
           explorerDataProvider.refresh();
         }
+      }
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openSecretsAsTable",
+      async (item?: SecretManagerBranchItem) => {
+        if (!item || !(item instanceof SecretManagerBranchItem)) {
+          return;
+        }
+        await openSecretsAsTable(item.connectionId, explorerDataProvider);
       }
     )
   );

@@ -93,8 +93,9 @@ export interface CapacityPlanResult {
   savingsWithCaching: number;
 }
 
-export class CostService {
+export class CostService implements vscode.Disposable {
   private static instance: CostService;
+  private static readonly MAX_CACHE_SIZE = 50;
 
   // Track session operations per connection
   private _sessionCounts: Map<string, SessionOperationCounts> = new Map();
@@ -112,6 +113,25 @@ export class CostService {
       CostService.instance = new CostService();
     }
     return CostService.instance;
+  }
+
+  private _setBoundedCache<K, V>(map: Map<K, V>, key: K, value: V): void {
+    map.delete(key);
+    while (map.size >= CostService.MAX_CACHE_SIZE) {
+      const oldest = map.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      map.delete(oldest);
+    }
+    map.set(key, value);
+  }
+
+  public dispose(): void {
+    this._onDidChangeUsage.dispose();
+    this._sessionCounts.clear();
+    this._monitoringDailyCache.clear();
+    this._monitoringHistoryCache.clear();
   }
 
   /**
@@ -418,7 +438,7 @@ export class CostService {
           writes: Math.max(0, writes),
           deletes: Math.max(0, deletes),
         };
-        this._monitoringDailyCache.set(connectionId, { timestamp: Date.now(), snapshot: snap });
+        this._setBoundedCache(this._monitoringDailyCache, connectionId, { timestamp: Date.now(), snapshot: snap });
         return snap;
       } else if (lastApiError) {
         monitoringError = lastApiError;
@@ -436,7 +456,7 @@ export class CostService {
       deletes: session.deletes,
       monitoringError: monitoringError || "Could not reach Google Cloud Monitoring API",
     };
-    this._monitoringDailyCache.set(connectionId, { timestamp: Date.now(), snapshot: fallbackSnap });
+    this._setBoundedCache(this._monitoringDailyCache, connectionId, { timestamp: Date.now(), snapshot: fallbackSnap });
     return fallbackSnap;
   }
 
@@ -531,7 +551,7 @@ export class CostService {
                 points,
                 source: "cloud-monitoring",
               };
-              this._monitoringHistoryCache.set(cacheKey, { timestamp: Date.now(), data: result });
+              this._setBoundedCache(this._monitoringHistoryCache, cacheKey, { timestamp: Date.now(), data: result });
               return result;
             }
           }
@@ -564,7 +584,7 @@ export class CostService {
       points,
       source: "simulated",
     };
-    this._monitoringHistoryCache.set(cacheKey, { timestamp: Date.now(), data: simResult });
+    this._setBoundedCache(this._monitoringHistoryCache, cacheKey, { timestamp: Date.now(), data: simResult });
     return simResult;
   }
 }
