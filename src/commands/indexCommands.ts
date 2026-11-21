@@ -18,9 +18,9 @@ export function registerIndexCommands(
       "ketrik-firestore-studio.refreshIndexes",
       async (item?: CompositeIndexesBranchItem) => {
         if (item) {
-          explorerDataProvider.refreshNode(item);
+          await explorerDataProvider.refreshNodeWithFeedback(item);
         } else {
-          explorerDataProvider.refresh();
+          await explorerDataProvider.refreshWithFeedback();
         }
       }
     )

@@ -7,6 +7,7 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { CostService } from "../cost/costService";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
+import { isProtectSystemKeysEnabled, isSystemFieldPath } from "../utils/deleteUtils";
 
 interface FieldPanelContext {
   panel: vscode.WebviewPanel;
@@ -455,8 +456,12 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         return;
       }
       const { rowId, index } = message;
+      const safeWarning =
+        isProtectSystemKeysEnabled() && isSystemFieldPath([...fieldSegments, String(rowId)])
+          ? `⚠️ Safe Mode Warning: '${targetFieldPath}' or entry '${rowId}' is a System Envelope or Protocol key.\n\n`
+          : "";
       const confirm = await vscode.window.showWarningMessage(
-        `Are you sure you want to delete entry '${rowId}' from '${targetFieldPath}'?`,
+        `${safeWarning}Are you sure you want to delete entry '${rowId}' from '${targetFieldPath}'?`,
         { modal: true },
         "Delete Entry",
         "Cancel"
@@ -469,23 +474,65 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
         if (ctx.isArray) {
           const idx = index !== undefined ? index : Number(rowId);
-          let currentArr: any[] = Array.isArray(ctx.rawData) ? [...ctx.rawData] : [];
-          if (idx >= 0 && idx < currentArr.length) {
-            currentArr.splice(idx, 1);
-          }
           if (conn?.isLocalJson) {
+            const currentArr: any[] = Array.isArray(ctx.rawData) ? [...ctx.rawData] : [];
+            if (idx >= 0 && idx < currentArr.length) {
+              currentArr.splice(idx, 1);
+            }
             LocalJsonService.getInstance().updateField(
               conn,
               item.parentDocRef.path,
-              fieldSegments.join("."),
+              fieldSegments,
               currentArr
             );
+            ctx.rawData = currentArr;
           } else {
             const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-            await safeFirestoreFieldUpdate(firestore, item.parentDocRef.path, fieldSegments, currentArr);
+            const docRef = firestore.doc(item.parentDocRef.path);
+            let liveArr: any[] = [];
+            await firestore.runTransaction(async (tx) => {
+              const snap = await tx.get(docRef);
+              if (!snap.exists) {
+                throw new Error(`Document '${item.parentDocRef.id}' no longer exists.`);
+              }
+              const docData = snap.data() || {};
+              let cur: any = docData;
+              for (let i = 0; i < fieldSegments.length - 1; i++) {
+                const seg = fieldSegments[i];
+                cur = Array.isArray(cur) && /^\d+$/.test(seg) ? cur[parseInt(seg, 10)] : cur?.[seg];
+              }
+              const lastSeg = fieldSegments[fieldSegments.length - 1];
+              const existing =
+                Array.isArray(cur) && /^\d+$/.test(lastSeg) ? cur[parseInt(lastSeg, 10)] : cur?.[lastSeg];
+              liveArr = Array.isArray(existing) ? [...existing] : [];
+              if (idx >= 0 && idx < liveArr.length) {
+                liveArr.splice(idx, 1);
+              }
+              if (cur && typeof cur === "object") {
+                if (Array.isArray(cur) && /^\d+$/.test(lastSeg)) {
+                  cur[parseInt(lastSeg, 10)] = liveArr;
+                } else {
+                  cur[lastSeg] = liveArr;
+                }
+              }
+              const { FieldPath } = await import("firebase-admin/firestore");
+              const firstNumericIdx = fieldSegments.findIndex((s) => /^\d+$/.test(s));
+              if (firstNumericIdx > 0) {
+                const topArraySegments = fieldSegments.slice(0, firstNumericIdx);
+                let topArrayVal: any = docData;
+                for (const seg of topArraySegments) {
+                  topArrayVal = topArrayVal?.[seg];
+                }
+                tx.update(docRef, new FieldPath(...topArraySegments), topArrayVal);
+              } else {
+                tx.update(docRef, new FieldPath(...fieldSegments), liveArr);
+              }
+            });
+            CostService.getInstance().recordOperation(item.connectionId, "read", 1);
             CostService.getInstance().recordOperation(item.connectionId, "write", 1);
+            ctx.rawData = liveArr;
           }
-          ctx.rawData = currentArr;
+          DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
         } else {
           // Map
           const targetSegments = [...fieldSegments, rowId];
@@ -493,7 +540,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
             LocalJsonService.getInstance().updateField(
               conn,
               item.parentDocRef.path,
-              targetSegments.join("."),
+              targetSegments,
               undefined,
               true
             );
@@ -505,9 +552,12 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
           if (ctx.rawData && typeof ctx.rawData === "object") {
             delete ctx.rawData[rowId];
           }
+          DocumentFileSystemProvider.getInstance().invalidateAndNotifyFieldDeleted(
+            item.connectionId,
+            item.parentDocRef.path,
+            targetSegments.join(".")
+          );
         }
-
-        DocumentFileSystemProvider.getInstance().invalidateAndNotify(item.connectionId, item.parentDocRef.path);
 
         const updatedParsed = parseRows(ctx.rawData);
         ctx.rows = updatedParsed.rows;
@@ -708,9 +758,22 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
   const parentDocPath = item.parentDocRef?.path || "";
   const fileChangeSubscription = DocumentFileSystemProvider.getInstance().onDidChangeFile((events) => {
     for (const ev of events) {
-      if (ev.type === vscode.FileChangeType.Changed && ev.uri.scheme === "ketrik-firestore-studio" && ev.uri.authority === item.connectionId) {
+      if (ev.uri.scheme === "ketrik-firestore-studio" && ev.uri.authority === item.connectionId) {
         const parsed = DocumentFileSystemProvider.getInstance().parseUri(ev.uri);
-        if (parsed.docPath === parentDocPath) {
+        if (
+          ev.type === vscode.FileChangeType.Deleted &&
+          !parsed.isRules &&
+          ((parsed.fieldPath === undefined &&
+            (parsed.docPath === parentDocPath || parentDocPath.startsWith(parsed.docPath + "/"))) ||
+            (parsed.docPath === parentDocPath &&
+              parsed.fieldPath !== undefined &&
+              (parsed.fieldPath === targetFieldPath ||
+                targetFieldPath.startsWith(parsed.fieldPath + "."))))
+        ) {
+          panel.dispose();
+          return;
+        }
+        if (ev.type === vscode.FileChangeType.Changed && parsed.docPath === parentDocPath) {
           if (fileChangeDebounce) clearTimeout(fileChangeDebounce);
           fileChangeDebounce = setTimeout(async () => {
             try {

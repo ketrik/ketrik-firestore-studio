@@ -225,6 +225,84 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       padding: 4px 8px;
       font-size: 0.88em;
     }
+    .batch-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.1));
+      border: 1px solid var(--vscode-focusBorder, #007acc);
+      border-radius: 6px;
+      padding: 10px 16px;
+      margin-bottom: 12px;
+    }
+    .batch-count {
+      font-weight: 600;
+      font-size: 0.92em;
+    }
+    .batch-btn-danger {
+      background: var(--vscode-statusBarItem-errorBackground, #c72e2e) !important;
+      color: #fff !important;
+    }
+    .select-col {
+      width: 36px;
+      min-width: 36px;
+      max-width: 36px;
+      text-align: center;
+      position: sticky;
+      left: 0;
+      z-index: 5;
+      background-color: var(--vscode-editor-background);
+      border-right: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
+    }
+    thead th.select-col {
+      z-index: 12;
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, rgba(128, 128, 128, 0.1))),
+        var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background, rgba(128, 128, 128, 0.1)))
+      );
+    }
+    td.sticky-col {
+      left: 36px !important;
+      box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.25);
+    }
+    thead th.id-header {
+      left: 36px !important;
+      box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.25);
+    }
+    tbody tr:nth-child(even) td.select-col {
+      background-color: var(--vscode-editor-background);
+      background-image: linear-gradient(rgba(128, 128, 128, 0.035), rgba(128, 128, 128, 0.035));
+    }
+    tbody tr:hover td.select-col {
+      background-color: var(--vscode-editor-background) !important;
+      background-image: linear-gradient(
+        var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15)),
+        var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15))
+      ) !important;
+    }
+    .row-checkbox {
+      cursor: pointer;
+      width: 15px;
+      height: 15px;
+      accent-color: var(--vscode-button-background, #007acc);
+    }
+    .row-checkbox:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .auth-context-menu-item.disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .auth-context-menu-item.disabled:hover {
+      background: transparent !important;
+      color: inherit !important;
+    }
   </style>
 </head>
 <body>
@@ -235,6 +313,9 @@ export function getAuthUsersTableHtml(connectionId: string): string {
         <span class="collection-name">Authentication Users</span>
       </h1>
       <span class="badge" title="Connection ID">${safeConnectionId}</span>
+      <span id="envBadge" class="badge" style="display:none;"></span>
+      <span id="readOnlyBadge" class="badge" style="display:none; background: rgba(241,76,76,0.18); color: #f14c4c; border: 1px solid rgba(241,76,76,0.45); font-weight:600;">🔒 READ-ONLY</span>
+      <span id="profileCollBadge" class="badge badge-substrate" title="Configured Firestore profile collection">/users</span>
     </div>
     <div class="toolbar-actions">
       <div class="search-wrapper">
@@ -275,10 +356,17 @@ export function getAuthUsersTableHtml(connectionId: string): string {
     <span>Loading users...</span>
   </div>
 
+  <div id="batchAuthToolbar" class="batch-toolbar" style="display:none;">
+    <span id="batchAuthCountLabel" class="batch-count">0 user(s) selected</span>
+    <button id="batchDeleteUsersBtn" class="batch-btn-danger">🗑 Delete Selected Users...</button>
+    <button id="batchClearUsersBtn" class="secondary">Clear Selection</button>
+  </div>
+
   <div class="table-container">
     <table id="usersTable">
       <thead>
         <tr>
+          <th class="select-col"><input type="checkbox" id="selectAllUsersCheckbox" class="row-checkbox" title="Select all displayed users" /></th>
           <th class="th-sortable id-header" data-col="email" style="min-width: 220px;">Email / Name <span id="sort-email"></span></th>
           <th class="th-sortable" data-col="uid">UID <span id="sort-uid"></span></th>
           <th class="th-sortable" data-col="createdAt">Created Date <span id="sort-createdAt">▼</span></th>
@@ -310,6 +398,11 @@ export function getAuthUsersTableHtml(connectionId: string): string {
     let hasMore = false;
     let nextPageToken = null;
     let isFetching = false;
+    let isReadOnly = false;
+    let currentEnvironment = '';
+    let profileCollection = 'users';
+    const selectedUids = new Set();
+    let lastRenderedUsers = [];
 
     const tbody = document.getElementById('tableBody');
     const statusBar = document.getElementById('statusBar');
@@ -324,6 +417,11 @@ export function getAuthUsersTableHtml(connectionId: string): string {
     const loadMoreBar = document.getElementById('loadMoreBar');
     const loadMoreBtn = document.getElementById('loadMoreBtn');
     const pagingStats = document.getElementById('pagingStats');
+    const batchAuthToolbar = document.getElementById('batchAuthToolbar');
+    const batchAuthCountLabel = document.getElementById('batchAuthCountLabel');
+    const batchDeleteUsersBtn = document.getElementById('batchDeleteUsersBtn');
+    const batchClearUsersBtn = document.getElementById('batchClearUsersBtn');
+    const selectAllUsersCheckbox = document.getElementById('selectAllUsersCheckbox');
 
     // Header sort listeners
     document.querySelectorAll('.th-sortable').forEach(th => {
@@ -445,10 +543,11 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       });
 
       // Render rows
+      lastRenderedUsers = filtered;
       tbody.innerHTML = '';
       if (filtered.length === 0) {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="9" style="text-align:center; padding: 24px; color: var(--vscode-descriptionForeground);">' +
+        tr.innerHTML = '<td colspan="10" style="text-align:center; padding: 24px; color: var(--vscode-descriptionForeground);">' +
           (allUsers.length === 0 ? 'No users found in Firebase Authentication' : 'No users match filter "' + escapeHtml(currentFilter) + '"') +
           '</td>';
         tbody.appendChild(tr);
@@ -479,11 +578,11 @@ export function getAuthUsersTableHtml(connectionId: string): string {
             ? '<span class="status-disabled">⛔ Disabled</span>'
             : '<span class="status-active">✓ Active</span>';
 
-          const emailTitle = u.email ? (u.email + (u.emailVerified ? ' (Verified)' : ' (Unverified)')) : 'No email';
           const nameHtml = u.displayName ? '<div style="font-size:0.85em; color:var(--vscode-descriptionForeground);">' + escapeHtml(u.displayName) + '</div>' : '';
 
+          const profileTitleAttr = u.profileDocPath ? ' title="/' + escapeHtml(u.profileDocPath) + '"' : '';
           const profileHtml = u.hasProfileDoc === true
-            ? '<span style="color:var(--vscode-charts-green, #4ec9b0);">📄 Exists</span>'
+            ? '<span style="color:var(--vscode-charts-green, #4ec9b0);"' + profileTitleAttr + '>📄 Exists</span>'
             : (u.hasProfileDoc === false
               ? '<span style="color:var(--vscode-charts-yellow, #cca700);">⚠️ Missing</span>'
               : '<button class="secondary btn-icon check-profile-btn" data-uid="' + escapeHtml(u.uid) + '" title="Check Firestore doc">Check</button>');
@@ -515,7 +614,12 @@ export function getAuthUsersTableHtml(connectionId: string): string {
             providersHtml += '<span class="mfa-chip" title="Multi-Factor Authentication Enrolled">🛡️ MFA (' + u.multiFactor.length + ')</span>';
           }
 
+          const isChecked = !isReadOnly && selectedUids.has(u.uid);
+
           tr.innerHTML = \`
+            <td class="select-col">
+              <input type="checkbox" class="row-checkbox user-select-checkbox" data-uid="\${escapeHtml(u.uid)}" \${isChecked ? 'checked' : ''} \${isReadOnly ? 'disabled title="Disabled in Read-Only mode"' : ''} />
+            </td>
             <td class="sticky-col">
               <div class="user-cell">
                 \${avatarHtml}
@@ -551,6 +655,102 @@ export function getAuthUsersTableHtml(connectionId: string): string {
         pagingStats.textContent = allUsers.length + ' loaded so far';
       } else {
         loadMoreBar.style.display = 'none';
+      }
+
+      updateBatchToolbar();
+    }
+
+    function updateBatchToolbar() {
+      if (batchAuthToolbar && batchAuthCountLabel) {
+        if (!isReadOnly && selectedUids.size > 0) {
+          batchAuthToolbar.style.display = 'flex';
+          batchAuthCountLabel.textContent = selectedUids.size + ' user(s) selected';
+        } else {
+          batchAuthToolbar.style.display = 'none';
+        }
+      }
+      if (selectAllUsersCheckbox) {
+        if (isReadOnly || lastRenderedUsers.length === 0) {
+          selectAllUsersCheckbox.checked = false;
+          selectAllUsersCheckbox.indeterminate = false;
+          selectAllUsersCheckbox.disabled = true;
+        } else {
+          selectAllUsersCheckbox.disabled = false;
+          let visibleSelected = 0;
+          lastRenderedUsers.forEach(u => {
+            if (selectedUids.has(u.uid)) visibleSelected++;
+          });
+          selectAllUsersCheckbox.checked = visibleSelected > 0 && visibleSelected === lastRenderedUsers.length;
+          selectAllUsersCheckbox.indeterminate = visibleSelected > 0 && visibleSelected < lastRenderedUsers.length;
+        }
+      }
+    }
+
+    function applyConnectionState(state, skipRender) {
+      if (!state) return;
+      if (typeof state.isReadOnly === 'boolean') {
+        isReadOnly = state.isReadOnly;
+      }
+      if ('environment' in state) {
+        currentEnvironment = state.environment || '';
+      }
+      let collectionChanged = false;
+      if (state.profileCollection && state.profileCollection !== profileCollection) {
+        profileCollection = state.profileCollection;
+        collectionChanged = true;
+        allUsers.forEach(u => {
+          u.hasProfileDoc = undefined;
+          u.profileDocPath = undefined;
+        });
+      }
+
+      const roBadge = document.getElementById('readOnlyBadge');
+      if (roBadge) {
+        roBadge.style.display = isReadOnly ? 'inline-block' : 'none';
+      }
+
+      const envBadge = document.getElementById('envBadge');
+      if (envBadge) {
+        const envStyles = {
+          production: { text: '🔴 PRODUCTION', bg: 'rgba(241, 76, 76, 0.18)', color: '#f14c4c', border: '1px solid rgba(241, 76, 76, 0.45)' },
+          staging: { text: '🟡 STAGING', bg: 'rgba(255, 193, 7, 0.18)', color: '#ffc107', border: '1px solid rgba(255, 193, 7, 0.45)' },
+          development: { text: '🟢 DEV', bg: 'rgba(46, 204, 113, 0.18)', color: '#2ecc71', border: '1px solid rgba(46, 204, 113, 0.45)' },
+        }[currentEnvironment];
+        if (envStyles) {
+          envBadge.textContent = envStyles.text;
+          envBadge.style.background = envStyles.bg;
+          envBadge.style.color = envStyles.color;
+          envBadge.style.border = envStyles.border;
+          envBadge.style.display = 'inline-block';
+        } else {
+          envBadge.style.display = 'none';
+        }
+      }
+
+      const profileCollBadge = document.getElementById('profileCollBadge');
+      if (profileCollBadge) {
+        profileCollBadge.textContent = '/' + profileCollection;
+        profileCollBadge.title = 'Configured Firestore profile collection: /' + profileCollection;
+      }
+
+      if (importWizardBtn) {
+        importWizardBtn.disabled = isReadOnly;
+        importWizardBtn.title = isReadOnly
+          ? 'Read-Only mode enabled: importing users is blocked'
+          : 'Bulk Import Users from JSON or CSV with Password Hashes (SCRYPT, BCRYPT, PBKDF2)';
+      }
+
+      if (isReadOnly) {
+        selectedUids.clear();
+        closeContextMenu();
+      }
+
+      if (!skipRender && allUsers.length > 0) {
+        if (collectionChanged || 'isReadOnly' in state) {
+          renderTable();
+        }
+      } else if (!skipRender) {
+        updateBatchToolbar();
       }
     }
 
@@ -592,11 +792,13 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       const email = user.email || '';
       const userLabel = email || user.uid;
       const isDisabled = !!user.disabled;
+      const roCls = isReadOnly ? ' disabled' : '';
+      const roTitle = isReadOnly ? ' title="Blocked in Read-Only mode"' : '';
 
       contextMenu.innerHTML = \`
         <div class="auth-context-menu-header" title="\${escapeHtml(userLabel)}">\${escapeHtml(userLabel)}</div>
-        <div class="auth-context-menu-item" data-action="claims">🛡️ Edit Custom Claims...</div>
-        <div class="auth-context-menu-item" data-action="profile">📄 Open / Create Profile Doc</div>
+        <div class="auth-context-menu-item\${roCls}" data-action="claims"\${roTitle}>🛡️ Edit Custom Claims...</div>
+        <div class="auth-context-menu-item" data-action="profile">📄 \${isReadOnly ? 'Open' : 'Open / Create'} Profile Doc (/\${escapeHtml(profileCollection)})</div>
         <div class="auth-context-menu-item" data-action="mintToken">🔑 Mint Custom Token (Login As)</div>
         <div class="auth-context-menu-item" data-action="cloneUser">📋 Clone User to Connection...</div>
         <div class="auth-context-menu-sep"></div>
@@ -604,10 +806,10 @@ export function getAuthUsersTableHtml(connectionId: string): string {
         <div class="auth-context-menu-item" data-action="signinLink">🔗 Passwordless Sign-In Link...</div>
         <div class="auth-context-menu-item" data-action="resetPassword">🔄 Generate Password Reset Link</div>
         <div class="auth-context-menu-sep"></div>
-        <div class="auth-context-menu-item" data-action="toggleDisable">
+        <div class="auth-context-menu-item\${roCls}" data-action="toggleDisable"\${roTitle}>
           \${isDisabled ? '✅ Enable User Account' : '⏸️ Disable User Account'}
         </div>
-        <div class="auth-context-menu-item danger" data-action="deleteUser">
+        <div class="auth-context-menu-item danger\${roCls}" data-action="deleteUser"\${roTitle}>
           🗑️ Delete User & Profile...
         </div>
       \`;
@@ -638,7 +840,7 @@ export function getAuthUsersTableHtml(connectionId: string): string {
     // Context menu item click handler
     contextMenu.addEventListener('click', (e) => {
       const item = e.target.closest('.auth-context-menu-item');
-      if (!item || !activeMenuUid) return;
+      if (!item || !activeMenuUid || item.classList.contains('disabled')) return;
 
       const action = item.getAttribute('data-action');
       const user = allUsers.find(u => u.uid === activeMenuUid);
@@ -712,6 +914,61 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       }
     });
 
+    tbody.addEventListener('change', (e) => {
+      const cb = e.target.closest('.user-select-checkbox');
+      if (!cb) return;
+      const uid = cb.getAttribute('data-uid');
+      if (!uid) return;
+      if (isReadOnly) {
+        cb.checked = false;
+        return;
+      }
+      if (cb.checked) {
+        selectedUids.add(uid);
+      } else {
+        selectedUids.delete(uid);
+      }
+      updateBatchToolbar();
+    });
+
+    if (selectAllUsersCheckbox) {
+      selectAllUsersCheckbox.addEventListener('change', () => {
+        if (isReadOnly) {
+          selectAllUsersCheckbox.checked = false;
+          return;
+        }
+        const checkAll = selectAllUsersCheckbox.checked;
+        lastRenderedUsers.forEach(u => {
+          if (checkAll) {
+            selectedUids.add(u.uid);
+          } else {
+            selectedUids.delete(u.uid);
+          }
+        });
+        tbody.querySelectorAll('.user-select-checkbox').forEach(cb => {
+          cb.checked = checkAll;
+        });
+        updateBatchToolbar();
+      });
+    }
+
+    if (batchDeleteUsersBtn) {
+      batchDeleteUsersBtn.addEventListener('click', () => {
+        if (isReadOnly || selectedUids.size === 0) return;
+        vscode.postMessage({
+          command: 'deleteSelectedUsers',
+          uids: Array.from(selectedUids),
+        });
+      });
+    }
+
+    if (batchClearUsersBtn) {
+      batchClearUsersBtn.addEventListener('click', () => {
+        selectedUids.clear();
+        renderTable();
+      });
+    }
+
     function escapeHtml(str) {
       if (!str) return '';
       return String(str)
@@ -763,6 +1020,7 @@ export function getAuthUsersTableHtml(connectionId: string): string {
 
     if (importWizardBtn) {
       importWizardBtn.addEventListener('click', () => {
+        if (isReadOnly) return;
         vscode.postMessage({ command: 'importUsersWizard' });
       });
     }
@@ -775,12 +1033,24 @@ export function getAuthUsersTableHtml(connectionId: string): string {
     window.addEventListener('message', event => {
       const msg = event.data;
       switch (msg.type) {
-        case 'setUsers':
+        case 'connectionState':
+          applyConnectionState(msg);
+          break;
+
+        case 'setUsers': {
           allUsers = msg.users || [];
+          const loadedUidSet = new Set(allUsers.map(u => u.uid));
+          Array.from(selectedUids).forEach(uid => {
+            if (!loadedUidSet.has(uid)) selectedUids.delete(uid);
+          });
           hasMore = !!msg.hasMore;
           nextPageToken = msg.pageToken;
+          if ('isReadOnly' in msg || 'environment' in msg || 'profileCollection' in msg) {
+            applyConnectionState(msg, true);
+          }
           renderTable();
           break;
+        }
 
         case 'appendUsers':
           allUsers = allUsers.concat(msg.users || []);
@@ -789,18 +1059,21 @@ export function getAuthUsersTableHtml(connectionId: string): string {
           renderTable();
           break;
 
-        case 'profileStatus':
+        case 'profileStatus': {
           const user = allUsers.find(u => u.uid === msg.uid);
           if (user) {
             user.hasProfileDoc = msg.exists;
+            user.profileDocPath = msg.docPath || user.profileDocPath;
           }
           const cell = document.getElementById('profile-cell-' + msg.uid);
           if (cell) {
+            const pathTitleAttr = msg.docPath ? ' title="/' + escapeHtml(msg.docPath) + '"' : '';
             cell.innerHTML = msg.exists
-              ? '<span style="color:var(--vscode-charts-green, #4ec9b0);">📄 Exists</span>'
+              ? '<span style="color:var(--vscode-charts-green, #4ec9b0);"' + pathTitleAttr + '>📄 Exists</span>'
               : '<span style="color:var(--vscode-charts-yellow, #cca700);">⚠️ Missing</span>';
           }
           break;
+        }
 
         case 'userUpdated': {
           if (!msg.user || !msg.user.uid) break;
@@ -814,8 +1087,17 @@ export function getAuthUsersTableHtml(connectionId: string): string {
 
         case 'userDeleted':
           allUsers = allUsers.filter(u => u.uid !== msg.uid);
+          selectedUids.delete(msg.uid);
           renderTable();
           break;
+
+        case 'usersDeleted': {
+          const delSet = new Set(msg.uids || []);
+          allUsers = allUsers.filter(u => !delSet.has(u.uid));
+          delSet.forEach(uid => selectedUids.delete(uid));
+          renderTable();
+          break;
+        }
 
         case 'setLoading':
           if (msg.loading) {

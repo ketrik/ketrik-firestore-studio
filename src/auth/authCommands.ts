@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { AuthService } from "./AuthService";
+import { AuthService, UserProfileInspection } from "./AuthService";
 import { AuthUserItem, AuthUsersBranchItem, ConnectionTreeItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
@@ -27,6 +27,22 @@ function resolveConnectionId(
   }
   const connections = ConnectionManager.getInstance().getConnections();
   return connections[0]?.id || "default";
+}
+
+function getNamedDatabaseAuthWarning(connectionId: string): string {
+  const connManager = ConnectionManager.getInstance();
+  const conn = connManager.getConnection(connectionId);
+  if (
+    conn &&
+    !conn.isEmulator &&
+    !conn.isLocalJson &&
+    conn.databaseId &&
+    conn.databaseId !== "(default)"
+  ) {
+    const projectLabel = connManager.getEffectiveProjectId(conn) || conn.projectId || conn.name;
+    return `\n\n⚠️ Project-wide Auth scope: Firebase Authentication is shared across the entire project '${projectLabel}', not isolated to Firestore database '${conn.databaseId}'. Deleting Auth user(s) revokes sign-in access for ALL databases in this project.`;
+  }
+  return "";
 }
 
 /**
@@ -116,23 +132,35 @@ export async function createAuthUserProfileCommand(
     user = picked;
   }
 
-  // Ask for the profile collection name (defaults to "users")
+  // Ask for the profile collection name (defaults to configured collection)
+  const defaultCollection = authService.getProfileCollection(connectionId);
   const collectionName = await vscode.window.showInputBox({
     title: `Create Profile Document for ${user.email || user.uid}`,
     prompt: "Collection to store user profiles in",
-    value: "users",
-    validateInput: (v) => (v.trim() ? undefined : "Collection name cannot be empty"),
+    value: defaultCollection,
+    validateInput: (v) => {
+      const normalized = v.trim().replace(/^\/+|\/+$/g, "");
+      if (!normalized) {
+        return "Collection name cannot be empty";
+      }
+      const segments = normalized.split("/").filter(Boolean);
+      if (segments.length % 2 === 0) {
+        return "Enter a collection path (odd number of segments, e.g. 'users' or 'org/default/members')";
+      }
+      return undefined;
+    },
   });
 
   if (!collectionName) {
     return;
   }
 
+  const normalizedColl = collectionName.trim().replace(/^\/+|\/+$/g, "");
   try {
     const docPath = await authService.createProfileDoc(
       connectionId,
       user,
-      collectionName.trim(),
+      normalizedColl,
       fsProvider
     );
 
@@ -169,25 +197,35 @@ export async function openAuthUserProfileCommand(
     user = picked;
   }
 
-  const collectionName = "users";
-  let exists = false;
+  let profile: UserProfileInspection;
   try {
-    exists = await authService.checkProfileExists(connectionId, user.uid, collectionName);
+    profile = await authService.inspectProfile(connectionId, user.uid);
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to check user profile: ${err?.message || err}`);
     return;
   }
 
-  if (exists) {
-    await openPath(`${collectionName}/${user.uid}`, connectionId);
+  if (profile.exists || profile.hasSubcollections) {
+    await openPath(profile.docPath, connectionId);
   } else {
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    if (conn?.readOnly) {
+      vscode.window.showWarningMessage(
+        `No profile document exists at /${profile.docPath} (Connection is in Read-Only mode).`
+      );
+      return;
+    }
     const choice = await vscode.window.showWarningMessage(
-      `No profile document exists at /${collectionName}/${user.uid}. Would you like to create one now?`,
+      `No profile document exists at /${profile.docPath}. Would you like to create one now?`,
       "Create Profile",
       "Cancel"
     );
     if (choice === "Create Profile") {
-      await createAuthUserProfileCommand(item, explorerDataProvider, fsProvider);
+      await createAuthUserProfileCommand(
+        item || new AuthUserItem(user, connectionId, false, profile.collectionName),
+        explorerDataProvider,
+        fsProvider
+      );
     }
   }
 }
@@ -226,7 +264,8 @@ export async function manageAuthUsersCommand(
     return;
   }
 
-  const dummyItem = new AuthUserItem(picked, connectionId);
+  const profileCollection = AuthService.getInstance().getProfileCollection(connectionId);
+  const dummyItem = new AuthUserItem(picked, connectionId, false, profileCollection);
 
   if (action.action === "claims") {
     await editAuthUserClaimsCommand(dummyItem, explorerDataProvider);
@@ -300,9 +339,10 @@ export async function cloneAuthUserCommand(
   if (!ConnectionManager.getInstance().ensureWritable(targetConnectionId, "clone user to target connection")) {
     return;
   }
+  const sourceColl = authService.getProfileCollection(sourceConnectionId);
   let hasProfile = false;
   try {
-    hasProfile = await authService.checkProfileExists(sourceConnectionId, uid);
+    hasProfile = await authService.checkProfileExists(sourceConnectionId, uid, sourceColl);
   } catch {
     hasProfile = false;
   }
@@ -310,7 +350,7 @@ export async function cloneAuthUserCommand(
   const cloneProfileChoice = hasProfile
     ? await vscode.window.showQuickPick(
         [
-          { label: "Clone User Account & Firestore Profile (/users)", cloneProfile: true },
+          { label: `Clone User Account & Firestore Profile (/${sourceColl})`, cloneProfile: true },
           { label: "Clone User Account Only", cloneProfile: false },
         ],
         { placeHolder: "Do you want to copy the user's Firestore profile doc as well?" }
@@ -461,142 +501,602 @@ export async function resetAuthUserPasswordCommand(item?: AuthUserItem) {
 }
 
 /**
- * Delete a user from Firebase Auth, with option to cascade-delete their Firestore profile document.
+ * Shared flow to delete a Firebase Auth user and/or their Firestore profile document (including subcollections),
+ * refresh the Explorer tree, close stale tabs, and prompt for orphan Cloud Storage cleanup afterwards.
+ */
+export async function executeDeleteAuthUserFlow(params: {
+  connectionId: string;
+  uid: string;
+  userIdentifier?: string;
+  userRecord?: import("firebase-admin/auth").UserRecord;
+  explorerDataProvider?: ExplorerDataProvider;
+  fsProvider?: DocumentFileSystemProvider;
+  collectionName?: string;
+}): Promise<{ authDeleted: boolean; profileDeleted: boolean }> {
+  const { connectionId, uid } = params;
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "delete auth user")) {
+    return { authDeleted: false, profileDeleted: false };
+  }
+
+  const authService = AuthService.getInstance();
+  const collectionName =
+    params.collectionName?.trim().replace(/^\/+|\/+$/g, "") ||
+    authService.getProfileCollection(connectionId);
+  const userLabel = params.userIdentifier || uid;
+
+  let profile: UserProfileInspection | undefined;
+  try {
+    profile = await authService.inspectProfile(connectionId, uid, collectionName);
+  } catch {
+    profile = undefined;
+  }
+
+  const hasProfileOrSub = !!(profile && (profile.exists || profile.hasSubcollections));
+  const hasSubcollections = !!profile?.hasSubcollections;
+  const profilePathLabel = profile?.docPath || `${collectionName}/${uid}`;
+  const targetProfileDocPaths =
+    hasProfileOrSub && profile
+      ? [profile.docPath, ...(profile.additionalDocPaths || [])]
+      : undefined;
+
+  const uidFieldNote = profile?.matchedByUidField ? " (matched by 'uid' field)" : "";
+  const extraCount = profile?.additionalDocPaths?.length || 0;
+  const extraNote =
+    extraCount > 0 ? ` (and ${extraCount} additional doc(s) matching 'uid')` : "";
+  const subDetail = hasSubcollections
+    ? ` (including ${profile!.subcollectionIds.length} subcollection(s): ${profile!.subcollectionIds.join(", ")})`
+    : "";
+  const profileDetail = hasProfileOrSub
+    ? ` A Firestore profile${profile!.exists ? " document" : " container"} also exists at '/${profilePathLabel}'${uidFieldNote}${extraNote}${subDetail}.`
+    : "";
+  const namedDbWarning = getNamedDatabaseAuthWarning(connectionId);
+
+  const deleteBothOption = hasSubcollections
+    ? "Delete Auth User & Profile (+ Subcollections)"
+    : `Delete Auth User & Profile Doc (/${collectionName})`;
+  const deleteProfileOnlyOption = hasSubcollections
+    ? "Delete Profile (+ Subcollections) Only"
+    : "Delete Profile Doc Only";
+
+  const options = hasProfileOrSub
+    ? [deleteBothOption, "Delete Auth User Only", deleteProfileOnlyOption, "Cancel"]
+    : ["Delete Auth User Only", "Cancel"];
+
+  const choice = await vscode.window.showWarningMessage(
+    `Are you sure you want to permanently delete user '${userLabel}' (UID: ${uid})?${profileDetail}${namedDbWarning}`,
+    { modal: true },
+    ...options
+  );
+
+  if (!choice || choice === "Cancel") {
+    return { authDeleted: false, profileDeleted: false };
+  }
+
+  if (choice === deleteProfileOnlyOption) {
+    try {
+      const res = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Deleting Firestore profile for '${userLabel}'...`,
+          cancellable: false,
+        },
+        async () => {
+          return authService.deleteProfileDoc(
+            connectionId,
+            uid,
+            collectionName,
+            params.fsProvider,
+            true,
+            targetProfileDocPaths
+          );
+        }
+      );
+
+      params.explorerDataProvider?.refreshAfterAuthUserProfileDeleted(
+        connectionId,
+        uid,
+        collectionName,
+        targetProfileDocPaths
+      );
+
+      if (res.deleted) {
+        const subText = res.subcollectionsDeleted
+          ? ` and nested subcollections (${res.deletedDocsCount} Firestore doc(s))`
+          : "";
+        vscode.window.showInformationMessage(
+          `Deleted Firestore profile '/${profilePathLabel}'${subText} while keeping Firebase Auth user '${userLabel}'.`
+        );
+        if (profile?.data && Object.keys(profile.data).length > 0) {
+          try {
+            await promptAndCleanupOrphanStorageFiles(
+              connectionId,
+              { profileData: profile.data },
+              userLabel
+            );
+          } catch { }
+        }
+      } else {
+        vscode.window.showInformationMessage(
+          `No Firestore profile documents needed deletion at '/${profilePathLabel}'.`
+        );
+      }
+
+      return { authDeleted: false, profileDeleted: res.deleted };
+    } catch (err: any) {
+      vscode.window.showErrorMessage(
+        `Failed to delete Firestore profile '/${profilePathLabel}': ${err?.message || err}`
+      );
+      return { authDeleted: false, profileDeleted: false };
+    }
+  }
+
+  const shouldDeleteProfile = choice !== "Delete Auth User Only";
+
+  // Capture storage URLs before deleting Auth/Firestore records
+  let storageScanObj: Record<string, any> | undefined;
+  try {
+    const userRecord = params.userRecord || (await authService.getUser(connectionId, uid));
+    const scan: Record<string, any> = {};
+    if (shouldDeleteProfile && profile?.data) {
+      scan.profileData = profile.data;
+    }
+    if (userRecord?.photoURL) {
+      scan.photoURL = userRecord.photoURL;
+    }
+    if (Object.keys(scan).length > 0) {
+      storageScanObj = scan;
+    }
+  } catch {
+    if (shouldDeleteProfile && profile?.data) {
+      storageScanObj = { profileData: profile.data };
+    }
+  }
+
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Deleting Auth user '${userLabel}'...`,
+        cancellable: false,
+      },
+      async () => {
+        return authService.deleteUserAndProfile(
+          connectionId,
+          uid,
+          shouldDeleteProfile,
+          collectionName,
+          params.fsProvider,
+          true,
+          targetProfileDocPaths
+        );
+      }
+    );
+
+    params.explorerDataProvider?.refreshAfterAuthUserDeleted(
+      connectionId,
+      uid,
+      result.profileDeleted ? collectionName : undefined,
+      result.profileDeleted ? targetProfileDocPaths : undefined
+    );
+
+    if (result.profileError) {
+      vscode.window.showWarningMessage(
+        `Deleted Auth user '${userLabel}', but failed to delete Firestore profile '/${profilePathLabel}': ${result.profileError}`
+      );
+    } else if (result.profileDeleted && result.subcollectionsDeleted) {
+      vscode.window.showInformationMessage(
+        `Successfully deleted Auth user '${userLabel}', profile doc, and nested subcollections (${result.deletedProfileDocsCount} Firestore doc(s)).`
+      );
+    } else if (result.profileDeleted) {
+      vscode.window.showInformationMessage(
+        `Successfully deleted Auth user '${userLabel}' and associated Firestore profile doc.`
+      );
+    } else {
+      vscode.window.showInformationMessage(`Successfully deleted Auth user '${userLabel}'.`);
+    }
+
+    if (storageScanObj && Object.keys(storageScanObj).length > 0) {
+      try {
+        await promptAndCleanupOrphanStorageFiles(connectionId, storageScanObj, userLabel);
+      } catch { }
+    }
+
+    return { authDeleted: true, profileDeleted: result.profileDeleted };
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to delete user '${userLabel}': ${err.message}`);
+    return { authDeleted: false, profileDeleted: false };
+  }
+}
+
+/**
+ * Bulk delete selected Firebase Auth users via auth.deleteUsers(), with optional recursive
+ * deletion of their matching Firestore profile documents and subcollections.
+ */
+export async function executeBulkDeleteAuthUsersFlow(params: {
+  connectionId: string;
+  uids: string[];
+  explorerDataProvider?: ExplorerDataProvider;
+  fsProvider?: DocumentFileSystemProvider;
+  collectionName?: string;
+}): Promise<{ deletedUids: string[] }> {
+  const { connectionId } = params;
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "bulk delete auth users")) {
+    return { deletedUids: [] };
+  }
+
+  const uniqueUids = Array.from(
+    new Set(params.uids.map((u) => String(u || "").trim()).filter((u) => u.length > 0))
+  );
+  if (uniqueUids.length === 0) {
+    return { deletedUids: [] };
+  }
+
+  const authService = AuthService.getInstance();
+  const collectionName =
+    params.collectionName?.trim().replace(/^\/+|\/+$/g, "") ||
+    authService.getProfileCollection(connectionId);
+  const namedDbWarning = getNamedDatabaseAuthWarning(connectionId);
+
+  const choice = await vscode.window.showWarningMessage(
+    `Are you sure you want to permanently delete ${uniqueUids.length} selected Firebase Auth user(s)?\n\nSelecting profile deletion will also recursively delete any matching '/${collectionName}/<uid>' profile documents and all nested subcollections.${namedDbWarning}`,
+    { modal: true },
+    "Delete Auth Users & Profiles (+ Subcollections)",
+    "Delete Auth Users Only",
+    "Cancel"
+  );
+
+  if (!choice || choice === "Cancel") {
+    return { deletedUids: [] };
+  }
+
+  const deleteProfiles = choice === "Delete Auth Users & Profiles (+ Subcollections)";
+
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Bulk deleting ${uniqueUids.length} Firebase Auth user(s)...`,
+        cancellable: false,
+      },
+      async (progress) => {
+        return authService.deleteUsersAndProfiles(
+          connectionId,
+          uniqueUids,
+          deleteProfiles,
+          collectionName,
+          params.fsProvider,
+          true,
+          (completed, total) => {
+            progress.report({
+              message: `Cleaning up profiles (${completed}/${total})...`,
+            });
+          }
+        );
+      }
+    );
+
+    if (result.deletedUids.length > 0) {
+      params.explorerDataProvider?.refreshAfterAuthUsersBulkDeleted(
+        connectionId,
+        result.deletedUids,
+        deleteProfiles && result.profilesDeletedCount > 0 ? collectionName : undefined
+      );
+    }
+
+    const parts: string[] = [`Deleted ${result.deletedUids.length} Auth user(s)`];
+    if (deleteProfiles && result.profilesDeletedCount > 0) {
+      parts.push(
+        `and ${result.profilesDeletedCount} profile(s) (${result.deletedProfileDocsCount} Firestore doc(s))`
+      );
+    }
+    const issueParts: string[] = [];
+    if (result.authFailed.length > 0) {
+      issueParts.push(
+        `${result.authFailed.length} Auth error(s): ${result.authFailed[0].uid} (${result.authFailed[0].error})`
+      );
+    }
+    if (result.profileErrors.length > 0) {
+      issueParts.push(
+        `${result.profileErrors.length} profile error(s): ${result.profileErrors[0].uid} (${result.profileErrors[0].error})`
+      );
+    }
+
+    if (issueParts.length > 0) {
+      vscode.window.showWarningMessage(
+        `${parts.join(" ")}. Issues encountered: ${issueParts.join("; ")}.`
+      );
+    } else {
+      vscode.window.showInformationMessage(`${parts.join(" ")}.`);
+    }
+
+    return { deletedUids: result.deletedUids };
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Bulk Auth user deletion failed: ${err?.message || err}`);
+    return { deletedUids: [] };
+  }
+}
+
+/**
+ * Reverse prompt: after deleting a Firestore document inside the configured Auth profile collection,
+ * check if a matching Firebase Auth user exists and offer to delete it as well.
+ */
+export async function maybePromptDeleteAuthUserForProfile(
+  connectionId: string,
+  docPath: string,
+  docId: string,
+  explorerDataProvider?: ExplorerDataProvider,
+  docData?: Record<string, any>
+): Promise<void> {
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
+  if (!conn || conn.isLocalJson || conn.readOnly) {
+    return;
+  }
+
+  const cleanPath = docPath.replace(/^\/+|\/+$/g, "");
+  const lastSlash = cleanPath.lastIndexOf("/");
+  const parentColl = lastSlash > 0 ? cleanPath.substring(0, lastSlash) : "";
+  const authService = AuthService.getInstance();
+  const profileColl = authService.getProfileCollection(connectionId);
+
+  if (!parentColl || parentColl !== profileColl) {
+    return;
+  }
+
+  let authUser: import("firebase-admin/auth").UserRecord | undefined;
+  try {
+    authUser = await authService.getUser(connectionId, docId);
+  } catch {
+    const fieldUid = typeof docData?.uid === "string" ? docData.uid.trim() : "";
+    if (fieldUid && fieldUid !== docId) {
+      try {
+        authUser = await authService.getUser(connectionId, fieldUid);
+      } catch {
+        authUser = undefined;
+      }
+    }
+  }
+
+  if (!authUser) {
+    return;
+  }
+
+  const userLabel = authUser.email || authUser.displayName || authUser.uid;
+  const namedDbWarning = getNamedDatabaseAuthWarning(connectionId);
+  const confirm = await vscode.window.showWarningMessage(
+    `Deleted Firestore profile '${cleanPath}'. A matching Firebase Auth account exists for '${userLabel}' (UID: ${authUser.uid}). Delete the Firebase Auth user as well?${namedDbWarning}`,
+    { modal: true },
+    "Delete Firebase Auth User",
+    "Keep Auth User"
+  );
+
+  if (confirm !== "Delete Firebase Auth User") {
+    return;
+  }
+
+  try {
+    await authService.deleteUser(connectionId, authUser.uid);
+    explorerDataProvider?.refreshAfterAuthUserDeleted(connectionId, authUser.uid);
+    vscode.window.showInformationMessage(
+      `Deleted Firebase Auth user '${userLabel}' (UID: ${authUser.uid}).`
+    );
+
+    if (authUser.photoURL) {
+      try {
+        await promptAndCleanupOrphanStorageFiles(
+          connectionId,
+          { photoURL: authUser.photoURL },
+          userLabel
+        );
+      } catch { }
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(
+      `Failed to delete Firebase Auth user '${userLabel}': ${err?.message || err}`
+    );
+  }
+}
+
+/**
+ * Delete a user from Firebase Auth, with option to cascade-delete their Firestore profile document and subcollections.
  */
 export async function deleteAuthUserCommand(
   item?: AuthUserItem,
   explorerDataProvider?: ExplorerDataProvider,
   fsProvider?: DocumentFileSystemProvider
 ) {
-  const authService = AuthService.getInstance();
-  const connectionId = resolveConnectionId(item);
+  let connectionId: string;
+  if (!item) {
+    const nonLocalConns = ConnectionManager.getInstance()
+      .getConnections()
+      .filter((c) => !c.isLocalJson);
+    if (nonLocalConns.length === 0) {
+      vscode.window.showWarningMessage(
+        "No Cloud or Emulator Firebase connections configured."
+      );
+      return;
+    }
+    if (nonLocalConns.length === 1) {
+      connectionId = nonLocalConns[0].id;
+    } else {
+      const pickedConn = await vscode.window.showQuickPick(
+        nonLocalConns.map((c) => ({
+          label: c.name,
+          description: c.isEmulator
+            ? `Emulator (${c.emulatorHost || "localhost"})`
+            : c.projectId || c.id,
+          connectionId: c.id,
+        })),
+        { placeHolder: "Select connection to delete Auth user from" }
+      );
+      if (!pickedConn) {
+        return;
+      }
+      connectionId = pickedConn.connectionId;
+    }
+  } else {
+    connectionId = resolveConnectionId(item);
+  }
+
   if (!ConnectionManager.getInstance().ensureWritable(connectionId, "delete auth user")) {
     return;
   }
-  let uid = item?.user?.uid;
-  let userIdentifier = item?.user?.email || item?.user?.uid;
+
+  let userRecord = item?.user;
+  let uid = userRecord?.uid;
+  let userIdentifier = userRecord?.email || userRecord?.uid;
 
   if (!uid) {
     const picked = await pickAuthUser(connectionId);
     if (!picked) {
       return;
     }
+    userRecord = picked;
     uid = picked.uid;
     userIdentifier = picked.email || picked.uid;
   }
 
-  let hasProfile = false;
-  try {
-    hasProfile = await authService.checkProfileExists(connectionId, uid);
-  } catch {
-    hasProfile = false;
-  }
-
-  // Present explicit confirmation options with safe cancel
-  const deleteProfileOption = hasProfile
-    ? "Delete Auth User & Profile Doc (/users)"
-    : "Delete Auth User Only";
-
-  const options = hasProfile
-    ? [deleteProfileOption, "Delete Auth User Only", "Cancel"]
-    : ["Delete Auth User Only", "Cancel"];
-
-  const choice = await vscode.window.showWarningMessage(
-    `Are you sure you want to permanently delete user '${userIdentifier}' (UID: ${uid})?` +
-      (hasProfile ? " A Firestore profile document also exists at '/users/" + uid + "'." : ""),
-    { modal: true },
-    ...options
-  );
-
-  if (!choice || choice === "Cancel") {
-    return;
-  }
-
-  const shouldDeleteProfile = choice.includes("Profile Doc");
-
-  // Check for avatar or profile storage files
-  try {
-    const userRecord = item?.user || (await authService.getUser(connectionId, uid));
-    if (userRecord?.photoURL) {
-      await promptAndCleanupOrphanStorageFiles(
-        connectionId,
-        { photoURL: userRecord.photoURL },
-        userIdentifier || uid
-      );
-    }
-  } catch {}
-
-  try {
-    const result = await authService.deleteUserAndProfile(
-      connectionId,
-      uid,
-      shouldDeleteProfile,
-      "users",
-      fsProvider
-    );
-
-    const msg = result.profileDeleted
-      ? `Successfully deleted Auth user '${userIdentifier}' and associated Firestore profile doc.`
-      : `Successfully deleted Auth user '${userIdentifier}'.`;
-
-    vscode.window.showInformationMessage(msg);
-
-    if (explorerDataProvider) {
-      if (item) {
-        explorerDataProvider.refreshNode(item);
-      } else {
-        explorerDataProvider.refresh();
-      }
-    }
-  } catch (err: any) {
-    vscode.window.showErrorMessage(`Failed to delete user '${userIdentifier}': ${err.message}`);
-  }
+  await executeDeleteAuthUserFlow({
+    connectionId,
+    uid,
+    userIdentifier,
+    userRecord,
+    explorerDataProvider,
+    fsProvider,
+  });
 }
 
 /**
- * Helper to display a quick pick list of Auth users for a connection.
+ * Helper to display a paginated QuickPick list of Auth users with direct Email/UID server lookup.
  */
-async function pickAuthUser(connectionId: string): Promise<import("firebase-admin/auth").UserRecord | undefined> {
+async function pickAuthUser(
+  connectionId: string
+): Promise<import("firebase-admin/auth").UserRecord | undefined> {
   const authService = AuthService.getInstance();
+  let loadedUsers: import("firebase-admin/auth").UserRecord[] = [];
+  let nextPageToken: string | undefined;
 
-  return vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: "Loading Firebase Auth users...",
-      cancellable: false,
-    },
-    async () => {
+  try {
+    const initial = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Loading Firebase Auth users...",
+        cancellable: false,
+      },
+      async () => authService.listUsers(connectionId, 100)
+    );
+    loadedUsers = initial.users;
+    nextPageToken = initial.pageToken;
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to fetch Auth users: ${err.message}`);
+    return undefined;
+  }
+
+  if (loadedUsers.length === 0 && !nextPageToken) {
+    vscode.window.showInformationMessage("No users found in Firebase Authentication.");
+    return undefined;
+  }
+
+  type AuthPickItem = vscode.QuickPickItem & {
+    kindType: "lookup" | "user" | "loadMore";
+    user?: import("firebase-admin/auth").UserRecord;
+  };
+
+  while (true) {
+    const items: AuthPickItem[] = [
+      {
+        label: "$(search) Lookup User by Email or UID...",
+        description: "Direct server lookup across all Auth users",
+        alwaysShow: true,
+        kindType: "lookup",
+      },
+      ...loadedUsers.map((u): AuthPickItem => {
+        const claims = u.customClaims || {};
+        const claimsStr =
+          Object.keys(claims).length > 0 ? JSON.stringify(claims) : "(no claims)";
+        return {
+          label: u.email || u.displayName || u.uid,
+          description: `UID: ${u.uid}`,
+          detail: `Claims: ${claimsStr} • ${u.disabled ? "Disabled" : "Active"}`,
+          kindType: "user",
+          user: u,
+        };
+      }),
+    ];
+
+    if (nextPageToken) {
+      items.push({
+        label: "$(more) Load next 100 users...",
+        description: `${loadedUsers.length} loaded so far`,
+        alwaysShow: true,
+        kindType: "loadMore",
+      });
+    }
+
+    const selected = await vscode.window.showQuickPick(items, {
+      placeHolder: `Select a Firebase Auth user (${loadedUsers.length} loaded${nextPageToken ? "+" : ""})`,
+      matchOnDescription: true,
+      matchOnDetail: true,
+    });
+
+    if (!selected) {
+      return undefined;
+    }
+
+    if (selected.kindType === "user") {
+      return selected.user;
+    }
+
+    if (selected.kindType === "lookup") {
+      const query = await vscode.window.showInputBox({
+        title: "Lookup Firebase Auth User",
+        prompt: "Enter exact user email address or UID",
+        placeHolder: "user@example.com or uid123",
+      });
+      if (query === undefined) {
+        continue;
+      }
+      const trimmed = query.trim();
+      if (!trimmed) {
+        continue;
+      }
       try {
-        const { users } = await authService.listUsers(connectionId, 100);
-        if (users.length === 0) {
-          vscode.window.showInformationMessage("No users found in Firebase Authentication.");
-          return undefined;
+        const found = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Looking up user '${trimmed}'...`,
+            cancellable: false,
+          },
+          async () => authService.findUserByEmailOrUid(connectionId, trimmed)
+        );
+        if (found) {
+          return found;
         }
-
-        const items = users.map((u) => {
-          const claims = u.customClaims || {};
-          const claimsStr = Object.keys(claims).length > 0 ? JSON.stringify(claims) : "(no claims)";
-          return {
-            label: u.email || u.displayName || u.uid,
-            description: `UID: ${u.uid}`,
-            detail: `Claims: ${claimsStr} • ${u.disabled ? "Disabled" : "Active"}`,
-            user: u,
-          };
-        });
-
-        const selected = await vscode.window.showQuickPick(items, {
-          placeHolder: "Select a Firebase Auth user",
-          matchOnDescription: true,
-          matchOnDetail: true,
-        });
-
-        return selected?.user;
+        vscode.window.showWarningMessage(
+          `No Firebase Auth user found matching '${trimmed}'.`
+        );
       } catch (err: any) {
-        vscode.window.showErrorMessage(`Failed to fetch Auth users: ${err.message}`);
-        return undefined;
+        vscode.window.showErrorMessage(`User lookup failed: ${err?.message || err}`);
+      }
+      continue;
+    }
+
+    if (selected.kindType === "loadMore" && nextPageToken) {
+      try {
+        const nextPage = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: "Loading next 100 Firebase Auth users...",
+            cancellable: false,
+          },
+          async () => authService.listUsers(connectionId, 100, nextPageToken)
+        );
+        loadedUsers = loadedUsers.concat(nextPage.users);
+        nextPageToken = nextPage.pageToken;
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to load more Auth users: ${err.message}`);
       }
     }
-  );
+  }
 }
 
 /**
@@ -696,9 +1196,9 @@ export async function createAuthUserCommand(
     );
 
     if (action === "Create Firestore Profile") {
-      await authService.createProfileDoc(connectionId, user, "users", fsProvider);
-      vscode.window.showInformationMessage(`Created Firestore profile document for ${user.uid}!`);
-      await openPath(`users/${user.uid}`, connectionId);
+      const createdPath = await authService.createProfileDoc(connectionId, user, undefined, fsProvider);
+      vscode.window.showInformationMessage(`Created Firestore profile document '${createdPath}' for ${user.uid}!`);
+      await openPath(createdPath, connectionId);
     }
 
     if (explorerDataProvider) {

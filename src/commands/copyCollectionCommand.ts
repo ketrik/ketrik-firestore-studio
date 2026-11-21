@@ -64,15 +64,20 @@ export async function copyCollectionToInstanceCommand(
 
   // 2. Target collection name
   const isSameConnection = targetConn.id === sourceConnId;
-  const defaultTargetName = isSameConnection ? `${sourceCollName}_copy` : sourceCollName;
+  const defaultTargetName = isSameConnection ? `${sourceCollPath}_copy` : sourceCollPath;
 
   const targetCollInput = await vscode.window.showInputBox({
-    prompt: `Destination collection name in '${targetConn.name}'`,
+    prompt: `Destination collection path in '${targetConn.name}'`,
     value: defaultTargetName,
     validateInput: (v) => {
-      if (!v || !v.trim()) return "Collection name cannot be empty";
-      if (isSameConnection && v.trim() === sourceCollName) {
-        return "Target collection must have a different name when copying within the same instance";
+      if (!v || !v.trim()) return "Collection path cannot be empty";
+      const trimmed = v.trim().replace(/^\/+|\/+$/g, "");
+      if (isSameConnection && trimmed === sourceCollPath) {
+        return "Target collection must have a different path when copying within the same instance";
+      }
+      const parts = trimmed.split("/").filter(Boolean);
+      if (parts.length % 2 === 0) {
+        return "Collection path must have an odd number of segments (e.g. users or users/123/orders)";
       }
       return null;
     },
@@ -82,7 +87,7 @@ export async function copyCollectionToInstanceCommand(
     return;
   }
 
-  const targetCollName = targetCollInput.trim();
+  const targetCollName = targetCollInput.trim().replace(/^\/+|\/+$/g, "");
 
   // 3. Select write strategy: Merge / Patch vs Overwrite
   const strategyPick = await vscode.window.showQuickPick(

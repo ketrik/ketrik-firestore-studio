@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { DocumentItem, DocumentFieldItem } from "../explorer/items";
+import { DocumentItem, DocumentFieldItem, CollectionItem } from "../explorer/items";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import openPath from "../commands/openPath";
 import { ConnectionManager } from "../connections/ConnectionManager";
@@ -16,6 +16,13 @@ import {
   DocumentFieldInfo,
 } from "./documentTable/documentTableHtml";
 import { FieldPath } from "firebase-admin/firestore";
+import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
+import {
+  recursiveDeleteWithCount,
+  isProtectSystemKeysEnabled,
+  isSystemFieldPath,
+} from "../utils/deleteUtils";
+import { maybePromptDeleteAuthUserForProfile } from "../auth/authCommands";
 
 export interface DocumentTableTarget {
   connectionId: string;
@@ -380,8 +387,12 @@ export async function openDocumentAsTable(
         return;
       }
       const { field } = message;
+      const safeWarning =
+        isProtectSystemKeysEnabled() && isSystemFieldPath([field])
+          ? `⚠️ Safe Mode Warning: '${field}' is a System Envelope or Protocol key. Deleting it may break query filtering or lifecycle rules.\n\n`
+          : "";
       const confirm = await vscode.window.showWarningMessage(
-        `Are you sure you want to delete field '${field}' from '${docPath}'?`,
+        `${safeWarning}Are you sure you want to delete field '${field}' from '${docPath}'?`,
         { modal: true },
         "Delete Field",
         "Cancel"
@@ -391,7 +402,7 @@ export async function openDocumentAsTable(
       try {
         const conn = ConnectionManager.getInstance().getConnection(connectionId);
         if (conn?.isLocalJson) {
-          LocalJsonService.getInstance().updateField(conn, docPath, field, undefined, true);
+          LocalJsonService.getInstance().updateField(conn, docPath, [field], undefined, true);
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
           const { FieldValue } = await import("firebase-admin/firestore");
@@ -560,30 +571,111 @@ export async function openDocumentAsTable(
         );
         return;
       }
-      const confirm = await vscode.window.showWarningMessage(
-        `Are you sure you want to delete entire document '${docPath}'?`,
-        { modal: true },
-        "Delete Document",
-        "Cancel"
-      );
-      if (confirm !== "Delete Document") return;
+
+      const savedDocData = ctx.docData;
 
       try {
-        const conn = ConnectionManager.getInstance().getConnection(connectionId);
-        if (conn?.isLocalJson) {
-          LocalJsonService.getInstance().deleteDocument(conn, docPath);
+        if (delConn?.isLocalJson) {
+          const confirm = await vscode.window.showWarningMessage(
+            `Are you sure you want to delete entire document '${docPath}'?`,
+            { modal: true },
+            "Delete Document",
+            "Cancel"
+          );
+          if (confirm !== "Delete Document") return;
+
+          LocalJsonService.getInstance().deleteDocument(delConn, docPath);
+          DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
+            connectionId,
+            docPath,
+            false
+          );
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-          await firestore.doc(docPath).delete();
-          CostService.getInstance().recordOperation(connectionId, "delete", 1);
+          const docRef = firestore.doc(docPath);
+          let subcollections: FirebaseFirestore.CollectionReference[] = [];
+          try {
+            subcollections = await docRef.listCollections();
+          } catch { }
+
+          const confirm =
+            subcollections.length > 0
+              ? await vscode.window.showWarningMessage(
+                  `Document '${docPath}' has ${subcollections.length} subcollection(s) (${subcollections.map((s) => s.id).join(", ")}). How would you like to delete it?`,
+                  { modal: true },
+                  "Deep Delete (Doc + Subcollections)",
+                  "Delete Document Only",
+                  "Cancel"
+                )
+              : await vscode.window.showWarningMessage(
+                  `Are you sure you want to delete entire document '${docPath}'?`,
+                  { modal: true },
+                  "Delete Document",
+                  "Cancel"
+                );
+
+          if (!confirm || confirm === "Cancel") return;
+
+          const isDeep = confirm === "Deep Delete (Doc + Subcollections)";
+          if (isDeep) {
+            await vscode.window.withProgress(
+              {
+                location: vscode.ProgressLocation.Notification,
+                title: `Deep deleting document '${documentId}' and all subcollections...`,
+                cancellable: false,
+              },
+              async () => {
+                await recursiveDeleteWithCount(firestore, docRef, connectionId);
+              }
+            );
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
+              connectionId,
+              docPath,
+              true
+            );
+          } else {
+            await docRef.delete();
+            CostService.getInstance().recordOperation(connectionId, "delete", 1);
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
+              connectionId,
+              docPath,
+              false
+            );
+          }
         }
 
-        DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(connectionId, docPath);
         if (explorerDataProvider) {
-          explorerDataProvider.refresh();
+          if (parentCollectionPath) {
+            const collId = parentCollectionPath.split("/").pop() || parentCollectionPath;
+            const parentItem = new CollectionItem(
+              collId,
+              { id: collId, path: parentCollectionPath } as any,
+              connectionId
+            );
+            explorerDataProvider.refreshNode(parentItem);
+          } else {
+            explorerDataProvider.refresh();
+          }
         }
         panel.dispose();
         vscode.window.showInformationMessage(`Document '${documentId}' deleted!`);
+
+        if (!delConn?.isLocalJson && savedDocData && Object.keys(savedDocData).length > 0) {
+          try {
+            await promptAndCleanupOrphanStorageFiles(connectionId, savedDocData, documentId);
+          } catch { }
+        }
+        if (!delConn?.isLocalJson) {
+          try {
+            await maybePromptDeleteAuthUserForProfile(
+              connectionId,
+              docPath,
+              documentId,
+              explorerDataProvider,
+              savedDocData
+            );
+          } catch { }
+        }
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to delete document: ${err.message}`);
       }
@@ -607,9 +699,18 @@ export async function openDocumentAsTable(
   let fileChangeDebounce: NodeJS.Timeout | undefined;
   const fileChangeSubscription = DocumentFileSystemProvider.getInstance().onDidChangeFile((events) => {
     for (const ev of events) {
-      if (ev.type === vscode.FileChangeType.Changed && ev.uri.scheme === "ketrik-firestore-studio" && ev.uri.authority === connectionId) {
+      if (ev.uri.scheme === "ketrik-firestore-studio" && ev.uri.authority === connectionId) {
         const parsed = DocumentFileSystemProvider.getInstance().parseUri(ev.uri);
-        if (parsed.docPath === docPath) {
+        if (
+          ev.type === vscode.FileChangeType.Deleted &&
+          !parsed.isRules &&
+          parsed.fieldPath === undefined &&
+          (parsed.docPath === docPath || docPath.startsWith(parsed.docPath + "/"))
+        ) {
+          panel.dispose();
+          return;
+        }
+        if (ev.type === vscode.FileChangeType.Changed && parsed.docPath === docPath) {
           if (suppressNextFileChange) {
             suppressNextFileChange = false;
             return;

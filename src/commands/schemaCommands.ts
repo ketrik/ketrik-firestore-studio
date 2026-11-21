@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { CollectionItem, DocumentItem } from "../explorer/items";
+import { CollectionItem, DocumentItem, DocumentFieldItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { getDefaultExportUri } from "../webview/common/tableUtils";
@@ -303,8 +303,14 @@ export async function generateSchemaCommand(item?: CollectionItem | DocumentItem
     collectionName = item.collectionId;
   } else if (item instanceof DocumentItem) {
     connectionId = item.connectionId;
-    collectionPath = item.reference.parent.path;
-    collectionName = item.reference.parent.id;
+    if (item.reference?.parent) {
+      collectionPath = item.reference.parent.path;
+      collectionName = item.reference.parent.id;
+    } else {
+      const segs = (item.reference?.path || "").split("/").filter(Boolean);
+      collectionPath = segs.slice(0, -1).join("/");
+      collectionName = segs[segs.length - 2] || collectionPath;
+    }
     isSingleDoc = true;
   } else {
     vscode.window.showErrorMessage("Please select a Firestore collection or document to generate schemas.");
@@ -444,4 +450,134 @@ export async function generateSchemaCommand(item?: CollectionItem | DocumentItem
       await vscode.window.showTextDocument(doc);
     }
   }
+}
+
+/**
+ * Convert an inferred schema map into an empty or typed JSON skeleton object.
+ */
+export function buildSchemaSkeleton(
+  schema: Map<string, InferredField>,
+  mode: "empty" | "typed"
+): Record<string, any> {
+  const result: Record<string, any> = {};
+
+  for (const [key, field] of schema.entries()) {
+    const types = Array.from(field.types);
+    const primaryType = types.find((t) => t !== "null") || types[0] || "unknown";
+
+    if (field.nestedFields && field.nestedFields.size > 0) {
+      result[key] = buildSchemaSkeleton(field.nestedFields, mode);
+    } else if (primaryType === "array") {
+      if (mode === "empty") {
+        result[key] = [];
+      } else {
+        const elemTypes = field.arrayElementTypes ? Array.from(field.arrayElementTypes) : [];
+        const elemPrimary = elemTypes.find((t) => t !== "null") || elemTypes[0];
+        result[key] = elemPrimary ? [`<${elemPrimary}>`] : [];
+      }
+    } else if (primaryType === "map") {
+      result[key] = {};
+    } else {
+      result[key] = mode === "empty" ? null : `<${primaryType}>`;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Command: Copy document, collection, or map field schema (keys only or keys with types) to clipboard.
+ */
+export async function copySchemaCommand(item?: CollectionItem | DocumentItem | DocumentFieldItem) {
+  if (!item) {
+    vscode.window.showWarningMessage("Please select a collection, document, or map field to copy its schema.");
+    return;
+  }
+
+  const formatChoice = await vscode.window.showQuickPick(
+    [
+      {
+        label: "$(json) Empty JSON Skeleton (Keys Only)",
+        detail: "Copy nested key structure with null/[] values and no data",
+        mode: "empty" as const,
+      },
+      {
+        label: "$(symbol-type-parameter) Typed JSON Skeleton (Keys + Types)",
+        detail: "Copy nested key structure with type placeholders (e.g. \"<string>\", \"<timestamp>\")",
+        mode: "typed" as const,
+      },
+    ],
+    { title: "Copy Schema", placeHolder: "Select schema format to copy to clipboard" }
+  );
+
+  if (!formatChoice) {
+    return;
+  }
+
+  let sampleDocs: Record<string, any>[] = [];
+  let labelName = "schema";
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Extracting schema...",
+      cancellable: false,
+    },
+    async () => {
+      try {
+        const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+
+        if (item instanceof DocumentFieldItem) {
+          labelName = item.fieldName;
+          const val = item.value;
+          if (val && typeof val === "object" && !Array.isArray(val)) {
+            sampleDocs.push(val);
+          } else {
+            sampleDocs.push({ [item.fieldName]: val });
+          }
+        } else if (item instanceof DocumentItem) {
+          labelName = item.documentId;
+          if (conn?.isLocalJson) {
+            const docData = LocalJsonService.getInstance().getDocument(conn, item.reference.path);
+            if (docData) {
+              sampleDocs.push(docData);
+            }
+          } else {
+            const snap = await item.reference.get();
+            if (snap.exists) {
+              sampleDocs.push(snap.data() || {});
+            }
+          }
+        } else if (item instanceof CollectionItem) {
+          labelName = item.collectionId;
+          const sampleSize = 25;
+          if (conn?.isLocalJson) {
+            const collData = LocalJsonService.getInstance().getCollectionData(conn, item.reference.path);
+            for (const docData of Object.values(collData).slice(0, sampleSize)) {
+              if (docData && typeof docData === "object") {
+                sampleDocs.push(docData as Record<string, any>);
+              }
+            }
+          } else {
+            const snap = await item.reference.limit(sampleSize).get();
+            snap.forEach((doc) => sampleDocs.push(doc.data()));
+          }
+        }
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to extract schema: ${err.message}`);
+      }
+    }
+  );
+
+  if (sampleDocs.length === 0) {
+    vscode.window.showWarningMessage(`No data found in '${labelName}' to extract a schema from.`);
+    return;
+  }
+
+  const schema = inferCollectionSchema(sampleDocs);
+  const skeleton = buildSchemaSkeleton(schema, formatChoice.mode);
+  const json = JSON.stringify(skeleton, null, 2);
+
+  await vscode.env.clipboard.writeText(json);
+  vscode.window.showInformationMessage(`Copied ${formatChoice.mode} schema for '${labelName}' to clipboard.`);
 }

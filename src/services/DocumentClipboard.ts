@@ -1,3 +1,5 @@
+import * as vscode from "vscode";
+
 export interface CopiedDocument {
   sourceDocId: string;
   sourcePath: string;
@@ -23,6 +25,7 @@ export class DocumentClipboard {
 
   public set(doc: CopiedDocument): void {
     this.buffer = doc;
+    void vscode.commands.executeCommand("setContext", "ketrik-firestore-studio.hasClipboardDoc", true);
   }
 
   public get(): CopiedDocument | null {
@@ -35,5 +38,6 @@ export class DocumentClipboard {
 
   public clear(): void {
     this.buffer = null;
+    void vscode.commands.executeCommand("setContext", "ketrik-firestore-studio.hasClipboardDoc", false);
   }
 }

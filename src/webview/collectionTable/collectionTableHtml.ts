@@ -1191,16 +1191,16 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
       let simulatedTime = Date.now();
       let lifecycleFilter = 'all';
 
-      let selectedDocIds = new Set();
+      let selectedDocPaths = new Set();
       let savedBookmarksMap = {};
 
       function updateBatchToolbar() {
         const toolbar = document.getElementById('batchToolbar');
         const countLabel = document.getElementById('batchCountLabel');
         if (!toolbar || !countLabel) return;
-        if (selectedDocIds.size > 0) {
+        if (selectedDocPaths.size > 0) {
           toolbar.style.display = 'flex';
-          countLabel.textContent = selectedDocIds.size + ' row(s) selected';
+          countLabel.textContent = selectedDocPaths.size + ' row(s) selected';
         } else {
           toolbar.style.display = 'none';
         }
@@ -1366,8 +1366,9 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
             ? '<span class="lifecycle-pill ' + lc.cls + '" title="Virtual Status: ' + lc.label + '">' + lc.icon + ' ' + lc.label + '</span>'
             : '';
 
-          const isChecked = selectedDocIds.has(docId);
-          const selectCell = '<td class="select-col"><input type="checkbox" class="row-checkbox row-select-checkbox" data-id="' + escapeHtml(docId) + '"' + (isChecked ? ' checked' : '') + ' /></td>';
+          const docPath = doc.__path || docId;
+          const isChecked = selectedDocPaths.has(docPath);
+          const selectCell = '<td class="select-col"><input type="checkbox" class="row-checkbox row-select-checkbox" data-path="' + escapeHtml(docPath) + '" data-id="' + escapeHtml(docId) + '"' + (isChecked ? ' checked' : '') + ' /></td>';
 
           const isHistorical = !!doc.__isHistorical || (typeof isPitrActive !== 'undefined' && isPitrActive);
           const pitrPill = isHistorical
@@ -1857,7 +1858,7 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         }
 
         if (msg.type === 'batchSuccess') {
-          selectedDocIds.clear();
+          selectedDocPaths.clear();
           updateBatchToolbar();
           if (msg.hasMore !== undefined) {
             hasMoreState = !!msg.hasMore;
@@ -2089,6 +2090,9 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
             pendingLiveFlashes.push({ docPath, changeType });
             scheduleLiveBatchRender();
           } else if (changeType === 'removed') {
+            if (selectedDocPaths.delete(docPath)) {
+              updateBatchToolbar();
+            }
             const tr = document.querySelector('tr[data-path="' + CSS.escape(docPath) + '"]');
             if (tr) {
               tr.classList.remove('row-flash-added', 'row-flash-modified', 'row-flash-removed');
@@ -2215,17 +2219,17 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
       };
 
       document.getElementById('batchUpdateBtn').onclick = function() {
-        if (selectedDocIds.size === 0) return;
-        vscode.postMessage({ command: 'promptBatchUpdate', docIds: Array.from(selectedDocIds) });
+        if (selectedDocPaths.size === 0) return;
+        vscode.postMessage({ command: 'promptBatchUpdate', docPaths: Array.from(selectedDocPaths) });
       };
 
       document.getElementById('batchDeleteBtn').onclick = function() {
-        if (selectedDocIds.size === 0) return;
-        vscode.postMessage({ command: 'promptBatchDelete', docIds: Array.from(selectedDocIds) });
+        if (selectedDocPaths.size === 0) return;
+        vscode.postMessage({ command: 'promptBatchDelete', docPaths: Array.from(selectedDocPaths) });
       };
 
       document.getElementById('batchClearBtn').onclick = function() {
-        selectedDocIds.clear();
+        selectedDocPaths.clear();
         const checkboxes = document.querySelectorAll('.row-select-checkbox, #selectAllCheckbox');
         checkboxes.forEach(cb => { cb.checked = false; });
         updateBatchToolbar();
@@ -2239,23 +2243,23 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           const checkboxes = document.querySelectorAll('.row-select-checkbox');
           checkboxes.forEach(cb => {
             cb.checked = checked;
-            const id = cb.getAttribute('data-id');
-            if (id) {
-              if (checked) selectedDocIds.add(id);
-              else selectedDocIds.delete(id);
+            const p = cb.getAttribute('data-path') || cb.getAttribute('data-id');
+            if (p) {
+              if (checked) selectedDocPaths.add(p);
+              else selectedDocPaths.delete(p);
             }
           });
           updateBatchToolbar();
         } else if (target.classList && target.classList.contains('row-select-checkbox')) {
-          const id = target.getAttribute('data-id');
-          if (id) {
-            if (target.checked) selectedDocIds.add(id);
-            else selectedDocIds.delete(id);
+          const p = target.getAttribute('data-path') || target.getAttribute('data-id');
+          if (p) {
+            if (target.checked) selectedDocPaths.add(p);
+            else selectedDocPaths.delete(p);
           }
-          const allCheckboxes = document.querySelectorAll('.row-select-checkbox');
+          const allCheckboxes = Array.from(document.querySelectorAll('.row-select-checkbox'));
           const selectAllEl = document.getElementById('selectAllCheckbox');
           if (selectAllEl) {
-            selectAllEl.checked = allCheckboxes.length > 0 && selectedDocIds.size === allCheckboxes.length;
+            selectAllEl.checked = allCheckboxes.length > 0 && allCheckboxes.every(cb => cb.checked);
           }
           updateBatchToolbar();
         }

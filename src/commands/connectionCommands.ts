@@ -309,6 +309,14 @@ export async function editConnectionCommand(item?: ConnectionTreeItem): Promise<
     );
   }
 
+  if (!conn.isLocalJson) {
+    actions.push({
+      label: "$(person) Set Auth Profile Collection",
+      description: conn.authProfileCollection ? `/${conn.authProfileCollection}` : "Workspace default",
+      action: "authProfileCollection",
+    });
+  }
+
   actions.push(
     {
       label: conn.readOnly ? "$(unlock) Disable Read-Only Shield (Allow Writes)" : "$(lock) Enable Read-Only Shield (Block Writes)",
@@ -398,6 +406,33 @@ export async function editConnectionCommand(item?: ConnectionTreeItem): Promise<
       conn.databaseId = newDb.trim() || "(default)";
       await connectionManager.updateConnection(conn);
       vscode.window.showInformationMessage("Database ID updated!");
+    }
+  } else if (action.action === "authProfileCollection") {
+    const newColl = await vscode.window.showInputBox({
+      prompt: "Firestore collection path for Auth user profiles (leave empty to use workspace default)",
+      value: conn.authProfileCollection || "",
+      placeHolder: "users (leave empty to use workspace default)",
+      validateInput: (val) => {
+        const trimmed = val.trim().replace(/^\/+|\/+$/g, "");
+        if (!trimmed) {
+          return null;
+        }
+        const segments = trimmed.split("/").filter(Boolean);
+        if (segments.length % 2 === 0) {
+          return "Enter a collection path (odd number of path segments, e.g. 'users' or 'org/default/members').";
+        }
+        return null;
+      },
+    });
+    if (newColl !== undefined) {
+      const normalized = newColl.trim().replace(/^\/+|\/+$/g, "");
+      conn.authProfileCollection = normalized || undefined;
+      await connectionManager.updateConnection(conn);
+      vscode.window.showInformationMessage(
+        normalized
+          ? `Auth profile collection for '${conn.name}' set to '/${normalized}'.`
+          : `Auth profile collection for '${conn.name}' reset to workspace default.`
+      );
     }
   } else if (action.action === "toggleReadOnly") {
     await toggleConnectionReadOnlyCommand(item);

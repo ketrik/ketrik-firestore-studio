@@ -14,6 +14,12 @@ import { openSchemaAnalyzer } from "../schema/openSchemaAnalyzer";
 import { PitrService } from "../pitr/PitrService";
 import { restoreDocumentFromHistoryCommand, compareDocumentWithLiveCommand } from "../pitr/pitrCommands";
 import { PITR_PRESETS } from "../pitr/types";
+import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
+import {
+  recursiveDeleteWithCount,
+  isProtectSystemKeysEnabled,
+  isSystemFieldPath,
+} from "../utils/deleteUtils";
 
 export { QueryClause };
 
@@ -24,11 +30,15 @@ export interface CollectionTableTarget {
   reference?: import("firebase-admin/firestore").CollectionReference;
   isCollectionGroup?: boolean;
   readTime?: Date;
+  autoStartLiveWatch?: boolean;
 }
 
 
 // Active collection table panels registry to avoid duplicate webview allocation and memory retention
-const activeCollectionPanels = new Map<string, vscode.WebviewPanel>();
+const activeCollectionPanels = new Map<
+  string,
+  { panel: vscode.WebviewPanel; ensureLiveWatch: () => Promise<void> }
+>();
 
 export async function openCollectionAsTable(
   item: CollectionItem | CollectionTableTarget,
@@ -46,9 +56,12 @@ export async function openCollectionAsTable(
   const getLiveConn = () => ConnectionManager.getInstance().getConnection(connectionId);
 
   const panelKey = `${connectionId}:${collectionPath}:${isGroup}`;
-  const existingPanel = activeCollectionPanels.get(panelKey);
-  if (existingPanel) {
-    existingPanel.reveal(vscode.ViewColumn.One);
+  const existing = activeCollectionPanels.get(panelKey);
+  if (existing) {
+    existing.panel.reveal(vscode.ViewColumn.One);
+    if ((item as any).autoStartLiveWatch === true) {
+      await existing.ensureLiveWatch();
+    }
     return;
   }
 
@@ -64,7 +77,15 @@ export async function openCollectionAsTable(
       retainContextWhenHidden,
     }
   );
-  activeCollectionPanels.set(panelKey, panel);
+  let pendingAutoLiveWatch = (item as any).autoStartLiveWatch === true;
+  activeCollectionPanels.set(panelKey, {
+    panel,
+    ensureLiveWatch: async () => {
+      if (!liveWatchUnsubscribe) {
+        await startLiveWatch();
+      }
+    },
+  });
   const limit = (config.get<number>("pagingLimit") as number) || 10;
   const maxRows = Math.max(1, config.get<number>("maxTableRows") ?? 100);
 
@@ -439,6 +460,10 @@ export async function openCollectionAsTable(
         isReadOnly: !!liveConn?.readOnly,
         environment: liveConn?.environment,
       });
+      if (pendingAutoLiveWatch) {
+        pendingAutoLiveWatch = false;
+        await startLiveWatch();
+      }
       return;
     }
 
@@ -1273,23 +1298,44 @@ export async function openCollectionAsTable(
         );
         return;
       }
-      const docIds = (message.docIds as string[]) || [];
-      if (docIds.length === 0) return;
+
+      const docPathMap = new Map<string, string>();
+      const loadedDocByPath = new Map<string, any>();
+      loadedDocs.forEach((d) => {
+        if (d.__path) {
+          loadedDocByPath.set(d.__path, d);
+          if (d.__id) {
+            docPathMap.set(d.__id, d.__path);
+          }
+        }
+      });
+
+      const rawPaths = Array.isArray(message.docPaths) ? (message.docPaths as string[]) : [];
+      const rawIds = Array.isArray(message.docIds) ? (message.docIds as string[]) : [];
+      const targetPaths = Array.from(
+        new Set(
+          rawPaths.length > 0
+            ? rawPaths
+            : rawIds.map((id) => docPathMap.get(id) || `${collectionPath}/${id}`)
+        )
+      );
+      if (targetPaths.length === 0) return;
 
       const fieldName = await vscode.window.showInputBox({
-        title: `Batch Update Field on ${docIds.length} Selected Document(s)`,
+        title: `Batch Update Field on ${targetPaths.length} Selected Document(s)`,
         prompt: "Enter field name to update or delete",
         placeHolder: "status",
         validateInput: (v) => (v.trim() ? undefined : "Field name is required"),
       });
       if (!fieldName) return;
+      const trimmedField = fieldName.trim();
 
       const operationChoice = await vscode.window.showQuickPick(
         [
           { label: "Set Field Value", detail: "Assign a new value (string, number, boolean, or JSON) to this field across all selected documents", action: "set" },
           { label: "Delete Field (FieldValue.delete)", detail: "Remove this field completely from all selected documents", action: "delete" },
         ],
-        { title: `Batch Action for '${fieldName.trim()}'` }
+        { title: `Batch Action for '${trimmedField}'` }
       );
       if (!operationChoice) return;
 
@@ -1298,7 +1344,7 @@ export async function openCollectionAsTable(
 
       if (!isDeleteField) {
         const valStr = await vscode.window.showInputBox({
-          title: `Set Value for Field '${fieldName.trim()}'`,
+          title: `Set Value for Field '${trimmedField}'`,
           prompt: "Enter value (e.g. true, false, 42, active, {\"tag\": \"vip\"})",
           placeHolder: "active",
         });
@@ -1306,71 +1352,116 @@ export async function openCollectionAsTable(
         parsedValue = parseFilterValue(valStr);
       }
 
+      const safeModeWarning =
+        isDeleteField && isProtectSystemKeysEnabled() && isSystemFieldPath(trimmedField)
+          ? `⚠️ Safe Mode Warning: '${trimmedField}' is a System Envelope or Protocol field.\n\n`
+          : "";
+
       const confirm = await vscode.window.showWarningMessage(
         isDeleteField
-          ? `Delete field '${fieldName.trim()}' across ${docIds.length} documents?`
-          : `Update field '${fieldName.trim()}' to ${JSON.stringify(parsedValue)} across ${docIds.length} documents?`,
+          ? `${safeModeWarning}Delete field '${trimmedField}' across ${targetPaths.length} documents?`
+          : `Update field '${trimmedField}' to ${JSON.stringify(parsedValue)} across ${targetPaths.length} documents?`,
         { modal: true },
         "Proceed with Batch Update"
       );
       if (confirm !== "Proceed with Batch Update") return;
 
       try {
-        const docPathMap = new Map<string, string>();
-        loadedDocs.forEach((d) => {
-          if (d.__id && d.__path) {
-            docPathMap.set(d.__id, d.__path);
-          }
-        });
-
         if (liveConn?.isLocalJson) {
-          for (const id of docIds) {
-            const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
+          for (const targetPath of targetPaths) {
             if (isDeleteField) {
-              LocalJsonService.getInstance().deleteField(liveConn, targetPath, fieldName.trim());
+              LocalJsonService.getInstance().deleteField(liveConn, targetPath, trimmedField);
             } else {
-              LocalJsonService.getInstance().updateField(liveConn, targetPath, fieldName.trim(), parsedValue);
+              LocalJsonService.getInstance().updateField(liveConn, targetPath, trimmedField, parsedValue);
             }
           }
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
           const chunkSize = 400;
 
-          for (let i = 0; i < docIds.length; i += chunkSize) {
-            const chunk = docIds.slice(i, i + chunkSize);
+          for (let i = 0; i < targetPaths.length; i += chunkSize) {
+            const chunk = targetPaths.slice(i, i + chunkSize);
             const batch = firestore.batch();
-            for (const id of chunk) {
-              const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
+            for (const targetPath of chunk) {
               const docRef = firestore.doc(targetPath);
+              const existingDoc = loadedDocByPath.get(targetPath);
+              const hasLiteral =
+                existingDoc && Object.prototype.hasOwnProperty.call(existingDoc, trimmedField);
+              const fieldPathObj =
+                hasLiteral || !trimmedField.includes(".")
+                  ? new FieldPath(trimmedField)
+                  : new FieldPath(...trimmedField.split("."));
+
               if (isDeleteField) {
-                batch.update(docRef, { [fieldName.trim()]: FieldValue.delete() });
+                batch.update(docRef, fieldPathObj, FieldValue.delete());
               } else {
-                batch.update(docRef, { [fieldName.trim()]: parsedValue });
+                batch.update(docRef, fieldPathObj, parsedValue);
               }
             }
             await batch.commit();
           }
-          CostService.getInstance().recordOperation(connectionId, "write", docIds.length);
+          CostService.getInstance().recordOperation(connectionId, "write", targetPaths.length);
         }
 
-        DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
-          docIds.map((id) => ({
-            connectionId,
-            docPath: docPathMap.get(id) || `${collectionPath}/${id}`,
-          }))
+        if (isDeleteField) {
+          for (const targetPath of targetPaths) {
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyFieldDeleted(
+              connectionId,
+              targetPath,
+              trimmedField
+            );
+          }
+        } else {
+          DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
+            targetPaths.map((docPath) => ({ connectionId, docPath }))
+          );
+        }
+
+        vscode.window.showInformationMessage(
+          isDeleteField
+            ? `Successfully deleted field '${trimmedField}' across ${targetPaths.length} document(s)!`
+            : `Successfully updated field '${trimmedField}' across ${targetPaths.length} document(s)!`
         );
 
-        vscode.window.showInformationMessage(`Successfully updated field '${fieldName.trim()}' across ${docIds.length} document(s)!`);
-
-        // Update in-memory loaded docs using O(1) Set lookup
-        const docIdSet = new Set(docIds);
+        // Update in-memory loaded docs using O(1) Set lookup on full document path
+        const targetPathSet = new Set(targetPaths);
         loadedDocs = loadedDocs.map((doc: any) => {
-          if (docIdSet.has(doc.__id)) {
+          if (targetPathSet.has(doc.__path)) {
             const updated = { ...doc };
-            if (isDeleteField) {
-              delete updated[fieldName.trim()];
+            if (Object.prototype.hasOwnProperty.call(updated, trimmedField) || !trimmedField.includes(".")) {
+              if (isDeleteField) {
+                delete updated[trimmedField];
+              } else {
+                updated[trimmedField] = parsedValue;
+              }
             } else {
-              updated[fieldName.trim()] = parsedValue;
+              const parts = trimmedField.split(".");
+              if (isDeleteField) {
+                let cur: any = updated;
+                for (let i = 0; i < parts.length - 1; i++) {
+                  if (!cur || typeof cur !== "object") {
+                    cur = undefined;
+                    break;
+                  }
+                  cur = cur[parts[i]];
+                }
+                if (cur && typeof cur === "object") {
+                  delete cur[parts[parts.length - 1]];
+                }
+              } else {
+                let cur: any = updated;
+                for (let i = 0; i < parts.length - 1; i++) {
+                  if (!cur[parts[i]] || typeof cur[parts[i]] !== "object") {
+                    cur[parts[i]] = {};
+                  } else {
+                    cur[parts[i]] = Array.isArray(cur[parts[i]])
+                      ? [...cur[parts[i]]]
+                      : { ...cur[parts[i]] };
+                  }
+                  cur = cur[parts[i]];
+                }
+                cur[parts[parts.length - 1]] = parsedValue;
+              }
             }
             return updated;
           }
@@ -1380,10 +1471,10 @@ export async function openCollectionAsTable(
         panel.webview.postMessage({
           type: "batchSuccess",
           operation: "update",
-          field: fieldName.trim(),
+          field: trimmedField,
           value: parsedValue,
           isDeleteField,
-          docIds,
+          docPaths: targetPaths,
           docs: loadedDocs,
         });
       } catch (err: any) {
@@ -1399,48 +1490,114 @@ export async function openCollectionAsTable(
         );
         return;
       }
-      const docIds = (message.docIds as string[]) || [];
-      if (docIds.length === 0) return;
 
-      const confirm = await vscode.window.showWarningMessage(
-        `Are you sure you want to permanently delete ${docIds.length} document(s)? This action cannot be undone.`,
-        { modal: true },
-        "Delete Permanently"
+      const docPathMap = new Map<string, string>();
+      loadedDocs.forEach((d) => {
+        if (d.__id && d.__path) {
+          docPathMap.set(d.__id, d.__path);
+        }
+      });
+
+      const rawPaths = Array.isArray(message.docPaths) ? (message.docPaths as string[]) : [];
+      const rawIds = Array.isArray(message.docIds) ? (message.docIds as string[]) : [];
+      const targetPaths = Array.from(
+        new Set(
+          rawPaths.length > 0
+            ? rawPaths
+            : rawIds.map((id) => docPathMap.get(id) || `${collectionPath}/${id}`)
+        )
       );
-      if (confirm !== "Delete Permanently") return;
+      if (targetPaths.length === 0) return;
+
+      const targetPathSet = new Set(targetPaths);
+      const deletedDocsData = loadedDocs.filter((d) => targetPathSet.has(d.__path));
+
+      let isDeepDelete = false;
+      if (liveConn?.isLocalJson) {
+        const confirm = await vscode.window.showWarningMessage(
+          `Are you sure you want to permanently delete ${targetPaths.length} document(s)? This action cannot be undone.`,
+          { modal: true },
+          "Delete Permanently",
+          "Cancel"
+        );
+        if (confirm !== "Delete Permanently") return;
+      } else {
+        const confirm = await vscode.window.showWarningMessage(
+          `Are you sure you want to permanently delete ${targetPaths.length} document(s)? This action cannot be undone.`,
+          { modal: true },
+          "Delete Documents Only",
+          "Deep Delete (Docs + Subcollections)",
+          "Cancel"
+        );
+        if (!confirm || confirm === "Cancel") return;
+        isDeepDelete = confirm === "Deep Delete (Docs + Subcollections)";
+      }
 
       try {
-        const docPathMap = new Map<string, string>();
-        loadedDocs.forEach((d) => {
-          if (d.__id && d.__path) {
-            docPathMap.set(d.__id, d.__path);
-          }
-        });
-
         if (liveConn?.isLocalJson) {
-          for (const id of docIds) {
-            const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
-            LocalJsonService.getInstance().deleteDocument(liveConn, targetPath);
-            DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(connectionId, targetPath);
+          const grouped = new Map<string, string[]>();
+          for (const targetPath of targetPaths) {
+            const lastSlash = targetPath.lastIndexOf("/");
+            const coll = lastSlash > 0 ? targetPath.substring(0, lastSlash) : collectionPath;
+            const id = lastSlash > 0 ? targetPath.substring(lastSlash + 1) : targetPath;
+            const list = grouped.get(coll) || [];
+            list.push(id);
+            grouped.set(coll, list);
+          }
+          for (const [coll, ids] of grouped.entries()) {
+            LocalJsonService.getInstance().deleteDocuments(liveConn, coll, ids);
+          }
+          for (const targetPath of targetPaths) {
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
+              connectionId,
+              targetPath,
+              false
+            );
           }
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-          const chunkSize = 400;
-
-          for (let i = 0; i < docIds.length; i += chunkSize) {
-            const chunk = docIds.slice(i, i + chunkSize);
-            const batch = firestore.batch();
-            for (const id of chunk) {
-              const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
-              batch.delete(firestore.doc(targetPath));
+          if (isDeepDelete) {
+            await vscode.window.withProgress(
+              {
+                location: vscode.ProgressLocation.Notification,
+                title: `Deep deleting ${targetPaths.length} document(s) and nested subcollections...`,
+                cancellable: false,
+              },
+              async (progress) => {
+                for (let i = 0; i < targetPaths.length; i++) {
+                  const targetPath = targetPaths[i];
+                  progress.report({
+                    message: `[${i + 1}/${targetPaths.length}] ${targetPath}`,
+                    increment: (1 / targetPaths.length) * 100,
+                  });
+                  await recursiveDeleteWithCount(firestore, firestore.doc(targetPath), connectionId);
+                  DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
+                    connectionId,
+                    targetPath,
+                    true
+                  );
+                }
+              }
+            );
+          } else {
+            const chunkSize = 400;
+            for (let i = 0; i < targetPaths.length; i += chunkSize) {
+              const chunk = targetPaths.slice(i, i + chunkSize);
+              const batch = firestore.batch();
+              for (const targetPath of chunk) {
+                batch.delete(firestore.doc(targetPath));
+              }
+              await batch.commit();
             }
-            await batch.commit();
-          }
-          CostService.getInstance().recordOperation(connectionId, "delete", docIds.length);
+            CostService.getInstance().recordOperation(connectionId, "delete", targetPaths.length);
 
-          for (const id of docIds) {
-            const targetPath = docPathMap.get(id) || `${collectionPath}/${id}`;
-            DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(connectionId, targetPath);
+            for (const targetPath of targetPaths) {
+              DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
+                connectionId,
+                targetPath,
+                false
+              );
+            }
           }
         }
 
@@ -1448,20 +1605,19 @@ export async function openCollectionAsTable(
           explorerDataProvider.refresh();
         }
 
-        vscode.window.showInformationMessage(`Successfully deleted ${docIds.length} document(s)!`);
-        const delDocIdSet = new Set(docIds);
-        loadedDocs = loadedDocs.filter((doc: any) => !delDocIdSet.has(doc.__id));
+        vscode.window.showInformationMessage(`Successfully deleted ${targetPaths.length} document(s)!`);
+        loadedDocs = loadedDocs.filter((doc: any) => !targetPathSet.has(doc.__path));
 
         // When documents are deleted, if more documents exist in Firestore,
         // automatically replenish the table by loading as many documents as were deleted!
-        if (hasMoreState && docIds.length > 0) {
-          const replenishCount = docIds.length;
+        if (hasMoreState && targetPaths.length > 0) {
+          const replenishCount = targetPaths.length;
           const { newDocs, hasMore } = await loadMoreDocs(replenishCount);
           hasMoreState = hasMore;
           panel.webview.postMessage({
             type: "batchSuccess",
             operation: "delete",
-            docIds,
+            docPaths: targetPaths,
             docs: loadedDocs,
             hasMore: hasMoreState,
           });
@@ -1480,10 +1636,20 @@ export async function openCollectionAsTable(
           panel.webview.postMessage({
             type: "batchSuccess",
             operation: "delete",
-            docIds,
+            docPaths: targetPaths,
             docs: loadedDocs,
             hasMore: hasMoreState,
           });
+        }
+
+        if (!liveConn?.isLocalJson && deletedDocsData.length > 0) {
+          try {
+            await promptAndCleanupOrphanStorageFiles(
+              connectionId,
+              deletedDocsData,
+              `${targetPaths.length} deleted document(s)`
+            );
+          } catch { }
         }
       } catch (err: any) {
         vscode.window.showErrorMessage(`Batch delete failed: ${err.message}`);

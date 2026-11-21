@@ -69,11 +69,40 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
 
   /**
    * Notify VS Code that a document was deleted, emitting a FileChangeType.Deleted event
-   * and optionally closing any open tabs targeting this document.
+   * and closing any open document, field, or diff tabs targeting this document.
    */
-  public invalidateAndNotifyDocumentDeleted(connectionId: string, docPath: string): void {
+  public invalidateAndNotifyDocumentDeleted(
+    connectionId: string,
+    docPath: string,
+    recursive: boolean = false
+  ): void {
     const key = `${connectionId}:${docPath}`;
     this._evictSnapshot(key);
+    if (recursive) {
+      const subPrefix = `${connectionId}:${docPath}/`;
+      for (const k of Array.from(this._snapshotCache.keys())) {
+        if (k.startsWith(subPrefix)) {
+          this._evictSnapshot(k);
+        }
+      }
+      for (const k of Array.from(this._snapshotInFlight.keys())) {
+        if (k.startsWith(subPrefix)) {
+          this._evictSnapshot(k);
+        }
+      }
+    }
+
+    const matches = (uri: vscode.Uri): boolean => {
+      const parsed = this.parseUri(uri);
+      return (
+        !parsed.isRules &&
+        parsed.connectionId === connectionId &&
+        (parsed.docPath === docPath || (recursive && parsed.docPath.startsWith(docPath + "/")))
+      );
+    };
+
+    this._evictBaselinesMatching(matches);
+    this._closeTabsMatching(matches);
 
     const docUri = vscode.Uri.from({
       scheme,
@@ -81,12 +110,12 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       path: `/${docPath}.json`,
     });
     this._emitter.fire([{ type: vscode.FileChangeType.Deleted, uri: docUri }]);
-    this.closeTabsMatchingUri(docUri);
+    void SnapshotSyncService.getInstance().unbindForDeletedTarget(connectionId, docPath, { recursive });
   }
 
   /**
    * Invalidate all document snapshot caches under a collection and close any open
-   * editor tabs targeting documents in that collection.
+   * editor or diff tabs targeting documents in that collection.
    */
   public invalidateAndNotifyCollectionDeleted(connectionId: string, collPath: string): void {
     const prefix = `${connectionId}:${collPath}/`;
@@ -102,29 +131,17 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       }
     }
 
-    try {
-      const tabGroups = vscode.window.tabGroups;
-      if (!tabGroups || !tabGroups.all) return;
+    const matches = (uri: vscode.Uri): boolean => {
+      const parsed = this.parseUri(uri);
+      return (
+        !parsed.isRules &&
+        parsed.connectionId === connectionId &&
+        (parsed.docPath === collPath || parsed.docPath.startsWith(collPath + "/"))
+      );
+    };
 
-      const tabsToClose: vscode.Tab[] = [];
-      const uriPrefix = `${scheme}://${connectionId}/${collPath}/`;
-      const exactUri = `${scheme}://${connectionId}/${collPath}.json`;
-
-      for (const group of tabGroups.all) {
-        for (const tab of group.tabs) {
-          if (tab.input instanceof vscode.TabInputText) {
-            const tabUriStr = tab.input.uri.toString();
-            if (tabUriStr.startsWith(uriPrefix) || tabUriStr === exactUri) {
-              tabsToClose.push(tab);
-            }
-          }
-        }
-      }
-
-      if (tabsToClose.length > 0) {
-        tabGroups.close(tabsToClose).then(undefined, () => { });
-      }
-    } catch { }
+    this._evictBaselinesMatching(matches);
+    this._closeTabsMatching(matches);
 
     const collUri = vscode.Uri.from({
       scheme,
@@ -132,19 +149,49 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       path: `/${collPath}.json`,
     });
     this._emitter.fire([{ type: vscode.FileChangeType.Deleted, uri: collUri }]);
+    void SnapshotSyncService.getInstance().unbindForDeletedTarget(connectionId, collPath, {
+      isCollection: true,
+    });
   }
 
   /**
    * Invalidate a document snapshot when a field is deleted, emit Deleted event
-   * for the specific field's virtual file URI, close any open tabs for that field,
+   * for the specific field's virtual file URI, close any open tabs for that field (or its nested children),
    * and emit Changed for the parent document JSON so full document tabs update immediately.
    */
-  public invalidateAndNotifyFieldDeleted(connectionId: string, docPath: string, fieldNames: string | string[]): void {
+  public invalidateAndNotifyFieldDeleted(
+    connectionId: string,
+    docPath: string,
+    fieldNames: string | string[]
+  ): void {
     const key = `${connectionId}:${docPath}`;
     this._evictSnapshot(key);
 
     const names = Array.isArray(fieldNames) ? fieldNames : [fieldNames];
     const events: vscode.FileChangeEvent[] = [];
+
+    const matchesField = (uri: vscode.Uri): boolean => {
+      const parsed = this.parseUri(uri);
+      return (
+        !parsed.isRules &&
+        parsed.connectionId === connectionId &&
+        parsed.docPath === docPath &&
+        parsed.fieldPath !== undefined &&
+        names.some((n) => parsed.fieldPath === n || parsed.fieldPath!.startsWith(n + "."))
+      );
+    };
+
+    this._evictBaselinesMatching((uri) => {
+      const parsed = this.parseUri(uri);
+      return (
+        !parsed.isRules &&
+        parsed.connectionId === connectionId &&
+        parsed.docPath === docPath &&
+        (parsed.fieldPath === undefined ||
+          names.some((n) => parsed.fieldPath === n || parsed.fieldPath!.startsWith(n + ".")))
+      );
+    });
+    this._closeTabsMatching(matchesField);
 
     // Notify that the parent document changed
     const parentDocUri = vscode.Uri.from({
@@ -154,7 +201,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     });
     events.push({ type: vscode.FileChangeType.Changed, uri: parentDocUri });
 
-    // Notify that each field virtual file was deleted and close its open tabs
+    // Notify that each field virtual file was deleted
     for (const name of names) {
       const fieldUri = vscode.Uri.from({
         scheme,
@@ -162,27 +209,36 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
         path: `/${docPath}/${encodeURIComponent(name)}.json`,
       });
       events.push({ type: vscode.FileChangeType.Deleted, uri: fieldUri });
-      this.closeTabsMatchingUri(fieldUri);
     }
 
     this._emitter.fire(events);
+    void SnapshotSyncService.getInstance().unbindForDeletedTarget(connectionId, docPath, {
+      fieldPaths: names,
+    });
   }
 
   /**
-   * Close any editor tabs matching a specific virtual URI.
+   * Close any editor or diff tabs whose virtual URI matches the predicate.
    */
-  private closeTabsMatchingUri(targetUri: vscode.Uri): void {
+  private _closeTabsMatching(predicate: (uri: vscode.Uri) => boolean): void {
     try {
       const tabGroups = vscode.window.tabGroups;
       if (!tabGroups || !tabGroups.all) return;
 
       const tabsToClose: vscode.Tab[] = [];
-      const targetStr = targetUri.toString();
 
       for (const group of tabGroups.all) {
         for (const tab of group.tabs) {
           if (tab.input instanceof vscode.TabInputText) {
-            if (tab.input.uri.toString() === targetStr) {
+            if (tab.input.uri.scheme === scheme && predicate(tab.input.uri)) {
+              tabsToClose.push(tab);
+            }
+          } else if (tab.input instanceof vscode.TabInputTextDiff) {
+            const origMatches =
+              tab.input.original.scheme === scheme && predicate(tab.input.original);
+            const modMatches =
+              tab.input.modified.scheme === scheme && predicate(tab.input.modified);
+            if (origMatches || modMatches) {
               tabsToClose.push(tab);
             }
           }
@@ -193,6 +249,20 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
         tabGroups.close(tabsToClose).then(undefined, () => { });
       }
     } catch { }
+  }
+
+  /**
+   * Evict baseline version hashes for virtual URIs matching the predicate.
+   */
+  private _evictBaselinesMatching(predicate: (uri: vscode.Uri) => boolean): void {
+    for (const key of Array.from(this._baselines.keys())) {
+      try {
+        const uri = vscode.Uri.parse(key);
+        if (uri.scheme === scheme && predicate(uri)) {
+          this._baselines.delete(key);
+        }
+      } catch { }
+    }
   }
 
   /**

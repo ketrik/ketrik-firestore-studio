@@ -477,18 +477,74 @@ export class LocalJsonService {
 
     if (this.isDirectoryMode(config)) {
       const filePath = this._resolveSafePath(config.localJsonPath, `${collectionId}.json`);
-      if (fs.existsSync(filePath)) {
+      if (fs.existsSync(filePath) && !fs.statSync(filePath).isDirectory()) {
         fs.unlinkSync(filePath);
         this._fileCache.delete(filePath);
+      }
+
+      const dirPath = this._resolveSafePath(config.localJsonPath, collectionId);
+      if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+        fs.rmSync(dirPath, { recursive: true, force: true });
+        for (const cachedKey of Array.from(this._fileCache.keys())) {
+          if (cachedKey === dirPath || cachedKey.startsWith(dirPath + path.sep)) {
+            this._fileCache.delete(cachedKey);
+          }
+        }
+      }
+
+      const segments = collectionId.split("/").filter(Boolean);
+      if (segments.length > 1) {
+        const rootFile = this._resolveSafePath(config.localJsonPath, `${segments[0]}.json`);
+        if (fs.existsSync(rootFile) && !fs.statSync(rootFile).isDirectory()) {
+          const rootData = this._readJsonFile(rootFile);
+          if (rootData && typeof rootData === "object") {
+            let cur: any = rootData;
+            for (let i = 1; i < segments.length - 1; i++) {
+              if (cur && typeof cur === "object" && segments[i] in cur) {
+                cur = cur[segments[i]];
+              } else {
+                cur = undefined;
+                break;
+              }
+            }
+            const lastSeg = segments[segments.length - 1];
+            if (cur && typeof cur === "object" && Object.prototype.hasOwnProperty.call(cur, lastSeg)) {
+              delete cur[lastSeg];
+              this._writeJsonFile(rootFile, rootData);
+            }
+          }
+        }
       }
       return;
     }
 
     // Single JSON file
     const parsed = this._readJsonFile(config.localJsonPath);
-    if (parsed && typeof parsed === "object" && parsed[collectionId]) {
-      delete parsed[collectionId];
-      this._writeJsonFile(config.localJsonPath, parsed);
+    if (parsed && typeof parsed === "object") {
+      let modified = false;
+      if (Object.prototype.hasOwnProperty.call(parsed, collectionId)) {
+        delete parsed[collectionId];
+        modified = true;
+      } else if (collectionId.includes("/")) {
+        const segments = collectionId.split("/").filter(Boolean);
+        let cur: any = parsed;
+        for (let i = 0; i < segments.length - 1; i++) {
+          if (cur && typeof cur === "object" && segments[i] in cur) {
+            cur = cur[segments[i]];
+          } else {
+            cur = undefined;
+            break;
+          }
+        }
+        const lastSeg = segments[segments.length - 1];
+        if (cur && typeof cur === "object" && Object.prototype.hasOwnProperty.call(cur, lastSeg)) {
+          delete cur[lastSeg];
+          modified = true;
+        }
+      }
+      if (modified) {
+        this._writeJsonFile(config.localJsonPath, parsed);
+      }
     }
   }
 
@@ -507,23 +563,43 @@ export class LocalJsonService {
 
     if (this.isDirectoryMode(config)) {
       const exactDocFile = this._resolveSafePath(config.localJsonPath!, `${docPath}.json`);
-      if (fs.existsSync(exactDocFile)) {
+      if (fs.existsSync(exactDocFile) && !fs.statSync(exactDocFile).isDirectory()) {
         fs.unlinkSync(exactDocFile);
         this._fileCache.delete(exactDocFile);
         return;
       }
 
-      const standaloneDocFile = this._resolveSafePath(config.localJsonPath!, `${docId}.json`);
-      if (fs.existsSync(standaloneDocFile)) {
-        fs.unlinkSync(standaloneDocFile);
-        this._fileCache.delete(standaloneDocFile);
+      const collFilePath = this._resolveSafePath(config.localJsonPath!, `${collPath}.json`);
+      if (fs.existsSync(collFilePath) && !fs.statSync(collFilePath).isDirectory()) {
+        const collMap = this.getCollectionData(config, collPath);
+        if (Object.prototype.hasOwnProperty.call(collMap, docId)) {
+          delete collMap[docId];
+          this._writeJsonFile(collFilePath, collMap);
+        }
         return;
       }
 
-      const collFilePath = this._resolveSafePath(config.localJsonPath!, `${collPath}.json`);
-      const collMap = this.getCollectionData(config, collPath);
-      delete collMap[docId];
-      this._writeJsonFile(collFilePath, collMap);
+      if (segments.length > 2) {
+        const rootFile = this._resolveSafePath(config.localJsonPath!, `${segments[0]}.json`);
+        if (fs.existsSync(rootFile) && !fs.statSync(rootFile).isDirectory()) {
+          const rootData = this._readJsonFile(rootFile);
+          if (rootData && typeof rootData === "object") {
+            let cur: any = rootData;
+            for (let i = 1; i < segments.length - 1; i++) {
+              if (cur && typeof cur === "object" && segments[i] in cur) {
+                cur = cur[segments[i]];
+              } else {
+                cur = undefined;
+                break;
+              }
+            }
+            if (cur && typeof cur === "object" && Object.prototype.hasOwnProperty.call(cur, docId)) {
+              delete cur[docId];
+              this._writeJsonFile(rootFile, rootData);
+            }
+          }
+        }
+      }
       return;
     }
 
@@ -531,7 +607,7 @@ export class LocalJsonService {
     if (!config.localJsonPath || !fs.existsSync(config.localJsonPath)) return;
     const parsed = this._readJsonFile(config.localJsonPath);
     if (parsed && typeof parsed === "object") {
-      if (parsed[docPath]) {
+      if (Object.prototype.hasOwnProperty.call(parsed, docPath)) {
         delete parsed[docPath];
       }
       let cur = parsed;
@@ -560,22 +636,56 @@ export class LocalJsonService {
 
     if (this.isDirectoryMode(config)) {
       const filePath = this._resolveSafePath(config.localJsonPath!, `${collectionId}.json`);
-      const collMap = this.getCollectionData(config, collectionId);
       for (const id of docIds) {
-        delete collMap[id];
         const exactDocFile = this._resolveSafePath(config.localJsonPath!, `${collectionId}/${id}.json`);
-        if (fs.existsSync(exactDocFile)) {
+        if (fs.existsSync(exactDocFile) && !fs.statSync(exactDocFile).isDirectory()) {
           fs.unlinkSync(exactDocFile);
           this._fileCache.delete(exactDocFile);
         }
-        const standaloneDocFile = this._resolveSafePath(config.localJsonPath!, `${id}.json`);
-        if (fs.existsSync(standaloneDocFile)) {
-          fs.unlinkSync(standaloneDocFile);
-          this._fileCache.delete(standaloneDocFile);
-        }
       }
-      if (fs.existsSync(filePath) || Object.keys(collMap).length > 0) {
-        this._writeJsonFile(filePath, collMap);
+      if (fs.existsSync(filePath) && !fs.statSync(filePath).isDirectory()) {
+        const collMap = this.getCollectionData(config, collectionId);
+        let modified = false;
+        for (const id of docIds) {
+          if (Object.prototype.hasOwnProperty.call(collMap, id)) {
+            delete collMap[id];
+            modified = true;
+          }
+        }
+        if (modified) {
+          this._writeJsonFile(filePath, collMap);
+        }
+      } else {
+        const segments = collectionId.split("/").filter(Boolean);
+        if (segments.length > 1) {
+          const rootFile = this._resolveSafePath(config.localJsonPath!, `${segments[0]}.json`);
+          if (fs.existsSync(rootFile) && !fs.statSync(rootFile).isDirectory()) {
+            const rootData = this._readJsonFile(rootFile);
+            if (rootData && typeof rootData === "object") {
+              let cur: any = rootData;
+              for (let i = 1; i < segments.length; i++) {
+                if (cur && typeof cur === "object" && segments[i] in cur) {
+                  cur = cur[segments[i]];
+                } else {
+                  cur = undefined;
+                  break;
+                }
+              }
+              if (cur && typeof cur === "object") {
+                let modified = false;
+                for (const id of docIds) {
+                  if (Object.prototype.hasOwnProperty.call(cur, id)) {
+                    delete cur[id];
+                    modified = true;
+                  }
+                }
+                if (modified) {
+                  this._writeJsonFile(rootFile, rootData);
+                }
+              }
+            }
+          }
+        }
       }
       return;
     }
@@ -583,69 +693,144 @@ export class LocalJsonService {
     // Single JSON file
     if (!config.localJsonPath || !fs.existsSync(config.localJsonPath)) return;
     const parsed = this._readJsonFile(config.localJsonPath);
-    if (parsed && parsed[collectionId]) {
-      for (const id of docIds) {
-        delete parsed[collectionId][id];
+    if (parsed && typeof parsed === "object") {
+      let targetColl: Record<string, any> | undefined;
+      if (parsed[collectionId] && typeof parsed[collectionId] === "object") {
+        targetColl = parsed[collectionId];
+      } else if (collectionId.includes("/")) {
+        let cur: any = parsed;
+        for (const seg of collectionId.split("/").filter(Boolean)) {
+          if (cur && typeof cur === "object" && seg in cur) {
+            cur = cur[seg];
+          } else {
+            cur = undefined;
+            break;
+          }
+        }
+        if (cur && typeof cur === "object") {
+          targetColl = cur;
+        }
       }
-      this._writeJsonFile(config.localJsonPath, parsed);
+      if (targetColl) {
+        for (const id of docIds) {
+          delete targetColl[id];
+        }
+        this._writeJsonFile(config.localJsonPath, parsed);
+      }
     }
   }
 
   /**
    * Update or delete a specific field in a document.
-   * Accurately distinguishes between Object maps and Arrays when handling nested dot paths (e.g. "tags.0" or "items.1.name").
+   * Accurately distinguishes between Object maps, Arrays, and literal dot-containing keys.
    */
   public updateField(
     config: FirestoreConnectionConfig,
     docPath: string,
-    fieldPath: string,
+    fieldPath: string | string[],
     value: any,
     isDelete = false
   ): void {
-    const current = this.getDocument(config, docPath) || {};
-    if (fieldPath.includes(".")) {
-      const parts = fieldPath.split(".");
-      let target = current;
+    const existing = this.getDocument(config, docPath);
+    if (isDelete && !existing) {
+      return;
+    }
+    const current = existing || {};
+
+    let parts: string[];
+    if (Array.isArray(fieldPath)) {
+      parts = fieldPath;
+    } else if (Object.prototype.hasOwnProperty.call(current, fieldPath)) {
+      parts = [fieldPath];
+    } else if (fieldPath.includes(".")) {
+      parts = fieldPath.split(".");
+    } else {
+      parts = [fieldPath];
+    }
+
+    if (parts.length === 0) {
+      return;
+    }
+
+    if (parts.length === 1) {
+      const key = parts[0];
+      if (isDelete) {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+          return;
+        }
+        delete current[key];
+      } else {
+        current[key] = value;
+      }
+    } else {
+      let target: any = current;
       for (let i = 0; i < parts.length - 1; i++) {
         const key = parts[i];
-        const nextKey = parts[i + 1];
-        const nextIsNumeric = /^\d+$/.test(nextKey);
-
-        if (!target[key] || typeof target[key] !== "object") {
-          target[key] = nextIsNumeric ? [] : {};
+        if (isDelete) {
+          if (Array.isArray(target) && /^\d+$/.test(key)) {
+            const idx = parseInt(key, 10);
+            if (idx < 0 || idx >= target.length || !target[idx] || typeof target[idx] !== "object") {
+              return;
+            }
+            target = target[idx];
+          } else if (
+            target &&
+            typeof target === "object" &&
+            Object.prototype.hasOwnProperty.call(target, key) &&
+            target[key] !== null &&
+            typeof target[key] === "object"
+          ) {
+            target = target[key];
+          } else {
+            return;
+          }
+        } else {
+          const nextKey = parts[i + 1];
+          const nextIsNumeric = /^\d+$/.test(nextKey);
+          if (!target[key] || typeof target[key] !== "object") {
+            target[key] = nextIsNumeric ? [] : {};
+          }
+          target = target[key];
         }
-        target = target[key];
       }
+
       const lastKey = parts[parts.length - 1];
       if (Array.isArray(target) && /^\d+$/.test(lastKey)) {
         const idx = parseInt(lastKey, 10);
         if (isDelete) {
+          if (idx < 0 || idx >= target.length) {
+            return;
+          }
           target.splice(idx, 1);
         } else {
           target[idx] = value;
         }
-      } else {
+      } else if (target && typeof target === "object") {
         const objTarget = target as Record<string, any>;
         if (isDelete) {
+          if (!Object.prototype.hasOwnProperty.call(objTarget, lastKey)) {
+            return;
+          }
           delete objTarget[lastKey];
         } else {
           objTarget[lastKey] = value;
         }
-      }
-    } else {
-      if (isDelete) {
-        delete current[fieldPath];
-      } else {
-        current[fieldPath] = value;
+      } else if (isDelete) {
+        return;
       }
     }
+
     this.setDocument(config, docPath, current);
   }
 
   /**
    * Delete a field from a document in Local JSON store.
    */
-  public deleteField(config: FirestoreConnectionConfig, docPath: string, fieldPath: string): void {
+  public deleteField(
+    config: FirestoreConnectionConfig,
+    docPath: string,
+    fieldPath: string | string[]
+  ): void {
     this.updateField(config, docPath, fieldPath, null, true);
   }
 }

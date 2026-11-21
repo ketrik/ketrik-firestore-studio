@@ -26,9 +26,9 @@ export function registerStorageCommands(
       "ketrik-firestore-studio.refreshStorage",
       async (item?: StorageBucketsBranchItem | StorageBucketTreeItem | StorageFolderTreeItem) => {
         if (item) {
-          explorerDataProvider.refreshNode(item);
+          await explorerDataProvider.refreshNodeWithFeedback(item);
         } else {
-          explorerDataProvider.refresh();
+          await explorerDataProvider.refreshWithFeedback();
         }
       }
     )
@@ -323,21 +323,27 @@ export async function promptAndCleanupOrphanStorageFiles(
 
   const choice = await vscode.window.showWarningMessage(
     `Document / User '${itemLabel}' references ${validFiles.length} Cloud Storage file(s). Would you like to also delete the referenced Storage files?`,
+    { modal: true },
     "Delete Referenced Files",
     "Keep Files"
   );
 
   if (choice === "Delete Referenced Files") {
     let deletedCount = 0;
+    const failed: string[] = [];
     for (const f of validFiles) {
       try {
         await storageService.deleteFile(connectionId, f.bucketName!, f.filePath!);
         deletedCount++;
-      } catch (err) {
-        // Silently continue or warn
+      } catch (err: any) {
+        failed.push(`${f.filePath}: ${err?.message || err}`);
       }
     }
-    if (deletedCount > 0) {
+    if (failed.length > 0) {
+      vscode.window.showWarningMessage(
+        `Cleaned up ${deletedCount} of ${validFiles.length} Cloud Storage file(s). Failed (${failed.length}): ${failed[0]}`
+      );
+    } else if (deletedCount > 0) {
       vscode.window.showInformationMessage(`Cleaned up ${deletedCount} referenced Cloud Storage file(s).`);
     }
   }

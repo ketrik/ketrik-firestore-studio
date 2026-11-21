@@ -8,17 +8,57 @@ export default async function orderBy(item: Item | undefined, explorerDataProvid
     return;
   }
 
-  const fieldString = await vscode.window.showInputBox({
-    prompt: "Field name to order by",
-    title: "Order by",
-    placeHolder: "Field path",
-  });
+  const connectionId =
+    (item as CollectionItem).connectionId || (item as DocumentItem).connectionId;
 
-  const field: string | undefined =
-    fieldString === undefined || fieldString === "" ? undefined : fieldString;
+  const fieldChoice = await vscode.window.showQuickPick(
+    [
+      {
+        label: "$(key) Document ID (Default)",
+        description: "Sort by Firestore Document ID",
+        mode: "id" as const,
+      },
+      {
+        label: "$(edit) Custom Field Path...",
+        description: "Enter a field name or dot-notation path (e.g. createdAt, meta.order)",
+        mode: "custom" as const,
+      },
+      {
+        label: "$(clear-all) Reset to Default (ID ↑)",
+        description: "Restore ascending Document ID sort",
+        mode: "reset" as const,
+      },
+    ],
+    {
+      title: "Order Collection By",
+      placeHolder: "Select field to sort by",
+    }
+  );
 
-  if (field === undefined) {
+  if (!fieldChoice) {
     return;
+  }
+
+  if (fieldChoice.mode === "reset") {
+    await explorerDataProvider.orderBy(item.reference.path, "id", "asc", connectionId);
+    return;
+  }
+
+  let field: string | undefined;
+  if (fieldChoice.mode === "id") {
+    field = "id";
+  } else {
+    const fieldString = await vscode.window.showInputBox({
+      prompt: "Field name or dot-notation path to order by",
+      title: "Order by",
+      placeHolder: "e.g. createdAt or profile.name",
+      validateInput: (v) => (v.trim() ? undefined : "Field path cannot be empty"),
+    });
+
+    if (!fieldString || !fieldString.trim()) {
+      return;
+    }
+    field = fieldString.trim();
   }
 
   const pick = (await vscode.window.showQuickPick(
@@ -37,8 +77,5 @@ export default async function orderBy(item: Item | undefined, explorerDataProvid
   }
 
   const direction: OrderByDirection = pick.label === "Descending" ? "desc" : "asc";
-  const connectionId =
-    (item as CollectionItem).connectionId || (item as DocumentItem).connectionId;
-
-  explorerDataProvider.orderBy(item.reference.path, field, direction, connectionId);
+  await explorerDataProvider.orderBy(item.reference.path, field, direction, connectionId);
 }

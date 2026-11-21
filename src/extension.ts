@@ -17,6 +17,12 @@ import {
   deleteDocumentCommand,
   duplicateDocumentCommand,
   copyDocumentCommand,
+  copyDocumentIdCommand,
+  renameDocumentCommand,
+  selectDocumentForCompareCommand,
+  compareDocumentWithSelectedCommand,
+  compareDocumentWithInstanceCommand,
+  openInConsoleCommand,
   pasteDocumentCommand,
   copyDocumentJsonCommand,
   filterCollectionCommand,
@@ -44,6 +50,8 @@ import {
   openDataGraphCommand,
   deleteCollectionCommand,
   deleteMultipleCollectionsCommand,
+  countCollectionDocumentsCommand,
+  openCollectionLiveWatchCommand,
 } from "./commands/collectionCommands";
 import {
   explodeFieldCommand,
@@ -76,7 +84,7 @@ import {
   viewUserMfaCommand,
   importAuthUsersWizardCommand,
 } from "./auth/authCommands";
-import { generateSchemaCommand } from "./commands/schemaCommands";
+import { generateSchemaCommand, copySchemaCommand } from "./commands/schemaCommands";
 import { openSchemaAnalyzer } from "./schema/openSchemaAnalyzer";
 import { generateSyntheticDataCommand } from "./commands/syntheticDataCommands";
 import { registerIndexCommands } from "./commands/indexCommands";
@@ -104,6 +112,9 @@ import {
   cleanScratchpadsCommand,
 } from "./commands/snapshotSyncCommands";
 import { SnapshotSyncService } from "./services/SnapshotSyncService";
+import { DocumentClipboard } from "./services/DocumentClipboard";
+import { DocumentCompareService } from "./services/DocumentCompareService";
+import { isDryDashboard, isRuntimeDashboard } from "./services/dashboardTranspiler";
 import { copyCollectionToInstanceCommand } from "./commands/copyCollectionCommand";
 import { copyMultipleCollectionsCommand } from "./commands/copyMultipleCollectionsCommand";
 import { copyDocumentToInstanceCommand } from "./commands/copyDocumentToInstanceCommand";
@@ -120,7 +131,7 @@ import { RulesService } from "./rules/RulesService";
 import { scheme } from "./constants";
 import { DocumentFileSystemProvider } from "./editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "./explorer/ExplorerDataProvider";
-import { CollectionItem, ConnectionTreeItem, DocumentFieldItem, DocumentItem, Item } from "./explorer/items";
+import { AuthUserItem, CollectionItem, ConnectionTreeItem, DocumentFieldItem, DocumentItem, Item } from "./explorer/items";
 import { openFieldAsTable } from "./webview/openFieldAsTable";
 import { openAuthUsersAsTable } from "./webview/openAuthUsersAsTable";
 import { ConnectionManager } from "./connections/ConnectionManager";
@@ -196,10 +207,51 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(SecretManagerService.getInstance());
   context.subscriptions.push(CostService.getInstance());
 
+  void vscode.commands.executeCommand(
+    "setContext",
+    "ketrik-firestore-studio.hasClipboardDoc",
+    DocumentClipboard.getInstance().hasItem()
+  );
+  void vscode.commands.executeCommand(
+    "setContext",
+    "ketrik-firestore-studio.hasCompareDoc",
+    DocumentCompareService.getInstance().hasSelection()
+  );
+
+  const updateDashboardContext = (editor?: vscode.TextEditor): void => {
+    let isDash = false;
+    if (editor) {
+      const uri = editor.document.uri;
+      const lowerPath = uri.path.toLowerCase();
+      if (lowerPath.endsWith(".dash.json") || lowerPath.endsWith(".dry.json")) {
+        isDash = true;
+      } else if (
+        (uri.scheme === scheme || uri.scheme === "file") &&
+        lowerPath.endsWith(".json")
+      ) {
+        const text = editor.document.getText();
+        if (text.includes('"groups"') || text.includes('"ketrik-dashboard-dry-v1"')) {
+          try {
+            const parsed = JSON.parse(text);
+            isDash = isDryDashboard(parsed) || isRuntimeDashboard(parsed);
+          } catch {
+            isDash = false;
+          }
+        }
+      }
+    }
+    void vscode.commands.executeCommand(
+      "setContext",
+      "ketrik-firestore-studio.isDashboardDocument",
+      isDash
+    );
+  };
+
   // Auto-reveal active Firestore document or field in Tree View when switching tabs or opening docs
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       snapshotSyncService.updateContextForEditor(editor);
+      updateDashboardContext(editor);
       if (!editor) {
         return;
       }
@@ -241,6 +293,14 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
   snapshotSyncService.updateContextForEditor(vscode.window.activeTextEditor);
+  updateDashboardContext(vscode.window.activeTextEditor);
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (vscode.window.activeTextEditor?.document === doc) {
+        updateDashboardContext(vscode.window.activeTextEditor);
+      }
+    })
+  );
 
   // Register editor Inlay Hints & Hover providers for Firestore Timestamps
   const jsonSelector: vscode.DocumentSelector = [
@@ -268,7 +328,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.refreshExplorer",
-      () => explorerDataProvider.refresh(true)
+      () => explorerDataProvider.refreshWithFeedback(true)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.addConnection",
@@ -388,7 +448,7 @@ export async function activate(context: vscode.ExtensionContext) {
           const conns = ConnectionManager.getInstance().getConnections();
           connId = conns[0]?.id || "default";
         }
-        await openAuthUsersAsTable(connId, documentFileSystemProvider);
+        await openAuthUsersAsTable(connId, documentFileSystemProvider, explorerDataProvider);
       }
     ),
     vscode.commands.registerCommand("ketrik-firestore-studio.init", init),
@@ -456,6 +516,10 @@ export async function activate(context: vscode.ExtensionContext) {
       (item?: CollectionItem | DocumentItem) => generateSchemaCommand(item)
     ),
     vscode.commands.registerCommand(
+      "ketrik-firestore-studio.copySchema",
+      (item?: CollectionItem | DocumentItem | DocumentFieldItem) => copySchemaCommand(item)
+    ),
+    vscode.commands.registerCommand(
       "ketrik-firestore-studio.analyzeCollectionSchema",
       (item?: any) => openSchemaAnalyzer(item)
     ),
@@ -490,6 +554,14 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.clearCollectionFilter",
       (item: CollectionItem) => clearCollectionFilterCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.countCollectionDocuments",
+      (item?: CollectionItem) => countCollectionDocumentsCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openCollectionLiveWatch",
+      (item?: CollectionItem) => openCollectionLiveWatchCommand(item, explorerDataProvider)
     )
   );
 
@@ -547,12 +619,78 @@ export async function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.pasteDocument",
-      (item: CollectionItem | DocumentFieldItem) =>
+      (item: CollectionItem | DocumentItem | DocumentFieldItem) =>
         pasteDocumentCommand(item, explorerDataProvider, documentFileSystemProvider)
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.copyDocumentJson",
       copyDocumentJsonCommand
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.copyDocumentId",
+      (item?: DocumentItem) => copyDocumentIdCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.renameDocument",
+      (item: DocumentItem) => renameDocumentCommand(item, explorerDataProvider)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.renameSelectedTreeItem",
+      async () => {
+        const selected = explorerView.selection[0];
+        if (!selected) return;
+        if (selected instanceof DocumentFieldItem && !selected.isArrayElement) {
+          await renameFieldCommand(selected, explorerDataProvider, documentFileSystemProvider);
+        } else if (selected instanceof DocumentItem && !selected.isMissingDocument) {
+          await renameDocumentCommand(selected, explorerDataProvider);
+        }
+      }
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.selectDocumentForCompare",
+      (item?: DocumentItem) => selectDocumentForCompareCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.compareDocumentWithSelected",
+      (item?: DocumentItem) => compareDocumentWithSelectedCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.compareDocumentWithInstance",
+      (target?: DocumentItem | vscode.Uri) => compareDocumentWithInstanceCommand(target)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openInConsole",
+      (item?: ConnectionTreeItem | CollectionItem | DocumentItem) => openInConsoleCommand(item)
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.openDocumentInEditor",
+      async (item?: DocumentItem) => {
+        if (!item?.reference?.path) {
+          await openPath();
+          return;
+        }
+        await openPath(item.reference.path, item.connectionId);
+      }
+    ),
+    vscode.commands.registerCommand(
+      "ketrik-firestore-studio.deleteSelectedTreeItem",
+      async () => {
+        const selected = explorerView.selection[0];
+        if (!selected) return;
+        if (selected instanceof DocumentFieldItem) {
+          if (selected.isArrayElement) {
+            await deleteArrayItemCommand(selected, explorerDataProvider);
+          } else {
+            await deleteFieldCommand(selected, explorerDataProvider, documentFileSystemProvider);
+          }
+        } else if (selected instanceof DocumentItem) {
+          await deleteDocumentCommand(selected, explorerDataProvider);
+        } else if (selected instanceof CollectionItem) {
+          await deleteCollectionCommand(selected, explorerDataProvider);
+        } else if (selected instanceof AuthUserItem) {
+          await deleteAuthUserCommand(selected, explorerDataProvider, documentFileSystemProvider);
+        }
+      }
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.clickDocument",
@@ -580,12 +718,12 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.clickField",
       async (item: DocumentFieldItem) => {
         if (!item?.parentDocRef || !item?.fieldName) return;
-        if (item.isArrayElement) {
-          await editArrayItemCommand(item, explorerDataProvider);
-          return;
-        }
-        const isMap = item.contextValue === "documentFieldMap";
-        const keyCount = isMap && item.value && typeof item.value === "object" ? Object.keys(item.value).length : 0;
+        const isMap =
+          (item.contextValue?.startsWith("documentField:map") ||
+            item.contextValue?.startsWith("documentFieldArrayItem:map")) ??
+          false;
+        const keyCount =
+          isMap && item.value && typeof item.value === "object" ? Object.keys(item.value).length : 0;
         const isArray = Array.isArray(item.value) && item.value.length > 0;
         if ((isMap && keyCount > 0) || isArray) {
           const isExpanded = explorerDataProvider.isFieldExpanded(item.id);
@@ -594,9 +732,13 @@ export async function activate(context: vscode.ExtensionContext) {
           } else {
             await explorerDataProvider.expandItem(item);
           }
-        } else {
-          await openFieldCommand(item, explorerDataProvider);
+          return;
         }
+        if (item.isArrayElement) {
+          await editArrayItemCommand(item, explorerDataProvider);
+          return;
+        }
+        await openFieldCommand(item, explorerDataProvider);
       }
     ),
     vscode.commands.registerCommand(
@@ -657,7 +799,7 @@ export async function activate(context: vscode.ExtensionContext) {
       "ketrik-firestore-studio.refreshItem",
       async (item: Item) => {
         if (!item) {
-          explorerDataProvider.refresh();
+          await explorerDataProvider.refreshWithFeedback();
           return;
         }
         if (item instanceof DocumentItem) {
@@ -665,7 +807,7 @@ export async function activate(context: vscode.ExtensionContext) {
         } else if (item instanceof DocumentFieldItem) {
           documentFileSystemProvider.invalidateAndNotify(item.connectionId, item.parentDocRef.path);
         }
-        explorerDataProvider.refreshNode(item);
+        await explorerDataProvider.refreshNodeWithFeedback(item);
       }
     ),
     vscode.commands.registerCommand(
@@ -676,7 +818,11 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.deleteMultipleFields",
       (item?: any) =>
-        deleteMultipleFieldsCommand(item, explorerDataProvider, documentFileSystemProvider)
+        deleteMultipleFieldsCommand(
+          item ?? explorerView.selection[0],
+          explorerDataProvider,
+          documentFileSystemProvider
+        )
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.addField",

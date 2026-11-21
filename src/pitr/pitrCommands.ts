@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { CollectionItem, ConnectionTreeItem, DocumentItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { PitrService } from "./PitrService";
 import { PITR_PRESETS } from "./types";
@@ -20,24 +21,26 @@ export async function openTimeTravelCommand(target?: any): Promise<void> {
 
   let connectionId: string | undefined;
   let collectionPath: string | undefined;
+  let targetDocPath: string | undefined;
 
   if (target) {
     if (typeof target === "string") {
       connectionId = target;
+    } else if (target instanceof ConnectionTreeItem || target.config?.id) {
+      connectionId = target.config.id;
+    } else if (target instanceof DocumentItem) {
+      connectionId = target.connectionId;
+      targetDocPath = target.reference?.path;
+      if (targetDocPath) {
+        const segments = targetDocPath.split("/").filter(Boolean);
+        collectionPath = segments.slice(0, -1).join("/");
+      }
+    } else if (target instanceof CollectionItem) {
+      connectionId = target.connectionId;
+      collectionPath = target.reference?.path || target.collectionId;
     } else if (target.connectionId) {
       connectionId = target.connectionId;
-      collectionPath = target.collectionPath || target.collectionId;
-    } else if (target.reference) {
-      // Tree item
-      connectionId = target.connectionId;
-      if (target.reference.path) {
-        const segments = target.reference.path.split("/");
-        if (segments.length % 2 === 1) {
-          collectionPath = target.reference.path;
-        } else {
-          collectionPath = segments.slice(0, -1).join("/");
-        }
-      }
+      collectionPath = target.collectionPath || target.reference?.path || target.collectionId;
     }
   }
 
@@ -66,7 +69,7 @@ export async function openTimeTravelCommand(target?: any): Promise<void> {
     return;
   }
 
-  if (conn.isLocalJson) {
+  if (conn.isLocalJson || conn.isEmulator) {
     vscode.window.showWarningMessage("Point-in-Time Recovery is only supported on Google Cloud Firestore databases.");
     return;
   }
@@ -174,7 +177,49 @@ export async function openTimeTravelCommand(target?: any): Promise<void> {
     selectedReadTime = new Date(Date.now() - pickedPreset.durationMs);
   }
 
-  // 5. Open Collection Table with the selected readTime
+  // 5. If invoked on a specific document, offer direct Diff / Restore / Collection Table
+  if (targetDocPath) {
+    const docActions: Array<vscode.QuickPickItem & { action: "diff" | "restore" | "table" }> = [
+      {
+        label: "$(diff) Compare Document with Live State",
+        description: `Side-by-side diff at ${formatDateTime(selectedReadTime)}`,
+        action: "diff",
+      },
+    ];
+    if (!conn.readOnly) {
+      docActions.push({
+        label: "$(reply) Restore Document from This Timestamp",
+        description: "Overwrite or merge historical fields back to live Firestore",
+        action: "restore",
+      });
+    }
+    docActions.push({
+      label: "$(table) Open Parent Collection Table at This Timestamp",
+      description: `Browse '${collectionPath}' in Time-Travel Table`,
+      action: "table",
+    });
+
+    const docChoice = await vscode.window.showQuickPick(docActions, {
+      title: `Time-Travel: ${targetDocPath}`,
+      placeHolder: "Choose historical action for this document",
+    });
+    if (!docChoice) return;
+
+    if (docChoice.action === "diff") {
+      await pitrService.compareDocumentWithLive(conn.id, targetDocPath, selectedReadTime);
+      return;
+    }
+    if (docChoice.action === "restore") {
+      await restoreDocumentFromHistoryCommand({
+        connectionId: conn.id,
+        docPath: targetDocPath,
+        readTime: selectedReadTime,
+      });
+      return;
+    }
+  }
+
+  // 6. Open Collection Table with the selected readTime
   await openCollectionAsTable({
     connectionId: conn.id,
     collectionId: collectionPath.split("/").pop() || collectionPath,

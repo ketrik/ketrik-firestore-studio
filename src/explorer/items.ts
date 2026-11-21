@@ -1,10 +1,21 @@
 import { DocumentReference, CollectionReference, OrderByDirection } from "firebase-admin/firestore";
 import * as vscode from "vscode";
-import { FirestoreConnectionConfig } from "../connections/ConnectionManager";
+import { ConnectionManager, FirestoreConnectionConfig } from "../connections/ConnectionManager";
 import { RulesService } from "../rules/RulesService";
 import { RulesParser } from "../rules/RulesParser";
 import { isTimestampLike, timestampToDate, formatDateTime, formatRelativeTime } from "../utils/timestampUtils";
 import { SecretManagerService, SecretMetadata, SecretVersionMetadata } from "../secrets/SecretManagerService";
+import { isDryDashboard, isRuntimeDashboard } from "../services/dashboardTranspiler";
+
+function getConnectionMeta(connectionId: string): {
+  substrate: "cloud" | "emulator" | "local";
+  access: "rw" | "ro";
+} {
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
+  const substrate = conn?.isLocalJson ? "local" : conn?.isEmulator ? "emulator" : "cloud";
+  const access = conn?.readOnly ? "ro" : "rw";
+  return { substrate, access };
+}
 
 export abstract class Item extends vscode.TreeItem {
   abstract reference?: DocumentReference | CollectionReference;
@@ -38,7 +49,9 @@ export class ConnectionTreeItem extends Item {
   constructor(public config: FirestoreConnectionConfig) {
     super(config.name, vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `connection:${config.id}`;
-    this.contextValue = config.readOnly ? "connectionReadOnly" : "connection";
+    const substrate = config.isLocalJson ? "local" : config.isEmulator ? "emulator" : "cloud";
+    const access = config.readOnly ? "ro" : "rw";
+    this.contextValue = `connection:${substrate}:${access}`;
 
     const detail = config.isLocalJson
       ? `Local JSON (${config.localJsonPath || ""})`
@@ -115,7 +128,24 @@ export class DocumentItem extends Item {
     };
 
     this.id = `doc:${connectionId}:${reference.path}`;
-    this.contextValue = "document";
+    this.updateDocMeta(docData, isMissingDocument);
+  }
+
+  /**
+   * Update document node metadata (size badge, icon, tooltip, contextValue) in place
+   * so TreeView retains the exact object reference during targeted refreshes.
+   */
+  public updateDocMeta(docData?: any, isMissingDocument: boolean = false): void {
+    this.isMissingDocument = isMissingDocument;
+    const { substrate, access } = getConnectionMeta(this.connectionId);
+    const docState = isMissingDocument ? "missing" : "exists";
+    const dashKind =
+      !isMissingDocument &&
+      docData !== undefined &&
+      (isDryDashboard(docData) || isRuntimeDashboard(docData))
+        ? "dash"
+        : "std";
+    this.contextValue = `document:${substrate}:${docState}:${dashKind}:${access}`;
 
     if (isMissingDocument) {
       this.description = "(missing document)";
@@ -124,11 +154,11 @@ export class DocumentItem extends Item {
         new vscode.ThemeColor("descriptionForeground")
       );
       this.tooltip =
-        `Document: ${documentId}\n` +
-        `Path: [${connectionId}] ${reference.path}\n` +
+        `Document: ${this.documentId}\n` +
+        `Path: [${this.connectionId}] ${this.reference.path}\n` +
         `Status: Missing document (only exists as parent of subcollections)`;
     } else if (docData !== undefined) {
-      const sizeInfo = getDocumentSizeInfo(docData, reference.path);
+      const sizeInfo = getDocumentSizeInfo(docData, this.reference.path);
       const isExceeded = sizeInfo.isWarning || sizeInfo.isCritical;
 
       // When over 750 KB (or critical), show red icon and clear high-visibility label
@@ -149,15 +179,16 @@ export class DocumentItem extends Item {
       }
 
       this.tooltip =
-        `Document: ${documentId}\n` +
-        `Path: [${connectionId}] ${reference.path}\n` +
+        `Document: ${this.documentId}\n` +
+        `Path: [${this.connectionId}] ${this.reference.path}\n` +
         `Size: ${sizeInfo.formatted} (${sizeInfo.bytes.toLocaleString()} bytes)\n` +
         `Limit: ${sizeInfo.percentageOfLimit}% of 1 MB max${isExceeded
           ? `\n⚠️ High Document Size: Exceeds 750 KB quota threshold.`
           : ""
         }`;
     } else {
-      this.tooltip = `[${connectionId}] ${reference.path}`;
+      this.description = undefined;
+      this.tooltip = `[${this.connectionId}] ${this.reference.path}`;
       this.iconPath = new vscode.ThemeIcon(
         "file-code",
         new vscode.ThemeColor("charts.blue")
@@ -333,32 +364,23 @@ export class DocumentFieldItem extends Item {
     this.id = `field:${connectionId}:${parentDocRef.path}#${this.fullFieldPath}`;
 
     const isSecretRef = typeof value === "string" && ((value.startsWith("projects/") && value.includes("/secrets/")) || value.startsWith("gcp-secret://"));
-
-    if (this.isArrayElement) {
-      this.contextValue = isSecretRef
-        ? "documentFieldArrayItemSecretRef"
-        : isTimestamp
-          ? "documentFieldArrayItemTimestamp"
+    const { substrate, access } = getConnectionMeta(connectionId);
+    const kind = isSecretRef
+      ? "secretRef"
+      : isTimestamp
+        ? "timestamp"
+        : isVector
+          ? "vector"
           : valType === "object"
-            ? "documentFieldArrayItemMap"
+            ? "map"
             : valType === "array"
-              ? "documentFieldArrayItemArray"
-              : valType === "null"
-                ? "documentFieldArrayItemNull"
-                : "documentFieldArrayItemScalar";
-    } else {
-      this.contextValue = isSecretRef
-        ? "documentFieldSecretRef"
-        : isTimestamp
-          ? "documentFieldTimestamp"
-          : isVector
-            ? "documentFieldVector"
-            : valType === "object"
-              ? "documentFieldMap"
-              : valType === "array"
-                ? "documentFieldArray"
-                : "documentField";
-    }
+              ? "array"
+              : valType === "null" && this.isArrayElement
+                ? "null"
+                : "scalar";
+    this.contextValue = this.isArrayElement
+      ? `documentFieldArrayItem:${kind}:${substrate}:${access}`
+      : `documentField:${kind}:${substrate}:${access}`;
 
     const tierLabel = isProtocol
       ? " [Protocol / Operational]"
@@ -406,39 +428,66 @@ export class CollectionItem extends Item {
       fieldName: string;
       direction: OrderByDirection;
     } = { fieldName: "id", direction: "asc" },
-    public filter?: string
+    public filter?: string,
+    public docCount?: number
   ) {
     super(collectionId, vscode.TreeItemCollapsibleState.Collapsed);
 
     this.id = `col:${connectionId}:${reference.path}`;
-    this.contextValue = filter ? "collectionFiltered" : "collection";
-    this.tooltip = `[${connectionId}] ${reference.path}`;
     // Folder icon with warm gold/amber color
     this.iconPath = new vscode.ThemeIcon(
       "folder",
       new vscode.ThemeColor("charts.orange")
     );
+    this.updateMeta(orderBy, filter, docCount);
+  }
+
+  /**
+   * Update collection node metadata (sort, filter, docCount, contextValue, description, tooltip)
+   * in place so TreeView retains the exact object reference during targeted refreshes.
+   */
+  public updateMeta(
+    orderBy: { fieldName: string; direction: OrderByDirection } = { fieldName: "id", direction: "asc" },
+    filter?: string,
+    docCount?: number
+  ): void {
+    this.orderBy = orderBy;
+    this.filter = filter;
+    this.docCount = docCount;
+
+    const { substrate, access: writeAccess } = getConnectionMeta(this.connectionId);
+    const pathSegments = (this.reference?.path || this.collectionId).split("/").filter(Boolean);
+    const scope = pathSegments.length > 1 ? "sub" : "root";
+    const filterState = filter ? "filtered" : "all";
+    this.contextValue = `collection:${substrate}:${scope}:${filterState}:${writeAccess}`;
 
     let orderDesc = (orderBy.direction === "asc" ? "↑" : "↓") + orderBy.fieldName;
+    if (docCount !== undefined) {
+      orderDesc += ` · ${docCount.toLocaleString()} docs`;
+    }
     if (filter) {
       orderDesc += `  [🔍 "${filter}"]`;
     }
 
     // Evaluate security access badge from rules
     const rulesService = RulesService.getInstance();
-    const access = rulesService.getAccessForCollection(reference.path, connectionId);
+    const access = rulesService.getAccessForCollection(this.reference.path, this.connectionId);
+
+    const baseTooltipParts = [`[${this.connectionId}] ${this.reference.path}`];
+    if (docCount !== undefined) {
+      baseTooltipParts.push(`Documents: ${docCount.toLocaleString()}`);
+    }
+    if (filter) {
+      baseTooltipParts.push(`Active Filter: "${filter}"`);
+    }
 
     if (access) {
       const { badge, tooltip: ruleTooltip } = RulesParser.formatBadge(access);
       this.description = badge ? `${orderDesc}  ${badge}` : orderDesc;
-      this.tooltip = filter
-        ? `[${connectionId}] ${reference.path}\nActive Filter: "${filter}"\n\n${ruleTooltip}`
-        : `[${connectionId}] ${reference.path}\n\n${ruleTooltip}`;
+      this.tooltip = `${baseTooltipParts.join("\n")}\n\n${ruleTooltip}`;
     } else {
       this.description = orderDesc;
-      this.tooltip = filter
-        ? `[${connectionId}] ${reference.path}\nActive Filter: "${filter}"`
-        : `[${connectionId}] ${reference.path}`;
+      this.tooltip = baseTooltipParts.join("\n");
     }
   }
 }
@@ -480,7 +529,8 @@ export class AuthUsersBranchItem extends Item {
   constructor(public connectionId: string) {
     super("Authentication (Users & Claims)", vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `auth:${connectionId}`;
-    this.contextValue = "authBranch";
+    const { access } = getConnectionMeta(connectionId);
+    this.contextValue = `authBranch:${access}`;
     this.iconPath = new vscode.ThemeIcon("shield", new vscode.ThemeColor("charts.purple"));
     this.tooltip = "Firebase Authentication Users & Custom Claims";
   }
@@ -495,13 +545,16 @@ export class AuthUserItem extends Item {
   constructor(
     public user: import("firebase-admin/auth").UserRecord,
     public connectionId: string,
-    public hasProfileDoc = false
+    public hasProfileDoc = false,
+    public profileCollection = "users"
   ) {
     const label = user.email || user.displayName || user.phoneNumber || user.uid;
     super(label, vscode.TreeItemCollapsibleState.None);
 
     this.id = `authUser:${connectionId}:${user.uid}`;
-    this.contextValue = "authUser";
+    const { access } = getConnectionMeta(connectionId);
+    const profileState = hasProfileDoc ? "hasProfile" : "noProfile";
+    this.contextValue = `authUser:${profileState}:${access}`;
 
     const claims = user.customClaims || {};
     const claimKeys = Object.keys(claims);
@@ -524,7 +577,7 @@ export class AuthUserItem extends Item {
       user.displayName ? `Name: ${user.displayName}` : "",
       user.disabled ? "Status: ⛔ Disabled" : "Status: Active",
       claimsLabel ? `Custom Claims: ${JSON.stringify(claims)}` : "Custom Claims: (none)",
-      `Firestore Profile: ${hasProfileDoc ? "Created" : "Not found in /users"}`,
+      `Firestore Profile: ${hasProfileDoc ? `Found in /${profileCollection}` : `Not found in /${profileCollection}`}`,
     ].filter(Boolean).join("\n");
 
     this.iconPath = new vscode.ThemeIcon(
@@ -575,7 +628,8 @@ export class CompositeIndexesBranchItem extends Item {
   constructor(public connectionId: string) {
     super("Composite Indexes", vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `indexes:${connectionId}`;
-    this.contextValue = "compositeIndexesBranch";
+    const { access } = getConnectionMeta(connectionId);
+    this.contextValue = `compositeIndexesBranch:${access}`;
     this.iconPath = new vscode.ThemeIcon("list-tree", new vscode.ThemeColor("charts.blue"));
     this.tooltip = "Firestore Composite Indexes (Live Cloud / Emulator)";
   }
@@ -609,7 +663,8 @@ export class CompositeIndexItem extends Item {
     super(label, vscode.TreeItemCollapsibleState.None);
 
     this.id = `index:${connectionId}:${index.name}`;
-    this.contextValue = "compositeIndex";
+    const { access } = getConnectionMeta(connectionId);
+    this.contextValue = `compositeIndex:${access}`;
 
     const scopeBadge = index.queryScope === "COLLECTION_GROUP" ? "🌐 Group" : "📁 Collection";
     let stateBadge = "READY";
@@ -682,7 +737,8 @@ export class StorageBucketsBranchItem extends Item {
   constructor(public connectionId: string) {
     super("Cloud Storage", vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `storage:${connectionId}`;
-    this.contextValue = "storageBucketsBranch";
+    const { access } = getConnectionMeta(connectionId);
+    this.contextValue = `storageBucketsBranch:${access}`;
     this.iconPath = new vscode.ThemeIcon("cloud", new vscode.ThemeColor("charts.purple"));
     this.tooltip = "Firebase & Google Cloud Storage Buckets";
   }
@@ -697,7 +753,8 @@ export class StorageBucketTreeItem extends Item {
   constructor(public connectionId: string, public bucketName: string) {
     super(bucketName, vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `storageBucket:${connectionId}:${bucketName}`;
-    this.contextValue = "storageBucket";
+    const { access } = getConnectionMeta(connectionId);
+    this.contextValue = `storageBucket:${access}`;
     this.iconPath = new vscode.ThemeIcon("archive", new vscode.ThemeColor("charts.blue"));
     this.tooltip = `Storage Bucket: ${bucketName}`;
   }
@@ -719,7 +776,8 @@ export class StorageFolderTreeItem extends Item {
     const folderName = cleanPrefix.split("/").pop() || cleanPrefix;
     super(folderName, vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `storageFolder:${connectionId}:${bucketName}:${prefix}`;
-    this.contextValue = "storageFolder";
+    const { access } = getConnectionMeta(connectionId);
+    this.contextValue = `storageFolder:${access}`;
     this.iconPath = new vscode.ThemeIcon("folder");
     this.tooltip = `Folder: ${prefix} (${bucketName})`;
   }
@@ -739,7 +797,8 @@ export class StorageFileTreeItem extends Item {
     const fileName = fileData.name.split("/").pop() || fileData.name;
     super(fileName, vscode.TreeItemCollapsibleState.None);
     this.id = `storageFile:${connectionId}:${bucketName}:${fileData.name}`;
-    this.contextValue = "storageFile";
+    const { access } = getConnectionMeta(connectionId);
+    this.contextValue = `storageFile:${access}`;
 
     // Format file size
     const size = fileData.size ?? 0;
@@ -798,7 +857,8 @@ export class SecretManagerBranchItem extends Item {
   constructor(public connectionId: string) {
     super("Google Secret Manager", vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `secrets:${connectionId}`;
-    this.contextValue = "secretManagerBranch";
+    const { access } = getConnectionMeta(connectionId);
+    this.contextValue = `secretManagerBranch:${access}`;
     this.iconPath = new vscode.ThemeIcon("key", new vscode.ThemeColor("charts.yellow"));
     this.tooltip = "Google Cloud Secret Manager — Secrets & Version Management";
   }
@@ -816,7 +876,8 @@ export class SecretTreeItem extends Item {
   ) {
     super(secret.id, vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `secret:${connectionId}:${secret.id}`;
-    this.contextValue = "secretItem";
+    const { access } = getConnectionMeta(connectionId);
+    this.contextValue = `secretItem:${access}`;
     const isLocked = SecretManagerService.getInstance().isSecretLocked(connectionId, secret.id);
     this.iconPath = new vscode.ThemeIcon(isLocked ? "lock" : "shield-lock", new vscode.ThemeColor("charts.yellow"));
     this.description = `${isLocked ? "🔒 Locked • " : ""}[${secret.replicationType || "automatic"}]`;
@@ -851,11 +912,13 @@ export class SecretVersionTreeItem extends Item {
     const isDisabled = version.state === "DISABLED";
     const isDestroyed = version.state === "DESTROYED";
 
-    this.contextValue = isEnabled
+    const { access } = getConnectionMeta(connectionId);
+    const baseCtx = isEnabled
       ? "secretVersionEnabled"
       : isDisabled
         ? "secretVersionDisabled"
         : "secretVersionDestroyed";
+    this.contextValue = `${baseCtx}:${access}`;
 
     let icon = "symbol-variable";
     let iconColor: vscode.ThemeColor | undefined;

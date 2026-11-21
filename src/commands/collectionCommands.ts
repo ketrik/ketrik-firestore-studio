@@ -8,6 +8,7 @@ import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
+import { recursiveDeleteWithCount } from "../utils/deleteUtils";
 
 /**
  * Open collection in table view.
@@ -299,17 +300,30 @@ export async function deleteCollectionCommand(
     },
     async () => {
       try {
+        let deletedCount = 0;
         if (conn?.isLocalJson) {
           LocalJsonService.getInstance().deleteCollection(conn, collPath);
         } else {
           const firestore = await connectionManager.getFirestore(item.connectionId);
-          await firestore.recursiveDelete(item.reference);
-          CostService.getInstance().recordOperation(item.connectionId, "delete", 1);
+          deletedCount = await recursiveDeleteWithCount(firestore, item.reference, item.connectionId);
         }
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotifyCollectionDeleted(item.connectionId, collPath);
-        vscode.window.showInformationMessage(`Successfully deleted collection "${item.collectionId}".`);
-        explorerDataProvider.refresh();
+        explorerDataProvider.clearCollectionMetadata(item.connectionId, collPath);
+        vscode.window.showInformationMessage(
+          conn?.isLocalJson
+            ? `Successfully deleted collection "${item.collectionId}".`
+            : `Successfully deleted collection "${item.collectionId}" (${deletedCount} doc(s)).`
+        );
+        if (item.reference?.parent) {
+          explorerDataProvider.refreshNode(
+            new DocumentItem(item.reference.parent.id, item.reference.parent, item.connectionId)
+          );
+        } else if (conn) {
+          explorerDataProvider.refreshNode(new ConnectionTreeItem(conn));
+        } else {
+          explorerDataProvider.refresh();
+        }
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to delete collection: ${err.message}`);
       }
@@ -339,7 +353,10 @@ export async function deleteMultipleCollectionsCommand(
     connectionId = item.config.id;
   } else if (item instanceof CollectionItem) {
     connectionId = item.connectionId;
-    preSelectedColl = item.collectionId;
+    const collPath = item.reference?.path || item.collectionId;
+    if (!collPath.includes("/")) {
+      preSelectedColl = item.collectionId;
+    }
   } else {
     const pick = await vscode.window.showQuickPick(
       connections.map((c) => ({
@@ -423,8 +440,8 @@ export async function deleteMultipleCollectionsCommand(
       cancellable: false,
     },
     async (progress) => {
+      let deletedCount = 0;
       try {
-        let deletedCount = 0;
         const total = selectedIds.length;
 
         if (conn.isLocalJson) {
@@ -436,6 +453,7 @@ export async function deleteMultipleCollectionsCommand(
             });
             LocalJsonService.getInstance().deleteCollection(conn, collId);
             DocumentFileSystemProvider.getInstance().invalidateAndNotifyCollectionDeleted(conn.id, collId);
+            explorerDataProvider?.clearCollectionMetadata(conn.id, collId);
             deletedCount++;
           }
         } else {
@@ -447,8 +465,9 @@ export async function deleteMultipleCollectionsCommand(
               increment: (1 / total) * 100,
             });
             const collRef = firestore.collection(collId);
-            await firestore.recursiveDelete(collRef);
+            await recursiveDeleteWithCount(firestore, collRef, conn.id);
             DocumentFileSystemProvider.getInstance().invalidateAndNotifyCollectionDeleted(conn.id, collId);
+            explorerDataProvider?.clearCollectionMetadata(conn.id, collId);
             deletedCount++;
           }
         }
@@ -456,12 +475,99 @@ export async function deleteMultipleCollectionsCommand(
         vscode.window.showInformationMessage(
           `Successfully deleted ${deletedCount} collection(s) from "${conn.name}".`
         );
-        if (explorerDataProvider) {
-          explorerDataProvider.refresh();
-        }
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to delete collections: ${err.message}`);
+      } finally {
+        if (deletedCount > 0 && explorerDataProvider) {
+          explorerDataProvider.refresh();
+        }
       }
     }
+  );
+}
+
+/**
+ * Count documents in a collection using server-side aggregation (or local scan for Local JSON)
+ * and cache the count badge directly on the Explorer tree item.
+ */
+export async function countCollectionDocumentsCommand(
+  item: CollectionItem | undefined,
+  explorerDataProvider: ExplorerDataProvider
+): Promise<void> {
+  if (!item?.collectionId) {
+    vscode.window.showErrorMessage("No collection selected.");
+    return;
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  const collPath = item.reference?.path || item.collectionId;
+
+  let count = 0;
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Counting documents in '${item.collectionId}'...`,
+        cancellable: false,
+      },
+      async () => {
+        if (conn?.isLocalJson) {
+          count = LocalJsonService.getInstance().listDocuments(conn, collPath).length;
+        } else {
+          const snap = await item.reference.count().get();
+          count = snap.data().count;
+          CostService.getInstance().recordOperation(
+            item.connectionId,
+            "read",
+            Math.max(1, Math.ceil(count / 1000))
+          );
+        }
+        explorerDataProvider.setCollectionCount(item.connectionId, collPath, count);
+      }
+    );
+
+    const label = conn?.isLocalJson ? "Local collection" : "Collection";
+    const choice = await vscode.window.showInformationMessage(
+      `${label} '${collPath}' has ${count.toLocaleString()} document(s).`,
+      "Open as Table"
+    );
+    if (choice === "Open as Table") {
+      await openCollectionAsTableCommand(item, explorerDataProvider);
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to count documents in '${collPath}': ${err.message}`);
+  }
+}
+
+/**
+ * Open a Collection Table with Real-Time Live Watch mode automatically enabled.
+ */
+export async function openCollectionLiveWatchCommand(
+  item?: CollectionItem,
+  explorerDataProvider?: ExplorerDataProvider
+): Promise<void> {
+  if (!item?.collectionId) {
+    vscode.window.showErrorMessage("No collection selected.");
+    return;
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  if (conn?.isLocalJson) {
+    vscode.window.showWarningMessage(
+      "Live Watch is only supported for Cloud Firestore and Firebase Emulator connections."
+    );
+    return;
+  }
+
+  await openCollectionAsTable(
+    {
+      connectionId: item.connectionId,
+      collectionId: item.collectionId,
+      collectionPath: item.reference?.path || item.collectionId,
+      reference: item.reference,
+      autoStartLiveWatch: true,
+    },
+    false,
+    explorerDataProvider
   );
 }

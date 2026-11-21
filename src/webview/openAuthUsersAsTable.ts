@@ -3,8 +3,14 @@ import { AuthService } from "../auth/AuthService";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import { getAuthUsersTableHtml } from "./authUsersTable/authUsersTableHtml";
 import openPath from "../commands/openPath";
-import { cloneAuthUserCommand, mintCustomTokenCommand } from "../auth/authCommands";
+import {
+  cloneAuthUserCommand,
+  executeBulkDeleteAuthUsersFlow,
+  executeDeleteAuthUserFlow,
+  mintCustomTokenCommand,
+} from "../auth/authCommands";
 import { ConnectionManager } from "../connections/ConnectionManager";
+import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 
 /**
  * Open the Firebase Authentication users in a fast tabular webview.
@@ -17,7 +23,8 @@ const activeAuthPanels = new Map<string, vscode.WebviewPanel>();
 
 export async function openAuthUsersAsTable(
   connectionId: string,
-  fsProvider?: DocumentFileSystemProvider
+  fsProvider?: DocumentFileSystemProvider,
+  explorerDataProvider?: ExplorerDataProvider
 ) {
   const existingPanel = activeAuthPanels.get(connectionId);
   if (existingPanel) {
@@ -43,6 +50,28 @@ export async function openAuthUsersAsTable(
 
   const authService = AuthService.getInstance();
   let currentNextPageToken: string | undefined = undefined;
+
+  function getConnectionStatePayload() {
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    return {
+      type: "connectionState",
+      isReadOnly: !!conn?.readOnly,
+      environment: conn?.environment,
+      profileCollection: authService.getProfileCollection(connectionId),
+    };
+  }
+
+  const connChangeSub = ConnectionManager.getInstance().onDidChangeConnections(() => {
+    panel.webview.postMessage(getConnectionStatePayload());
+  });
+  const configChangeSub = vscode.workspace.onDidChangeConfiguration((e) => {
+    if (
+      e.affectsConfiguration("ketrik-firestore-studio.authProfileCollection") ||
+      e.affectsConfiguration("ketrik-firestore-studio.connections")
+    ) {
+      panel.webview.postMessage(getConnectionStatePayload());
+    }
+  });
 
   function mapUsers(users: import("firebase-admin/auth").UserRecord[]) {
     return users.map((u) => {
@@ -87,11 +116,15 @@ export async function openAuthUsersAsTable(
       const result = await authService.listUsers(connectionId, 1000);
       currentNextPageToken = result.pageToken;
 
+      const state = getConnectionStatePayload();
       panel.webview.postMessage({
         type: "setUsers",
         users: mapUsers(result.users),
         hasMore: !!result.pageToken,
         pageToken: result.pageToken,
+        isReadOnly: state.isReadOnly,
+        environment: state.environment,
+        profileCollection: state.profileCollection,
       });
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to load Firebase Auth users: ${err.message}`);
@@ -156,6 +189,9 @@ export async function openAuthUsersAsTable(
   const messageSubscription = panel.webview.onDidReceiveMessage(async (msg) => {
     switch (msg.command) {
       case "ready":
+        panel.webview.postMessage(getConnectionStatePayload());
+        await loadInitialBatch();
+        break;
       case "refresh":
         await loadInitialBatch();
         break;
@@ -170,8 +206,13 @@ export async function openAuthUsersAsTable(
 
       case "checkProfile": {
         try {
-          const exists = await authService.checkProfileExists(connectionId, msg.uid);
-          panel.webview.postMessage({ type: "profileStatus", uid: msg.uid, exists });
+          const profile = await authService.inspectProfile(connectionId, msg.uid);
+          panel.webview.postMessage({
+            type: "profileStatus",
+            uid: msg.uid,
+            exists: profile.exists || profile.hasSubcollections,
+            docPath: profile.docPath,
+          });
         } catch (err: any) {
           vscode.window.showErrorMessage(`Failed to check profile for ${msg.uid}: ${err.message}`);
         }
@@ -220,12 +261,31 @@ export async function openAuthUsersAsTable(
       case "openProfile": {
         try {
           const user = await authService.getUser(connectionId, msg.uid);
-          const exists = await authService.checkProfileExists(connectionId, user.uid);
-          if (exists) {
-            await openPath(`users/${user.uid}`, connectionId);
+          const profile = await authService.inspectProfile(connectionId, user.uid);
+          if (profile.exists || profile.hasSubcollections) {
+            panel.webview.postMessage({
+              type: "profileStatus",
+              uid: user.uid,
+              exists: true,
+              docPath: profile.docPath,
+            });
+            await openPath(profile.docPath, connectionId);
           } else {
+            const conn = ConnectionManager.getInstance().getConnection(connectionId);
+            panel.webview.postMessage({
+              type: "profileStatus",
+              uid: user.uid,
+              exists: false,
+              docPath: profile.docPath,
+            });
+            if (conn?.readOnly) {
+              vscode.window.showWarningMessage(
+                `No Firestore document exists at '${profile.docPath}' (Connection '${conn.name}' is in Read-Only mode).`
+              );
+              break;
+            }
             const choice = await vscode.window.showInformationMessage(
-              `No Firestore document exists at 'users/${user.uid}'. Would you like to create it?`,
+              `No Firestore document exists at '${profile.docPath}'. Would you like to create it?`,
               "Create Profile",
               "Cancel"
             );
@@ -233,9 +293,19 @@ export async function openAuthUsersAsTable(
               if (!ConnectionManager.getInstance().ensureWritable(connectionId, "create user profile document")) {
                 break;
               }
-              const createdPath = await authService.createProfileDoc(connectionId, user, "users", fsProvider);
+              const createdPath = await authService.createProfileDoc(
+                connectionId,
+                user,
+                profile.collectionName,
+                fsProvider
+              );
               vscode.window.showInformationMessage(`Created Firestore profile at '${createdPath}'`);
-              panel.webview.postMessage({ type: "profileStatus", uid: user.uid, exists: true });
+              panel.webview.postMessage({
+                type: "profileStatus",
+                uid: user.uid,
+                exists: true,
+                docPath: createdPath,
+              });
               await openPath(createdPath, connectionId);
             }
           }
@@ -501,54 +571,44 @@ export async function openAuthUsersAsTable(
       }
 
       case "deleteUser": {
-        if (!ConnectionManager.getInstance().ensureWritable(connectionId, "delete auth user")) {
-          break;
-        }
-        try {
-          const uid = msg.uid;
-          const userIdentifier = msg.email || uid;
-          const hasProfile = await authService.checkProfileExists(connectionId, uid);
-
-          const deleteProfileOption = hasProfile
-            ? "Delete Auth User & Profile Doc (/users)"
-            : "Delete Auth User Only";
-
-          const options = hasProfile
-            ? [deleteProfileOption, "Delete Auth User Only", "Cancel"]
-            : ["Delete Auth User Only", "Cancel"];
-
-          const choice = await vscode.window.showWarningMessage(
-            `Are you sure you want to permanently delete user '${userIdentifier}' (UID: ${uid})?` +
-              (hasProfile ? " A Firestore profile document also exists at '/users/" + uid + "'." : ""),
-            { modal: true },
-            ...options
-          );
-
-          if (!choice || choice === "Cancel") {
-            break;
-          }
-
-          const shouldDeleteProfile = choice.includes("Profile Doc");
-          const result = await authService.deleteUserAndProfile(
-            connectionId,
-            uid,
-            shouldDeleteProfile,
-            "users",
-            fsProvider
-          );
-
-          vscode.window.showInformationMessage(
-            result.profileDeleted
-              ? `Deleted Auth user '${userIdentifier}' and associated Firestore profile doc.`
-              : `Deleted Auth user '${userIdentifier}'.`
-          );
-
+        const res = await executeDeleteAuthUserFlow({
+          connectionId,
+          uid: msg.uid,
+          userIdentifier: msg.email || msg.uid,
+          explorerDataProvider,
+          fsProvider,
+        });
+        if (res.authDeleted) {
           panel.webview.postMessage({
             type: "userDeleted",
-            uid,
+            uid: msg.uid,
           });
-        } catch (err: any) {
-          vscode.window.showErrorMessage(`Failed to delete user: ${err.message}`);
+        } else if (res.profileDeleted) {
+          panel.webview.postMessage({
+            type: "profileStatus",
+            uid: msg.uid,
+            exists: false,
+          });
+        }
+        break;
+      }
+
+      case "deleteSelectedUsers": {
+        const uids = Array.isArray(msg.uids) ? msg.uids : [];
+        if (uids.length === 0) {
+          break;
+        }
+        const res = await executeBulkDeleteAuthUsersFlow({
+          connectionId,
+          uids,
+          explorerDataProvider,
+          fsProvider,
+        });
+        if (res.deletedUids.length > 0) {
+          panel.webview.postMessage({
+            type: "usersDeleted",
+            uids: res.deletedUids,
+          });
         }
         break;
       }
@@ -572,5 +632,7 @@ export async function openAuthUsersAsTable(
   panel.onDidDispose(() => {
     activeAuthPanels.delete(connectionId);
     messageSubscription.dispose();
+    connChangeSub.dispose();
+    configChangeSub.dispose();
   });
 }

@@ -1,13 +1,15 @@
 import * as vscode from "vscode";
-import { DocumentFieldItem, DocumentItem } from "../explorer/items";
+import { CollectionItem, DocumentFieldItem, DocumentItem } from "../explorer/items";
 import openPath from "./openPath";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { ConnectionManager } from "../connections/ConnectionManager";
-import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { DocumentReference, FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { isTimestampLike, timestampToDate, formatDateTime } from "../utils/timestampUtils";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
+import { safeFirestoreFieldUpdate } from "../webview/common/tableUtils";
+import { isProtectSystemKeysEnabled, isSystemFieldPath } from "../utils/deleteUtils";
 
 /**
  * Guard helper to block field mutations when a connection is in Read-Only mode.
@@ -35,6 +37,15 @@ export async function openFieldCommand(
     return;
   }
 
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+  const segments = item.pathSegments && item.pathSegments.length > 0 ? item.pathSegments : [item.fieldName];
+  const fieldTarget = item.fullFieldPath || segments.join(".");
+
+  if (conn?.readOnly) {
+    await openPath(item.parentDocRef.path, item.connectionId, fieldTarget);
+    return;
+  }
+
   if (!ensureWritable(item.connectionId, "edit fields")) {
     return;
   }
@@ -42,10 +53,6 @@ export async function openFieldCommand(
   if (item.isArrayElement) {
     return editArrayItemCommand(item, explorerDataProvider);
   }
-
-  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
-  const segments = item.pathSegments && item.pathSegments.length > 0 ? item.pathSegments : [item.fieldName];
-  const fieldTarget = item.fullFieldPath || segments.join(".");
 
   const setDocField = async (newVal: any) => {
     if (conn?.isLocalJson) {
@@ -557,9 +564,26 @@ export async function deleteFieldCommand(
           return;
         }
         try {
-          const firestore = await ConnectionManager.getInstance().getFirestore(parsed.connectionId);
-          const docRef = firestore.doc(parsed.docPath);
-          const segments = parsed.fieldPath.includes(".") ? parsed.fieldPath.split(".") : [parsed.fieldPath];
+          const conn = ConnectionManager.getInstance().getConnection(parsed.connectionId);
+          let docRef: any;
+          let segments: string[];
+          if (conn?.isLocalJson) {
+            docRef = { id: parsed.docPath.split("/").pop()!, path: parsed.docPath };
+            const localDoc = LocalJsonService.getInstance().getDocument(conn, parsed.docPath);
+            if (localDoc && Object.prototype.hasOwnProperty.call(localDoc, parsed.fieldPath)) {
+              segments = [parsed.fieldPath];
+            } else {
+              segments = parsed.fieldPath.includes(".")
+                ? parsed.fieldPath.split(".")
+                : [parsed.fieldPath];
+            }
+          } else {
+            const firestore = await ConnectionManager.getInstance().getFirestore(parsed.connectionId);
+            docRef = firestore.doc(parsed.docPath);
+            segments = parsed.fieldPath.includes(".")
+              ? parsed.fieldPath.split(".")
+              : [parsed.fieldPath];
+          }
           targetItem = {
             parentDocRef: docRef,
             fieldName: segments[segments.length - 1],
@@ -585,11 +609,8 @@ export async function deleteFieldCommand(
   const segments = targetItem.pathSegments && targetItem.pathSegments.length > 0 ? targetItem.pathSegments : [targetItem.fieldName];
   const fullPathStr = targetItem.fullFieldPath || segments.join(".");
 
-  const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
-  const protectSystemKeys = config.get<boolean>("protectSystemKeys", true);
-  const isSystemKey = targetItem.fieldName.startsWith("_");
-
-  const promptText = (protectSystemKeys && isSystemKey)
+  const isSystemKey = isSystemFieldPath(segments);
+  const promptText = (isProtectSystemKeysEnabled() && isSystemKey)
     ? `⚠️ Safe Mode Warning: "${fullPathStr}" is a System Envelope or Protocol key. Deleting it may break query filtering or lifecycle rules. Are you sure?`
     : `Are you sure you want to delete the field "${fullPathStr}" from document "${targetItem.parentDocRef.id}"?`;
 
@@ -604,16 +625,23 @@ export async function deleteFieldCommand(
     try {
       const conn = ConnectionManager.getInstance().getConnection(targetItem.connectionId);
       if (conn?.isLocalJson) {
-        LocalJsonService.getInstance().updateField(conn, targetItem.parentDocRef.path, fullPathStr, undefined, true);
-        documentFileSystemProvider.invalidateAndNotifyFieldDeleted(targetItem.connectionId, targetItem.parentDocRef.path, [fullPathStr, targetItem.fieldName]);
+        LocalJsonService.getInstance().updateField(conn, targetItem.parentDocRef.path, segments, undefined, true);
+        documentFileSystemProvider.invalidateAndNotifyFieldDeleted(targetItem.connectionId, targetItem.parentDocRef.path, [fullPathStr]);
         vscode.window.showInformationMessage(`Field "${fullPathStr}" deleted!`);
         explorerDataProvider.refreshNode(targetItem);
         return;
       }
 
-      await targetItem.parentDocRef.update(new FieldPath(...segments), FieldValue.delete());
-      CostService.getInstance().recordOperation(targetItem.connectionId, "write", 1);
-      documentFileSystemProvider.invalidateAndNotifyFieldDeleted(targetItem.connectionId, targetItem.parentDocRef.path, [fullPathStr, targetItem.fieldName]);
+      if (segments.some((s) => /^\d+$/.test(s))) {
+        const firestore = await ConnectionManager.getInstance().getFirestore(targetItem.connectionId);
+        await safeFirestoreFieldUpdate(firestore, targetItem.parentDocRef.path, segments, undefined, true);
+        CostService.getInstance().recordOperation(targetItem.connectionId, "read", 1);
+        CostService.getInstance().recordOperation(targetItem.connectionId, "write", 1);
+      } else {
+        await targetItem.parentDocRef.update(new FieldPath(...segments), FieldValue.delete());
+        CostService.getInstance().recordOperation(targetItem.connectionId, "write", 1);
+      }
+      documentFileSystemProvider.invalidateAndNotifyFieldDeleted(targetItem.connectionId, targetItem.parentDocRef.path, [fullPathStr]);
       vscode.window.showInformationMessage(`Field "${fullPathStr}" deleted!`);
       explorerDataProvider.refreshNode(targetItem);
     } catch (err: any) {
@@ -694,8 +722,13 @@ export async function deleteMultipleFieldsCommand(
     // Check if invoked on a DocumentFieldItem that is a Map
     const isMapField =
       item instanceof DocumentFieldItem &&
-      (item.contextValue === "documentFieldMap" ||
-        (item.value && typeof item.value === "object" && !Array.isArray(item.value)));
+      (item.contextValue?.startsWith("documentField:map") ||
+        (!item.contextValue?.startsWith("documentField:timestamp") &&
+          !item.contextValue?.startsWith("documentField:vector") &&
+          item.value &&
+          typeof item.value === "object" &&
+          !Array.isArray(item.value) &&
+          !isTimestampLike(item.value)));
 
     if (isMapField) {
       const parentSegments =
@@ -755,14 +788,16 @@ export async function deleteMultipleFieldsCommand(
       }
 
       const selectedKeys = selected.map((s) => s.key);
-      const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
-      const protectSystemKeys = config.get<boolean>("protectSystemKeys", true);
-      const hasSystemKeys = selected.some((s) => s.isSystem);
+      const protectSystemKeys = isProtectSystemKeysEnabled();
+      const isParentSystem = isSystemFieldPath(parentSegments);
+      const hasSystemKeys = isParentSystem || selected.some((s) => s.isSystem);
 
       let confirmPrompt = `Are you sure you want to delete ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"} (${selectedKeys.slice(0, 5).join(", ")}${selectedKeys.length > 5 ? "..." : ""}) from Map "${targetPathStr}"?`;
       if (protectSystemKeys && hasSystemKeys) {
         const systemKeyNames = selected.filter((s) => s.isSystem).map((s) => s.key).join(", ");
-        confirmPrompt = `⚠️ Safe Mode Warning: You selected System Envelope / Protocol keys (${systemKeyNames}). Proceed with deleting all ${selectedKeys.length} properties?`;
+        confirmPrompt = systemKeyNames
+          ? `⚠️ Safe Mode Warning: You selected System Envelope / Protocol keys (${systemKeyNames}). Proceed with deleting all ${selectedKeys.length} properties?`
+          : `⚠️ Safe Mode Warning: Map "${targetPathStr}" is under a System Envelope / Protocol path. Proceed with deleting ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"}?`;
       }
 
       const confirm = await vscode.window.showWarningMessage(
@@ -779,8 +814,8 @@ export async function deleteMultipleFieldsCommand(
       const fullKeyPaths = selectedKeys.map((k) => [...parentSegments, k].join("."));
 
       if (conn?.isLocalJson) {
-        for (const fullK of fullKeyPaths) {
-          LocalJsonService.getInstance().updateField(conn, docRef.path, fullK, undefined, true);
+        for (const k of selectedKeys) {
+          LocalJsonService.getInstance().updateField(conn, docRef.path, [...parentSegments, k], undefined, true);
         }
         documentFileSystemProvider.invalidateAndNotifyFieldDeleted(connectionId, docRef.path, fullKeyPaths);
         vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"} from "${targetPathStr}".`);
@@ -788,13 +823,50 @@ export async function deleteMultipleFieldsCommand(
         return;
       }
 
-      // Firestore deletion with FieldPath
-      const args: any[] = [];
-      for (const k of selectedKeys) {
-        args.push(new FieldPath(...parentSegments, k), FieldValue.delete());
+      // Firestore deletion with array-index safety or FieldPath
+      if (parentSegments.some((s) => /^\d+$/.test(s))) {
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        const typedDocRef = docRef as DocumentReference;
+        await firestore.runTransaction(async (tx) => {
+          const snap = await tx.get(typedDocRef);
+          if (!snap.exists) {
+            throw new Error(`Document "${typedDocRef.id}" no longer exists.`);
+          }
+          const docData = snap.data() || {};
+          let cur: any = docData;
+          for (const seg of parentSegments) {
+            if (Array.isArray(cur) && /^\d+$/.test(seg)) {
+              cur = cur[parseInt(seg, 10)];
+            } else if (cur && typeof cur === "object") {
+              cur = cur[seg];
+            } else {
+              cur = undefined;
+              break;
+            }
+          }
+          if (cur && typeof cur === "object" && !Array.isArray(cur)) {
+            for (const k of selectedKeys) {
+              delete cur[k];
+            }
+          }
+          const firstNumericIdx = parentSegments.findIndex((s) => /^\d+$/.test(s));
+          const topArraySegments = parentSegments.slice(0, firstNumericIdx);
+          let topArrayVal: any = docData;
+          for (const seg of topArraySegments) {
+            topArrayVal = topArrayVal?.[seg];
+          }
+          tx.update(typedDocRef, new FieldPath(...topArraySegments), topArrayVal);
+        });
+        CostService.getInstance().recordOperation(connectionId, "read", 1);
+        CostService.getInstance().recordOperation(connectionId, "write", 1);
+      } else {
+        const args: any[] = [];
+        for (const k of selectedKeys) {
+          args.push(new FieldPath(...parentSegments, k), FieldValue.delete());
+        }
+        await (docRef.update as any)(...args);
+        CostService.getInstance().recordOperation(connectionId, "write", 1);
       }
-      await (docRef.update as any)(...args);
-      CostService.getInstance().recordOperation(connectionId, "write", 1);
       documentFileSystemProvider.invalidateAndNotifyFieldDeleted(connectionId, docRef.path, fullKeyPaths);
       vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"} from "${targetPathStr}".`);
       explorerDataProvider.refreshNode(item);
@@ -891,15 +963,13 @@ export async function deleteMultipleFieldsCommand(
 
     if (conn?.isLocalJson) {
       for (const key of selectedKeys) {
-        LocalJsonService.getInstance().updateField(conn, docRef.path, key, undefined, true);
+        LocalJsonService.getInstance().updateField(conn, docRef.path, [key], undefined, true);
       }
       documentFileSystemProvider.invalidateAndNotifyFieldDeleted(connectionId, docRef.path, selectedKeys);
       vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} field(s) from "${docRef.id}".`);
 
-      if (refreshTarget) {
+      if (refreshTarget instanceof DocumentItem || refreshTarget instanceof DocumentFieldItem) {
         explorerDataProvider.refreshNode(refreshTarget);
-      } else {
-        explorerDataProvider.refresh();
       }
       return;
     }
@@ -919,10 +989,8 @@ export async function deleteMultipleFieldsCommand(
     documentFileSystemProvider.invalidateAndNotifyFieldDeleted(connectionId, docRef.path, selectedKeys);
     vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} field(s) from "${docRef.id}".`);
 
-    if (refreshTarget) {
+    if (refreshTarget instanceof DocumentItem || refreshTarget instanceof DocumentFieldItem) {
       explorerDataProvider.refreshNode(refreshTarget);
-    } else {
-      explorerDataProvider.refresh();
     }
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to delete multiple fields: ${err.message}`);
@@ -954,24 +1022,44 @@ export async function addFieldCommand(
     return;
   }
 
+  const isMissingDoc = item instanceof DocumentItem && item.isMissingDocument;
   const isMapField =
     item instanceof DocumentFieldItem &&
-    (item.contextValue === "documentFieldMap" ||
-      (item.value && typeof item.value === "object" && !Array.isArray(item.value)));
+    (item.contextValue?.startsWith("documentField:map") ||
+      (!item.contextValue?.startsWith("documentField:timestamp") &&
+        !item.contextValue?.startsWith("documentField:vector") &&
+        item.value &&
+        typeof item.value === "object" &&
+        !Array.isArray(item.value) &&
+        !isTimestampLike(item.value)));
+  const isNestedSibling =
+    item instanceof DocumentFieldItem &&
+    !isMapField &&
+    !item.isArrayElement &&
+    Array.isArray(item.pathSegments) &&
+    item.pathSegments.length > 1;
   const parentSegments = isMapField
     ? item.pathSegments && item.pathSegments.length > 0
       ? item.pathSegments
       : [item.fieldName]
-    : [];
-  const targetLabel = isMapField ? item.fullFieldPath || item.fieldName : docRef.id;
+    : isNestedSibling
+      ? item.pathSegments.slice(0, -1)
+      : [];
+  const targetLabel = isMapField
+    ? item.fullFieldPath || item.fieldName
+    : isNestedSibling
+      ? parentSegments.join(".")
+      : docRef.id;
 
   const fieldName = await vscode.window.showInputBox({
-    prompt: isMapField
-      ? `Enter new Property name for '${targetLabel}'`
-      : `Enter new Field name for '${docRef.id}'`,
-    placeHolder: isMapField
-      ? "propertyName (e.g. timeout, theme, host)"
-      : "fieldName (e.g. settings, tags, status)",
+    prompt:
+      isMapField || isNestedSibling
+        ? `Enter new Property name for '${targetLabel}'`
+        : `Enter new Field name for '${docRef.id}'`,
+    placeHolder:
+      isMapField || isNestedSibling
+        ? "propertyName (e.g. timeout, theme, host)"
+        : "fieldName (e.g. settings, tags, status)",
     validateInput: (v) => {
       const trimmed = v.trim();
       if (!trimmed) {
@@ -1126,24 +1214,33 @@ export async function addFieldCommand(
       LocalJsonService.getInstance().updateField(conn, docRef.path, fullTargetStr, fieldValue);
       DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId!, docRef.path);
     } else {
-      await docRef.update(new FieldPath(...targetSegments), fieldValue);
+      if (isMissingDoc) {
+        await docRef.set({ [fieldName.trim()]: fieldValue }, { merge: true });
+      } else {
+        await docRef.update(new FieldPath(...targetSegments), fieldValue);
+      }
       if (connectionId) {
         CostService.getInstance().recordOperation(connectionId, "write", 1);
         DocumentFileSystemProvider.getInstance().invalidateAndNotify(connectionId, docRef.path);
       }
     }
     vscode.window.showInformationMessage(
-      isMapField
+      isMapField || isNestedSibling
         ? `Property '${fieldName.trim()}' added to '${targetLabel}'!`
         : `Field '${fieldName.trim()}' added!`
     );
     explorerDataProvider.refreshNode(item);
+    if (isMissingDoc && docRef.parent) {
+      explorerDataProvider.refreshNode(
+        new CollectionItem(docRef.parent.id, docRef.parent, connectionId!)
+      );
+    }
 
     if (shouldOpenInEditor) {
       await openPath(docRef.path, connectionId, fullTargetStr);
     }
   } catch (err: any) {
-    vscode.window.showErrorMessage(`Failed to add ${isMapField ? "property" : "field"}: ${err.message}`);
+    vscode.window.showErrorMessage(`Failed to add ${isMapField || isNestedSibling ? "property" : "field"}: ${err.message}`);
   }
 }
 
@@ -1282,7 +1379,7 @@ async function mutateDocumentArray(
 
   try {
     const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
-    let arr: any[];
+    let arr: any[] = [];
 
     if (conn?.isLocalJson) {
       const doc = LocalJsonService.getInstance().getDocument(conn, item.parentDocRef.path) || {};
@@ -1298,21 +1395,43 @@ async function mutateDocumentArray(
       }
       LocalJsonService.getInstance().setDocument(conn, item.parentDocRef.path, doc);
     } else {
+      const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
+      await firestore.runTransaction(async (tx) => {
+        const snap = await tx.get(item.parentDocRef);
+        if (!snap.exists) {
+          throw new Error(`Document "${item.parentDocRef.id}" no longer exists.`);
+        }
+        const docData = snap.data() || {};
+        let cur: any = docData;
+        for (let i = 0; i < arraySegments.length - 1; i++) {
+          const seg = arraySegments[i];
+          cur = Array.isArray(cur) && /^\d+$/.test(seg) ? cur[parseInt(seg, 10)] : cur?.[seg];
+        }
+        const lastSeg = arraySegments[arraySegments.length - 1];
+        const existing =
+          Array.isArray(cur) && /^\d+$/.test(lastSeg) ? cur[parseInt(lastSeg, 10)] : cur?.[lastSeg];
+        arr = Array.isArray(existing) ? [...existing] : [];
+        mutator(arr);
+        if (cur && typeof cur === "object") {
+          if (Array.isArray(cur) && /^\d+$/.test(lastSeg)) {
+            cur[parseInt(lastSeg, 10)] = arr;
+          } else {
+            cur[lastSeg] = arr;
+          }
+        }
+        const firstNumericIdx = arraySegments.findIndex((s) => /^\d+$/.test(s));
+        if (firstNumericIdx > 0) {
+          const topArraySegments = arraySegments.slice(0, firstNumericIdx);
+          let topArrayVal: any = docData;
+          for (const seg of topArraySegments) {
+            topArrayVal = topArrayVal?.[seg];
+          }
+          tx.update(item.parentDocRef, new FieldPath(...topArraySegments), topArrayVal);
+        } else {
+          tx.update(item.parentDocRef, new FieldPath(...arraySegments), arr);
+        }
+      });
       CostService.getInstance().recordOperation(item.connectionId, "read", 1);
-      const snap = await item.parentDocRef.get();
-      if (!snap.exists) {
-        vscode.window.showErrorMessage(`Document "${item.parentDocRef.id}" no longer exists.`);
-        return false;
-      }
-      const docData = snap.data() || {};
-      let cur: any = docData;
-      for (let i = 0; i < arraySegments.length - 1; i++) {
-        cur = cur?.[arraySegments[i]];
-      }
-      const existing = cur?.[arraySegments[arraySegments.length - 1]];
-      arr = Array.isArray(existing) ? [...existing] : [];
-      mutator(arr);
-      await item.parentDocRef.update(new FieldPath(...arraySegments), arr);
       CostService.getInstance().recordOperation(item.connectionId, "write", 1);
     }
 
@@ -1505,23 +1624,53 @@ export async function deleteArrayItemCommand(
   }
 
   const idx = item.arrayIndex;
-  const parentName = item.parentArrayItem?.fieldName || "array";
+  const parentArray = item.parentArrayItem || item;
+  const parentSegments =
+    parentArray.pathSegments && parentArray.pathSegments.length > 0
+      ? parentArray.pathSegments
+      : [parentArray.fieldName];
+  const parentName = parentArray.fieldName || "array";
+
+  let previewStr = "";
+  try {
+    const raw = JSON.stringify(item.value);
+    if (raw !== undefined) {
+      previewStr = raw.length > 50 ? `${raw.slice(0, 47)}...` : raw;
+    }
+  } catch {
+    previewStr = String(item.value);
+  }
+  const valueDetail = previewStr ? ` (${previewStr})` : "";
+  const safeWarning =
+    isProtectSystemKeysEnabled() && isSystemFieldPath(parentSegments)
+      ? `⚠️ Safe Mode Warning: '${parentSegments.join(".")}' is a System Envelope or Protocol field.\n\n`
+      : "";
+
   const confirm = await vscode.window.showWarningMessage(
-    `Are you sure you want to delete item [${idx}] from '${parentName}'?`,
+    `${safeWarning}Are you sure you want to delete item [${idx}]${valueDetail} from '${parentName}'?`,
     { modal: true },
     "Delete Item",
     "Cancel"
   );
   if (confirm !== "Delete Item") return;
 
-  await mutateDocumentArray(
+  const ok = await mutateDocumentArray(
     item,
     (arr) => {
-      arr.splice(idx, 1);
+      if (idx >= 0 && idx < arr.length) {
+        arr.splice(idx, 1);
+      }
     },
     `Deleted item [${idx}]`,
     explorerDataProvider
   );
+  if (ok) {
+    DocumentFileSystemProvider.getInstance().invalidateAndNotifyFieldDeleted(
+      item.connectionId,
+      item.parentDocRef.path,
+      item.fullFieldPath
+    );
+  }
 }
 
 /**

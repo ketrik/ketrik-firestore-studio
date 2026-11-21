@@ -773,11 +773,11 @@ export function registerSecretCommands(
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.refreshSecrets",
-      (item?: any) => {
+      async (item?: any) => {
         if (item) {
-          explorerDataProvider.refreshNode(item);
+          await explorerDataProvider.refreshNodeWithFeedback(item);
         } else {
-          explorerDataProvider.refresh();
+          await explorerDataProvider.refreshWithFeedback();
         }
       }
     ),

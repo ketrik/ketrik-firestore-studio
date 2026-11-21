@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { CollectionItem } from "../explorer/items";
+import { CollectionItem, DocumentFieldItem } from "../explorer/items";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { LocalJsonService } from "../services/LocalJsonService";
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
@@ -33,6 +33,15 @@ export async function transformCollectionFieldCommand(
   if (target instanceof CollectionItem) {
     connectionId = target.connectionId;
     collectionPath = target.reference.path;
+  } else if (target instanceof DocumentFieldItem) {
+    connectionId = target.connectionId;
+    const segments = (target.parentDocRef?.path || "").split("/").filter(Boolean);
+    collectionPath = segments.slice(0, -1).join("/");
+    if (!collectionPath) {
+      vscode.window.showErrorMessage("Could not determine parent collection for this field.");
+      return;
+    }
+    initialField = target.fullFieldPath || target.fieldName;
   } else if (target && "connectionId" in target && "collectionPath" in target) {
     connectionId = target.connectionId;
     collectionPath = target.collectionPath;

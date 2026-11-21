@@ -26,7 +26,9 @@ export async function openSchemaAnalyzer(
     collectionPath = target.reference.path;
   } else if (target instanceof DocumentItem) {
     connectionId = target.connectionId;
-    collectionPath = target.reference.parent.path;
+    collectionPath =
+      target.reference?.parent?.path ||
+      (target.reference?.path || "").split("/").filter(Boolean).slice(0, -1).join("/");
   } else if (target && "connectionId" in target && "collectionPath" in target) {
     connectionId = target.connectionId;
     collectionPath = target.collectionPath;

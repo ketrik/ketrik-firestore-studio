@@ -37,7 +37,7 @@ import { IndexesService } from "../indexes/indexesService";
 import { StorageService } from "../storage/storageService";
 import { parseHostPort, probePort } from "../emulator/portUtils";
 import { LocalJsonService } from "../services/LocalJsonService";
-import { isTimestampLike } from "../utils/timestampUtils";
+import { isTimestampLike, timestampToDate } from "../utils/timestampUtils";
 import { CostService } from "../cost/costService";
 import { matchesSearchTerm } from "../webview/common/tableUtils";
 
@@ -45,6 +45,8 @@ import { matchesSearchTerm } from "../webview/common/tableUtils";
 const MAX_MAP_SIZE = 200;
 /** Maximum number of tree branch results cached in memory (LRU eviction). */
 const MAX_TREE_CACHE_SIZE = 250;
+/** Minimum duration the refresh progress/spinner remains visible so fast refreshes don't flicker or go unnoticed. */
+const MIN_REFRESH_INDICATOR_MS = 500;
 
 /**
  * Evict the oldest entry from a Map when it exceeds maxSize.
@@ -70,12 +72,85 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   private _authUsersPaging = new Map<string, { items: AuthUserItem[]; nextPageToken?: string }>();
   private _orderBy = new Map<string, { field: string | undefined; direction: "asc" | "desc" }>();
   private _collectionFilters = new Map<string, string>();
+  private _collectionCounts = new Map<string, number>();
   private _connectionListener: vscode.Disposable;
   private _rulesListener: vscode.Disposable;
+  private _configListener: vscode.Disposable;
+
+  /** Canonical registry of live TreeItem instances currently tracked by VS Code's TreeView. */
+  private _liveNodes = new Map<string, Item>();
+  /** Timestamps of explicit direct node/parent refreshes to suppress duplicate 60ms FS-event invalidations. */
+  private _recentDirectRefresh = new Map<string, number>();
+
+  private _registerItems<T extends Item>(items: T[]): T[] {
+    for (const it of items) {
+      if (it.id) {
+        this._liveNodes.set(it.id, it);
+      }
+    }
+    if (this._liveNodes.size > 5000) {
+      const oldest = this._liveNodes.keys().next().value;
+      if (oldest !== undefined) {
+        this._liveNodes.delete(oldest);
+      }
+    }
+    return items;
+  }
+
+  public setCollectionCount(connectionId: string, collPath: string, count: number): void {
+    const key = `${connectionId}:${collPath}`;
+    this._collectionCounts.delete(key);
+    this._collectionCounts.set(key, count);
+    evictIfNeeded(this._collectionCounts, MAX_MAP_SIZE);
+    const targetCol = this._updateCollectionInParentCache(connectionId, collPath);
+    if (targetCol) {
+      this._onDidChangeTreeData.fire(targetCol);
+    }
+  }
+
+  public getCollectionCount(connectionId: string, collPath: string): number | undefined {
+    return this._collectionCounts.get(`${connectionId}:${collPath}`);
+  }
+
+  private _updateCollectionInParentCache(connectionId: string, collPath: string): CollectionItem | undefined {
+    const targetId = `col:${connectionId}:${collPath}`;
+    const segs = collPath.split("/").filter(Boolean);
+    const parentCacheKey =
+      segs.length > 1
+        ? `doc:${connectionId}:${segs.slice(0, -1).join("/")}`
+        : `conn:${connectionId}`;
+
+    const parentEntry = this._treeCache.get(parentCacheKey);
+    const fromParent = parentEntry?.items.find(
+      (it) => it instanceof CollectionItem && it.id === targetId
+    ) as CollectionItem | undefined;
+    const liveCol = (fromParent || this._liveNodes.get(targetId)) as CollectionItem | undefined;
+
+    if (!liveCol) {
+      if (parentEntry) {
+        this._treeCache.delete(parentCacheKey);
+      }
+      return undefined;
+    }
+
+    const sortCfg = this._orderBy.get(`${connectionId}:${collPath}`);
+    const filter = this.getCollectionFilter(connectionId, collPath);
+    const docCount = this.getCollectionCount(connectionId, collPath);
+    liveCol.updateMeta(
+      {
+        fieldName: sortCfg?.field ?? "id",
+        direction: (sortCfg?.direction ?? "asc") as OrderByDirection,
+      },
+      filter,
+      docCount
+    );
+    this._liveNodes.set(targetId, liveCol);
+    return liveCol;
+  }
 
   public setCollectionFilter(connectionId: string, collPath: string, filter: string): void {
     const key = `${connectionId}:${collPath}`;
-    const trimmed = filter.trim().toLowerCase();
+    const trimmed = filter.trim();
     if (!trimmed) {
       this._collectionFilters.delete(key);
     } else {
@@ -88,22 +163,20 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         }
       }
     }
-    const prefix = `col:${connectionId}:${collPath}:`;
-    for (const k of this._treeCache.keys()) {
-      if (k.startsWith(prefix)) {
-        this._treeCache.delete(k);
-      }
+    this._deleteCachePrefix(`col:${connectionId}:${collPath}:`);
+    const targetCol = this._updateCollectionInParentCache(connectionId, collPath);
+    if (targetCol) {
+      this._onDidChangeTreeData.fire(targetCol);
     }
   }
 
   public clearCollectionFilter(connectionId: string, collPath: string): void {
     const key = `${connectionId}:${collPath}`;
     this._collectionFilters.delete(key);
-    const prefix = `col:${connectionId}:${collPath}:`;
-    for (const k of this._treeCache.keys()) {
-      if (k.startsWith(prefix)) {
-        this._treeCache.delete(k);
-      }
+    this._deleteCachePrefix(`col:${connectionId}:${collPath}:`);
+    const targetCol = this._updateCollectionInParentCache(connectionId, collPath);
+    if (targetCol) {
+      this._onDidChangeTreeData.fire(targetCol);
     }
   }
 
@@ -114,15 +187,74 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
   /** Cache tree children (collections, docs, fields) to avoid re-requesting on repeated expand/collapse. */
   private _treeCache = new Map<string, { items: Item[]; timestamp: number }>();
+  /** Short-lived hold cache so post-spinner UI redraws never trigger duplicate Firestore reads even when cacheTTLSeconds is 0. */
+  private _shortHoldCache = new Map<string, { items: Item[]; expiresAt: number }>();
   private _debounceTimer: NodeJS.Timeout | undefined;
-  private _pendingInvalidations = new Set<string>();
+  private _pendingInvalidations = new Map<string, "changed" | "deleted">();
 
   private _treeView: vscode.TreeView<Item> | undefined;
   private _treeViewDisposables: vscode.Disposable[] = [];
+  private _expandedNodeIds = new Set<string>();
   private _expandedDocIds = new Set<string>();
   private _expandedFieldIds = new Set<string>();
+  private _refreshingNodeIds = new Set<string>();
+  private _refreshGenerations = new Map<string, number>();
+  private _refreshWaiters = new Map<string, Array<() => void>>();
   private _revealingDoc: { connectionId: string; docPath: string; docId: string } | null = null;
   private _revealDebounceTimer: NodeJS.Timeout | undefined;
+
+  private _deleteCacheKey(key: string): void {
+    this._treeCache.delete(key);
+    this._shortHoldCache.delete(key);
+  }
+
+  private _deleteCachePrefix(prefix: string): void {
+    for (const k of this._treeCache.keys()) {
+      if (k.startsWith(prefix)) {
+        this._treeCache.delete(k);
+      }
+    }
+    for (const k of this._shortHoldCache.keys()) {
+      if (k.startsWith(prefix)) {
+        this._shortHoldCache.delete(k);
+      }
+    }
+  }
+
+  private _notifyRefreshWaiters(nodeId: string): void {
+    const waiters = this._refreshWaiters.get(nodeId);
+    if (!waiters || waiters.length === 0) {
+      return;
+    }
+    this._refreshWaiters.delete(nodeId);
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  private _waitForGetChildren(nodeId: string, timeoutMs = 15000): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        const list = this._refreshWaiters.get(nodeId);
+        if (list) {
+          const idx = list.indexOf(done);
+          if (idx !== -1) list.splice(idx, 1);
+          if (list.length === 0) this._refreshWaiters.delete(nodeId);
+        }
+        done();
+      }, timeoutMs);
+      const list = this._refreshWaiters.get(nodeId) ?? [];
+      list.push(done);
+      this._refreshWaiters.set(nodeId, list);
+    });
+  }
 
   public setTreeView(treeView: vscode.TreeView<Item>): void {
     for (const d of this._treeViewDisposables) {
@@ -133,6 +265,9 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
     this._treeViewDisposables.push(
       treeView.onDidExpandElement((e) => {
+        if (e.element.id) {
+          this._expandedNodeIds.add(e.element.id);
+        }
         if (e.element instanceof DocumentItem) {
           const docKey = `doc:${e.element.connectionId}:${e.element.reference.path}`;
           this._expandedDocIds.add(docKey);
@@ -141,6 +276,9 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         }
       }),
       treeView.onDidCollapseElement((e) => {
+        if (e.element.id) {
+          this._expandedNodeIds.delete(e.element.id);
+        }
         if (e.element instanceof DocumentItem) {
           const docKey = `doc:${e.element.connectionId}:${e.element.reference.path}`;
           this._expandedDocIds.delete(docKey);
@@ -162,6 +300,23 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     this._rulesListener = RulesService.getInstance().onDidChangeRules(() => {
       this.refresh(true);
     });
+
+    this._configListener = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("ketrik-firestore-studio.authProfileCollection")) {
+        this._authUsersPaging.clear();
+        this._deleteCachePrefix("auth:");
+        const branches = Array.from(this._liveNodes.values()).filter(
+          (node): node is AuthUsersBranchItem => node instanceof AuthUsersBranchItem
+        );
+        if (branches.length > 0) {
+          for (const branch of branches) {
+            this._onDidChangeTreeData.fire(branch);
+          }
+        } else {
+          this.refresh();
+        }
+      }
+    });
   }
 
   private getCacheTTL(): number {
@@ -182,30 +337,88 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     for (const d of this._treeViewDisposables) {
       d.dispose();
     }
+    for (const nodeId of Array.from(this._refreshWaiters.keys())) {
+      this._notifyRefreshWaiters(nodeId);
+    }
     this._treeViewDisposables = [];
+    this._expandedNodeIds.clear();
     this._expandedDocIds.clear();
     this._expandedFieldIds.clear();
+    this._refreshingNodeIds.clear();
+    this._refreshGenerations.clear();
     this._pendingInvalidations.clear();
+    this._liveNodes.clear();
+    this._recentDirectRefresh.clear();
     this._connectionListener.dispose();
     this._rulesListener.dispose();
+    this._configListener.dispose();
     this._onDidChangeTreeData.dispose();
     this._paging.clear();
     this._authUsersPaging.clear();
     this._orderBy.clear();
     this._treeCache.clear();
+    this._shortHoldCache.clear();
     this._collectionFilters.clear();
+    this._collectionCounts.clear();
   }
 
   refresh(resetState = false): void {
     this._treeCache.clear();
+    this._shortHoldCache.clear();
+    this._pendingInvalidations.clear();
     if (resetState) {
+      this._liveNodes.clear();
+      this._recentDirectRefresh.clear();
       this._paging.clear();
       this._authUsersPaging.clear();
       this._orderBy.clear();
+      this._collectionCounts.clear();
+      this._expandedNodeIds.clear();
       this._expandedDocIds.clear();
       this._expandedFieldIds.clear();
     }
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  private _isRecentDirectRefresh(connectionId: string, docPath: string): boolean {
+    const ts = this._recentDirectRefresh.get(`${connectionId}:${docPath}`);
+    return ts !== undefined && Date.now() - ts < 250;
+  }
+
+  private _markRecentDirectRefresh(connectionId: string, docPath: string): void {
+    const key = `${connectionId}:${docPath}`;
+    this._recentDirectRefresh.set(key, Date.now());
+    this._pendingInvalidations.delete(key);
+    evictIfNeeded(this._recentDirectRefresh, MAX_MAP_SIZE);
+  }
+
+  private _findLiveDocument(connectionId: string, docPath: string): DocumentItem | undefined {
+    const targetDocId = `doc:${connectionId}:${docPath}`;
+    const fromRegistry = this._liveNodes.get(targetDocId);
+    if (fromRegistry instanceof DocumentItem) {
+      return fromRegistry;
+    }
+    for (const [k, v] of this._treeCache.entries()) {
+      if (k.startsWith(`col:${connectionId}:`)) {
+        const match = v.items.find(
+          (it) => it instanceof DocumentItem && it.id === targetDocId
+        ) as DocumentItem | undefined;
+        if (match) {
+          this._liveNodes.set(targetDocId, match);
+          return match;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private _findLiveCollection(connectionId: string, collPath: string): CollectionItem | undefined {
+    const targetColId = `col:${connectionId}:${collPath}`;
+    const fromRegistry = this._liveNodes.get(targetColId);
+    if (fromRegistry instanceof CollectionItem) {
+      return fromRegistry;
+    }
+    return this._updateCollectionInParentCache(connectionId, collPath);
   }
 
   /**
@@ -213,6 +426,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
    * and granular branch invalidation. Avoids full tree cache flushes on document saves.
    */
   public handleFileChanges(events: readonly vscode.FileChangeEvent[]): void {
+    let added = false;
     for (const ev of events) {
       const uri = ev.uri;
       const connectionId = uri.authority;
@@ -224,14 +438,28 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         continue;
       }
       const segments = pathStr.split("/").filter(Boolean);
-      // If odd segments >= 3, last segment was a fieldPath
-      if (segments.length % 2 === 1 && segments.length >= 3) {
+      // If odd segments >= 3, last segment was a fieldPath (field-level deletion only changes the parent doc)
+      const isFieldUri = segments.length % 2 === 1 && segments.length >= 3;
+      if (isFieldUri) {
         segments.pop();
       }
       const docPath = segments.join("/");
-      if (docPath && connectionId) {
-        this._pendingInvalidations.add(`${connectionId}:${docPath}`);
+      if (!docPath || !connectionId) {
+        continue;
       }
+      if (this._isRecentDirectRefresh(connectionId, docPath)) {
+        continue;
+      }
+      const key = `${connectionId}:${docPath}`;
+      const kind: "changed" | "deleted" =
+        !isFieldUri && ev.type === vscode.FileChangeType.Deleted ? "deleted" : "changed";
+      const prev = this._pendingInvalidations.get(key);
+      this._pendingInvalidations.set(key, prev === "deleted" || kind === "deleted" ? "deleted" : "changed");
+      added = true;
+    }
+
+    if (!added) {
+      return;
     }
 
     if (this._debounceTimer) {
@@ -246,77 +474,206 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   private _flushPendingInvalidations(): void {
     if (this._pendingInvalidations.size === 0) return;
 
-    const invalidatedDocs: Array<{ connectionId: string; docPath: string }> = [];
+    const changedDocs: Array<{ connectionId: string; docPath: string }> = [];
+    const deletedParents = new Map<string, { connectionId: string; collPath: string }>();
 
-    for (const key of this._pendingInvalidations) {
+    for (const [key, kind] of this._pendingInvalidations.entries()) {
       const sep = key.indexOf(":");
       if (sep === -1) continue;
       const connectionId = key.substring(0, sep);
       const docPath = key.substring(sep + 1);
 
-      // Invalidate the document node cache
-      this._treeCache.delete(`doc:${connectionId}:${docPath}`);
-
-      // Invalidate any subfield cache keys for this document
-      const fieldPrefix = `field:${connectionId}:${docPath}#`;
-      for (const k of this._treeCache.keys()) {
-        if (k.startsWith(fieldPrefix)) {
-          this._treeCache.delete(k);
-        }
+      if (this._isRecentDirectRefresh(connectionId, docPath)) {
+        continue;
       }
 
-      invalidatedDocs.push({ connectionId, docPath });
+      // Always invalidate the document node cache and subfield caches
+      this._deleteCacheKey(`doc:${connectionId}:${docPath}`);
+      this._deleteCachePrefix(`field:${connectionId}:${docPath}#`);
 
-      // Invalidate the parent collection node cache
-      const parentCollPath = docPath.includes("/") ? docPath.substring(0, docPath.lastIndexOf("/")) : "";
-      if (parentCollPath) {
-        const prefix = `col:${connectionId}:${parentCollPath}:`;
-        for (const k of this._treeCache.keys()) {
-          if (k.startsWith(prefix)) {
-            this._treeCache.delete(k);
-          }
+      if (kind === "deleted") {
+        this._deleteCachePrefix(`col:${connectionId}:${docPath}/`);
+        this._deleteCachePrefix(`doc:${connectionId}:${docPath}/`);
+        const parentCollPath = docPath.includes("/") ? docPath.substring(0, docPath.lastIndexOf("/")) : "";
+        if (parentCollPath) {
+          this._collectionCounts.delete(`${connectionId}:${parentCollPath}`);
+          this._deleteCachePrefix(`col:${connectionId}:${parentCollPath}:`);
+          deletedParents.set(`${connectionId}:${parentCollPath}`, { connectionId, collPath: parentCollPath });
         }
+      } else {
+        changedDocs.push({ connectionId, docPath });
       }
     }
 
     this._pendingInvalidations.clear();
 
-    // Granular refresh: If only a few documents were invalidated, refresh just those doc nodes
-    // using the exact cached DocumentItem instance, or fall back to tree refresh.
-    if (invalidatedDocs.length > 0 && invalidatedDocs.length <= 5) {
-      let anyDocRefreshed = false;
-      for (const { connectionId, docPath } of invalidatedDocs) {
-        const targetDocId = `doc:${connectionId}:${docPath}`;
-        let matchedDoc: DocumentItem | undefined;
-        for (const [k, v] of this._treeCache.entries()) {
-          if (k.startsWith(`col:${connectionId}:`)) {
-            const match = v.items.find(
-              (it) => it instanceof DocumentItem && it.id === targetDocId
-            ) as DocumentItem | undefined;
-            if (match) {
-              matchedDoc = match;
-              break;
-            }
+    // Refresh only deleted parent collections
+    for (const { connectionId, collPath } of deletedParents.values()) {
+      const parentCol = this._findLiveCollection(connectionId, collPath);
+      if (parentCol) {
+        this._onDidChangeTreeData.fire(parentCol);
+      }
+    }
+
+    // Refresh only changed documents (or parent collection if the doc is newly created and not yet tracked)
+    for (const { connectionId, docPath } of changedDocs) {
+      const matchedDoc = this._findLiveDocument(connectionId, docPath);
+      if (matchedDoc) {
+        this._onDidChangeTreeData.fire(matchedDoc);
+      } else {
+        const parentCollPath = docPath.includes("/") ? docPath.substring(0, docPath.lastIndexOf("/")) : "";
+        if (parentCollPath) {
+          this._deleteCachePrefix(`col:${connectionId}:${parentCollPath}:`);
+          const parentCol = this._findLiveCollection(connectionId, parentCollPath);
+          if (parentCol) {
+            this._onDidChangeTreeData.fire(parentCol);
           }
         }
+      }
+    }
+  }
 
-        if (matchedDoc) {
-          this._onDidChangeTreeData.fire(matchedDoc);
-          anyDocRefreshed = true;
+  private _resolveRefreshTarget(element: Item): Item | undefined {
+    const live = (element.id ? this._liveNodes.get(element.id) : undefined) || element;
+    if (element instanceof DocumentFieldItem) {
+      const docPath = element.parentDocRef.path;
+      const targetDoc = this._findLiveDocument(element.connectionId, docPath);
+      if (targetDoc) {
+        return targetDoc;
+      }
+      const parentCollPath = docPath.includes("/") ? docPath.substring(0, docPath.lastIndexOf("/")) : "";
+      return parentCollPath ? this._findLiveCollection(element.connectionId, parentCollPath) : undefined;
+    }
+    if (element instanceof CollectionItem) {
+      return this._findLiveCollection(element.connectionId, element.reference.path) || live;
+    }
+    if (element instanceof AuthUsersBranchItem || element instanceof AuthUserItem) {
+      return this._liveNodes.get(`auth:${element.connectionId}`) || (element instanceof AuthUsersBranchItem ? live : undefined);
+    }
+    if (element instanceof CompositeIndexesBranchItem || element instanceof CompositeIndexItem) {
+      return this._liveNodes.get(`indexes:${element.connectionId}`) || (element instanceof CompositeIndexesBranchItem ? live : undefined);
+    }
+    if (element instanceof StorageBucketsBranchItem) {
+      return this._liveNodes.get(`storage:${element.connectionId}`) || live;
+    }
+    if (element instanceof StorageFileTreeItem) {
+      const fileName = element.fileData.name;
+      const folderPrefix = fileName.includes("/") ? fileName.substring(0, fileName.lastIndexOf("/") + 1) : "";
+      return (
+        (folderPrefix
+          ? this._liveNodes.get(`storageFolder:${element.connectionId}:${element.bucketName}:${folderPrefix}`)
+          : undefined) ||
+        this._liveNodes.get(`storageBucket:${element.connectionId}:${element.bucketName}`)
+      );
+    }
+    if (element instanceof SecretManagerBranchItem) {
+      return this._liveNodes.get(`secrets:${element.connectionId}`) || live;
+    }
+    if (element instanceof SecretTreeItem) {
+      return (
+        this._liveNodes.get(`secrets:${element.connectionId}`) ||
+        this._treeCache
+          .get(`conn:${element.connectionId}`)
+          ?.items.find((it) => it instanceof SecretManagerBranchItem && it.connectionId === element.connectionId)
+      );
+    }
+    if (element instanceof SecretVersionTreeItem) {
+      return (
+        this._liveNodes.get(`secret:${element.connectionId}:${element.version.secretId}`) ||
+        this._treeCache
+          .get(`secrets:${element.connectionId}`)
+          ?.items.find((it) => it instanceof SecretTreeItem && it.secret.id === element.version.secretId)
+      );
+    }
+    if (
+      element instanceof DocumentItem ||
+      element instanceof ConnectionTreeItem ||
+      element instanceof StorageBucketTreeItem ||
+      element instanceof StorageFolderTreeItem
+    ) {
+      return live;
+    }
+    return undefined;
+  }
+
+  /**
+   * Refresh the entire explorer with a view-level progress indicator held for at least MIN_REFRESH_INDICATOR_MS.
+   */
+  public async refreshWithFeedback(resetState = false): Promise<void> {
+    await vscode.window.withProgress(
+      { location: { viewId: "ketrik-firestore-studio-view" } },
+      async () => {
+        const waitRoot = this._waitForGetChildren("root", 5000);
+        const minDelay = new Promise<void>((r) => setTimeout(r, MIN_REFRESH_INDICATOR_MS));
+        this.refresh(resetState);
+        await Promise.all([waitRoot, minDelay]);
+      }
+    );
+  }
+
+  /**
+   * Refresh a specific node (or its parent document/branch) with both a view-level progress bar
+   * and an in-row spinning icon held visible for at least MIN_REFRESH_INDICATOR_MS,
+   * without triggering any extra Firestore reads when restoring the icon.
+   */
+  public async refreshNodeWithFeedback(element?: Item): Promise<void> {
+    if (!element) {
+      return this.refreshWithFeedback(false);
+    }
+
+    const resolved = this._resolveRefreshTarget(element);
+    if (!resolved) {
+      return this.refreshWithFeedback(false);
+    }
+    const target = resolved;
+
+    const spinIds: string[] = [];
+    if (target.id) {
+      spinIds.push(target.id);
+    }
+    if (element instanceof DocumentFieldItem && element.id && !spinIds.includes(element.id)) {
+      spinIds.push(element.id);
+    }
+
+    const startedGens = new Map<string, number>();
+    for (const id of spinIds) {
+      const nextGen = (this._refreshGenerations.get(id) ?? 0) + 1;
+      this._refreshGenerations.set(id, nextGen);
+      startedGens.set(id, nextGen);
+      this._refreshingNodeIds.add(id);
+    }
+
+    const isExpanded = !!(
+      target.id &&
+      (this._expandedNodeIds.has(target.id) ||
+        this._expandedDocIds.has(target.id) ||
+        this._expandedFieldIds.has(target.id))
+    );
+
+    try {
+      await vscode.window.withProgress(
+        { location: { viewId: "ketrik-firestore-studio-view" } },
+        async () => {
+          const waitFetch = isExpanded && target.id ? this._waitForGetChildren(target.id) : Promise.resolve();
+          const minDelay = new Promise<void>((r) => setTimeout(r, MIN_REFRESH_INDICATOR_MS));
+          this.refreshNode(element);
+          await Promise.all([waitFetch, minDelay]);
+        }
+      );
+    } finally {
+      for (const [id, gen] of startedGens.entries()) {
+        if (this._refreshGenerations.get(id) === gen) {
+          this._refreshingNodeIds.delete(id);
+          this._refreshGenerations.delete(id);
         }
       }
-
-      if (!anyDocRefreshed) {
-        this._onDidChangeTreeData.fire(undefined);
-      }
-    } else {
-      this._onDidChangeTreeData.fire(undefined);
+      this._onDidChangeTreeData.fire(target);
     }
   }
 
   /**
-   * Refresh a specific item (document, collection, connection, or field's parent)
-   * while keeping the rest of the tree intact and snappy.
+   * Refresh a specific item (or parent document when invoked on a field)
+   * while keeping all unrelated nodes and caches intact.
    */
   refreshNode(element?: Item): void {
     if (!element) {
@@ -324,124 +681,288 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       return;
     }
 
-    if (element instanceof DocumentItem) {
-      this._treeCache.delete(`doc:${element.connectionId}:${element.reference.path}`);
-      this._onDidChangeTreeData.fire(element);
-    } else if (element instanceof DocumentFieldItem) {
-      this._treeCache.delete(`doc:${element.connectionId}:${element.parentDocRef.path}`);
-      if (element.id) {
-        this._treeCache.delete(element.id);
-      }
-      const fieldPrefix = `field:${element.connectionId}:${element.parentDocRef.path}#`;
-      for (const k of this._treeCache.keys()) {
-        if (k.startsWith(fieldPrefix)) {
-          this._treeCache.delete(k);
-        }
-      }
-      
-      // Look up the existing DocumentItem instance in cached collection results
-      let targetDocItem: DocumentItem | undefined;
-      const targetDocId = `doc:${element.connectionId}:${element.parentDocRef.path}`;
-      for (const [k, v] of this._treeCache.entries()) {
-        if (k.startsWith(`col:${element.connectionId}:`)) {
-          const match = v.items.find(
-            (it) => it instanceof DocumentItem && it.id === targetDocId
-          ) as DocumentItem | undefined;
-          if (match) {
-            targetDocItem = match;
-            break;
-          }
-        }
-      }
+    const live = (element.id ? this._liveNodes.get(element.id) : undefined) || element;
 
+    if (element instanceof DocumentItem) {
+      const docPath = element.reference.path;
+      this._markRecentDirectRefresh(element.connectionId, docPath);
+      this._deleteCacheKey(`doc:${element.connectionId}:${docPath}`);
+      this._deleteCachePrefix(`field:${element.connectionId}:${docPath}#`);
+      this._deleteCachePrefix(`col:${element.connectionId}:${docPath}/`);
+      this._onDidChangeTreeData.fire(live);
+    } else if (element instanceof DocumentFieldItem) {
+      const docPath = element.parentDocRef.path;
+      this._markRecentDirectRefresh(element.connectionId, docPath);
+      this._deleteCacheKey(`doc:${element.connectionId}:${docPath}`);
+      if (element.id) {
+        this._deleteCacheKey(element.id);
+      }
+      this._deleteCachePrefix(`field:${element.connectionId}:${docPath}#`);
+
+      const targetDocItem = this._findLiveDocument(element.connectionId, docPath);
       if (targetDocItem) {
         this._onDidChangeTreeData.fire(targetDocItem);
       } else {
-        // Fallback: If document item instance isn't in cache, refresh parent collection or root
-        const parentCollPath = element.parentDocRef.path.includes("/")
-          ? element.parentDocRef.path.substring(0, element.parentDocRef.path.lastIndexOf("/"))
-          : "";
+        const parentCollPath = docPath.includes("/") ? docPath.substring(0, docPath.lastIndexOf("/")) : "";
         if (parentCollPath) {
-          const prefix = `col:${element.connectionId}:${parentCollPath}:`;
-          for (const k of this._treeCache.keys()) {
-            if (k.startsWith(prefix)) {
-              this._treeCache.delete(k);
-            }
+          this._deleteCachePrefix(`col:${element.connectionId}:${parentCollPath}:`);
+          const parentCol = this._findLiveCollection(element.connectionId, parentCollPath);
+          if (parentCol) {
+            this._onDidChangeTreeData.fire(parentCol);
           }
         }
-        this._onDidChangeTreeData.fire(undefined);
       }
     } else if (element instanceof CollectionItem) {
-      const prefix = `col:${element.connectionId}:${element.reference.path}:`;
-      for (const k of this._treeCache.keys()) {
-        if (k.startsWith(prefix)) {
-          this._treeCache.delete(k);
-        }
-      }
-      this._onDidChangeTreeData.fire(element);
+      const collPath = element.reference.path;
+      this._collectionCounts.delete(`${element.connectionId}:${collPath}`);
+      this._deleteCachePrefix(`col:${element.connectionId}:${collPath}:`);
+      this._deleteCachePrefix(`col:${element.connectionId}:${collPath}/`);
+      this._deleteCachePrefix(`doc:${element.connectionId}:${collPath}/`);
+      this._deleteCachePrefix(`field:${element.connectionId}:${collPath}/`);
+      const liveCol = this._updateCollectionInParentCache(element.connectionId, collPath) || (live as CollectionItem);
+      this._onDidChangeTreeData.fire(liveCol);
     } else if (element instanceof AuthUsersBranchItem) {
-      this._treeCache.delete(`auth:${element.connectionId}`);
+      this._deleteCacheKey(`auth:${element.connectionId}`);
       this._authUsersPaging.delete(element.connectionId);
-      this._onDidChangeTreeData.fire(element);
+      const targetBranch = this._liveNodes.get(`auth:${element.connectionId}`) || live;
+      this._onDidChangeTreeData.fire(targetBranch);
     } else if (element instanceof AuthUserItem) {
-      this._treeCache.delete(`auth:${element.connectionId}`);
+      this._deleteCacheKey(`auth:${element.connectionId}`);
       this._authUsersPaging.delete(element.connectionId);
-      this._onDidChangeTreeData.fire(undefined);
-    } else if (element instanceof CompositeIndexesBranchItem) {
-      this._treeCache.delete(`indexes:${element.connectionId}`);
-      this._onDidChangeTreeData.fire(element);
-    } else if (element instanceof CompositeIndexItem) {
-      this._treeCache.delete(`indexes:${element.connectionId}`);
-      this._onDidChangeTreeData.fire(undefined);
-    } else if (element instanceof StorageBucketsBranchItem) {
-      this._treeCache.delete(`storage:${element.connectionId}`);
-      this._onDidChangeTreeData.fire(element);
-    } else if (element instanceof StorageBucketTreeItem) {
-      const prefix = `storageFiles:${element.connectionId}:${element.bucketName}:`;
-      for (const k of this._treeCache.keys()) {
-        if (k.startsWith(prefix)) {
-          this._treeCache.delete(k);
-        }
+      const targetBranch = this._liveNodes.get(`auth:${element.connectionId}`);
+      if (targetBranch) {
+        this._onDidChangeTreeData.fire(targetBranch);
       }
-      this._onDidChangeTreeData.fire(element);
+    } else if (element instanceof CompositeIndexesBranchItem) {
+      this._deleteCacheKey(`indexes:${element.connectionId}`);
+      const targetBranch = this._liveNodes.get(`indexes:${element.connectionId}`) || live;
+      this._onDidChangeTreeData.fire(targetBranch);
+    } else if (element instanceof CompositeIndexItem) {
+      this._deleteCacheKey(`indexes:${element.connectionId}`);
+      const targetBranch = this._liveNodes.get(`indexes:${element.connectionId}`);
+      if (targetBranch) {
+        this._onDidChangeTreeData.fire(targetBranch);
+      }
+    } else if (element instanceof StorageBucketsBranchItem) {
+      this._deleteCacheKey(`storage:${element.connectionId}`);
+      const targetBranch = this._liveNodes.get(`storage:${element.connectionId}`) || live;
+      this._onDidChangeTreeData.fire(targetBranch);
+    } else if (element instanceof StorageBucketTreeItem) {
+      this._deleteCachePrefix(`storageFiles:${element.connectionId}:${element.bucketName}:`);
+      this._onDidChangeTreeData.fire(live);
     } else if (element instanceof StorageFolderTreeItem) {
       const folderKey = `storageFiles:${element.connectionId}:${element.bucketName}:${element.prefix}`;
-      for (const k of this._treeCache.keys()) {
-        if (k === folderKey || k.startsWith(folderKey.endsWith("/") ? folderKey : folderKey + "/")) {
-          this._treeCache.delete(k);
-        }
-      }
-      this._onDidChangeTreeData.fire(element);
+      this._deleteCacheKey(folderKey);
+      this._deleteCachePrefix(folderKey.endsWith("/") ? folderKey : folderKey + "/");
+      this._onDidChangeTreeData.fire(live);
     } else if (element instanceof StorageFileTreeItem) {
-      const prefix = `storageFiles:${element.connectionId}:${element.bucketName}:`;
-      for (const k of this._treeCache.keys()) {
-        if (k.startsWith(prefix)) {
-          this._treeCache.delete(k);
-        }
+      this._deleteCachePrefix(`storageFiles:${element.connectionId}:${element.bucketName}:`);
+      const fileName = element.fileData.name;
+      const folderPrefix = fileName.includes("/")
+        ? fileName.substring(0, fileName.lastIndexOf("/") + 1)
+        : "";
+      const targetParent =
+        (folderPrefix
+          ? this._liveNodes.get(`storageFolder:${element.connectionId}:${element.bucketName}:${folderPrefix}`)
+          : undefined) ||
+        this._liveNodes.get(`storageBucket:${element.connectionId}:${element.bucketName}`);
+      if (targetParent) {
+        this._onDidChangeTreeData.fire(targetParent);
       }
-      this._onDidChangeTreeData.fire(undefined);
     } else if (element instanceof ConnectionTreeItem) {
-      this._treeCache.delete(`conn:${element.config.id}`);
-      this._onDidChangeTreeData.fire(element);
+      const connId = element.config.id;
+      const prefixes = [
+        `conn:${connId}`,
+        `col:${connId}:`,
+        `doc:${connId}:`,
+        `field:${connId}:`,
+        `auth:${connId}`,
+        `indexes:${connId}`,
+        `storage:${connId}`,
+        `storageFiles:${connId}:`,
+        `secrets:${connId}`,
+        `secretVersions:${connId}:`,
+      ];
+      for (const p of prefixes) {
+        this._deleteCacheKey(p);
+        this._deleteCachePrefix(p);
+      }
+      this._onDidChangeTreeData.fire(live);
     } else if (element instanceof SecretManagerBranchItem) {
-      this.refreshSecrets(element.connectionId, element);
+      this.refreshSecrets(element.connectionId, live as SecretManagerBranchItem);
     } else if (element instanceof SecretTreeItem) {
-      this._treeCache.delete(`secrets:${element.connectionId}`);
-      this._treeCache.delete(`secretVersions:${element.connectionId}:${element.secret.id}`);
-      const connCache = this._treeCache.get(`conn:${element.connectionId}`);
-      const branch = connCache?.items.find(
-        (it) => it instanceof SecretManagerBranchItem && it.connectionId === element.connectionId
-      );
-      this._onDidChangeTreeData.fire(branch ?? undefined);
+      this._deleteCacheKey(`secrets:${element.connectionId}`);
+      this._deleteCacheKey(`secretVersions:${element.connectionId}:${element.secret.id}`);
+      const branch =
+        this._liveNodes.get(`secrets:${element.connectionId}`) ||
+        this._treeCache
+          .get(`conn:${element.connectionId}`)
+          ?.items.find((it) => it instanceof SecretManagerBranchItem && it.connectionId === element.connectionId);
+      if (branch) {
+        this._onDidChangeTreeData.fire(branch);
+      }
     } else if (element instanceof SecretVersionTreeItem) {
-      this._treeCache.delete(`secretVersions:${element.connectionId}:${element.version.secretId}`);
-      const secretsCache = this._treeCache.get(`secrets:${element.connectionId}`);
-      const secretNode = secretsCache?.items.find(
-        (it) => it instanceof SecretTreeItem && it.secret.id === element.version.secretId
-      );
-      this._onDidChangeTreeData.fire(secretNode ?? undefined);
+      this._deleteCacheKey(`secretVersions:${element.connectionId}:${element.version.secretId}`);
+      const secretNode =
+        this._liveNodes.get(`secret:${element.connectionId}:${element.version.secretId}`) ||
+        this._treeCache
+          .get(`secrets:${element.connectionId}`)
+          ?.items.find((it) => it instanceof SecretTreeItem && it.secret.id === element.version.secretId);
+      if (secretNode) {
+        this._onDidChangeTreeData.fire(secretNode);
+      }
     } else {
       this.refresh();
+    }
+  }
+
+  /**
+   * Remove cached counts, filters, sort order, and paging state for a deleted collection and its subcollections.
+   */
+  public clearCollectionMetadata(connectionId: string, collPath: string): void {
+    const exact = `${connectionId}:${collPath}`;
+    const prefix = `${exact}/`;
+    for (const map of [
+      this._collectionCounts,
+      this._collectionFilters,
+      this._orderBy,
+      this._paging,
+    ] as Array<Map<string, any>>) {
+      map.delete(exact);
+      for (const k of Array.from(map.keys())) {
+        if (k.startsWith(prefix)) {
+          map.delete(k);
+        }
+      }
+    }
+  }
+
+  private _invalidateProfileCollectionBranch(
+    connectionId: string,
+    profileCollectionPath: string,
+    docPaths: string[]
+  ): void {
+    this._collectionCounts.delete(`${connectionId}:${profileCollectionPath}`);
+    this._deleteCachePrefix(`col:${connectionId}:${profileCollectionPath}:`);
+    for (const docPath of docPaths) {
+      this._markRecentDirectRefresh(connectionId, docPath);
+      this._deleteCacheKey(`doc:${connectionId}:${docPath}`);
+      this._deleteCachePrefix(`doc:${connectionId}:${docPath}/`);
+      this._deleteCachePrefix(`field:${connectionId}:${docPath}#`);
+      this._deleteCachePrefix(`col:${connectionId}:${docPath}/`);
+    }
+
+    const liveCol = this._findLiveCollection(connectionId, profileCollectionPath);
+    if (liveCol) {
+      this._onDidChangeTreeData.fire(liveCol);
+    }
+  }
+
+  /**
+   * Granularly update the Explorer tree after deleting an Auth user and optionally their Firestore profile.
+   * Preserves Auth pagination state and updates both the Auth branch and the profile collection branch.
+   */
+  public refreshAfterAuthUserDeleted(
+    connectionId: string,
+    uid: string,
+    profileCollectionPath?: string,
+    deletedProfileDocPaths?: string[]
+  ): void {
+    const pagingState = this._authUsersPaging.get(connectionId);
+    if (pagingState) {
+      this._authUsersPaging.set(connectionId, {
+        items: pagingState.items.filter((it) => it.user.uid !== uid),
+        nextPageToken: pagingState.nextPageToken,
+      });
+    }
+    this._liveNodes.delete(`authUser:${connectionId}:${uid}`);
+    this._deleteCacheKey(`auth:${connectionId}`);
+    const authBranch = this._liveNodes.get(`auth:${connectionId}`);
+    if (authBranch) {
+      this._onDidChangeTreeData.fire(authBranch);
+    }
+
+    if (profileCollectionPath) {
+      const targetPaths =
+        deletedProfileDocPaths && deletedProfileDocPaths.length > 0
+          ? deletedProfileDocPaths
+          : [`${profileCollectionPath}/${uid}`];
+      this._invalidateProfileCollectionBranch(connectionId, profileCollectionPath, targetPaths);
+    }
+  }
+
+  /**
+   * Granularly update the Explorer tree after deleting ONLY a user's Firestore profile (keeping their Auth user).
+   * Flips the matching AuthUserItem back to noProfile and refreshes the profile collection branch.
+   */
+  public refreshAfterAuthUserProfileDeleted(
+    connectionId: string,
+    uid: string,
+    profileCollectionPath: string,
+    deletedProfileDocPaths?: string[]
+  ): void {
+    const pagingState = this._authUsersPaging.get(connectionId);
+    if (pagingState) {
+      const updatedItems = pagingState.items.map((it) => {
+        if (it.user.uid === uid) {
+          const replacement = new AuthUserItem(it.user, connectionId, false, profileCollectionPath);
+          if (replacement.id) {
+            this._liveNodes.set(replacement.id, replacement);
+          }
+          return replacement;
+        }
+        return it;
+      });
+      this._authUsersPaging.set(connectionId, {
+        items: updatedItems,
+        nextPageToken: pagingState.nextPageToken,
+      });
+    }
+
+    this._deleteCacheKey(`auth:${connectionId}`);
+    const authBranch = this._liveNodes.get(`auth:${connectionId}`);
+    if (authBranch) {
+      this._onDidChangeTreeData.fire(authBranch);
+    }
+
+    const targetPaths =
+      deletedProfileDocPaths && deletedProfileDocPaths.length > 0
+        ? deletedProfileDocPaths
+        : [`${profileCollectionPath}/${uid}`];
+    this._invalidateProfileCollectionBranch(connectionId, profileCollectionPath, targetPaths);
+  }
+
+  /**
+   * Granularly update the Explorer tree after bulk deleting multiple Firebase Auth users (and optionally profiles).
+   */
+  public refreshAfterAuthUsersBulkDeleted(
+    connectionId: string,
+    deletedUids: string[],
+    profileCollectionPath?: string
+  ): void {
+    if (!deletedUids || deletedUids.length === 0) {
+      return;
+    }
+    const uidSet = new Set(deletedUids);
+    const pagingState = this._authUsersPaging.get(connectionId);
+    if (pagingState) {
+      this._authUsersPaging.set(connectionId, {
+        items: pagingState.items.filter((it) => !uidSet.has(it.user.uid)),
+        nextPageToken: pagingState.nextPageToken,
+      });
+    }
+    for (const uid of deletedUids) {
+      this._liveNodes.delete(`authUser:${connectionId}:${uid}`);
+    }
+    this._deleteCacheKey(`auth:${connectionId}`);
+    const authBranch = this._liveNodes.get(`auth:${connectionId}`);
+    if (authBranch) {
+      this._onDidChangeTreeData.fire(authBranch);
+    }
+
+    if (profileCollectionPath) {
+      const docPaths = deletedUids.map((uid) => `${profileCollectionPath}/${uid}`);
+      this._invalidateProfileCollectionBranch(connectionId, profileCollectionPath, docPaths);
     }
   }
 
@@ -450,19 +971,17 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
    * for a specific connection without discarding unrelated tree caches or paging state.
    */
   public refreshSecrets(connectionId: string, branchElement?: SecretManagerBranchItem): void {
-    this._treeCache.delete(`secrets:${connectionId}`);
-    const versionsPrefix = `secretVersions:${connectionId}:`;
-    for (const k of this._treeCache.keys()) {
-      if (k.startsWith(versionsPrefix)) {
-        this._treeCache.delete(k);
-      }
-    }
+    this._deleteCacheKey(`secrets:${connectionId}`);
+    this._deleteCachePrefix(`secretVersions:${connectionId}:`);
     const targetBranch =
       branchElement ??
+      this._liveNodes.get(`secrets:${connectionId}`) ??
       this._treeCache.get(`conn:${connectionId}`)?.items.find(
         (it) => it instanceof SecretManagerBranchItem && it.connectionId === connectionId
       );
-    this._onDidChangeTreeData.fire(targetBranch ?? undefined);
+    if (targetBranch) {
+      this._onDidChangeTreeData.fire(targetBranch);
+    }
   }
 
   public isDocumentExpanded(connectionId: string, docPath: string): boolean {
@@ -484,6 +1003,18 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   }
 
   getTreeItem(element: Item): vscode.TreeItem {
+    if (element.id && this._refreshingNodeIds.has(element.id)) {
+      const spinningItem = new vscode.TreeItem(element.label ?? "", element.collapsibleState);
+      spinningItem.id = element.id;
+      spinningItem.description = element.description;
+      spinningItem.tooltip = element.tooltip;
+      spinningItem.contextValue = element.contextValue;
+      spinningItem.command = element.command;
+      spinningItem.resourceUri = element.resourceUri;
+      spinningItem.accessibilityInformation = element.accessibilityInformation;
+      spinningItem.iconPath = new vscode.ThemeIcon("sync~spin", new vscode.ThemeColor("charts.blue"));
+      return spinningItem;
+    }
     return element;
   }
 
@@ -571,6 +1102,14 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   }
 
   async getChildren(element?: Item): Promise<Item[] | undefined> {
+    try {
+      return await this._getChildrenInternal(element);
+    } finally {
+      this._notifyRefreshWaiters(element?.id ?? "root");
+    }
+  }
+
+  private async _getChildrenInternal(element?: Item): Promise<Item[] | undefined> {
     const defaultLimit =
       (vscode.workspace
         .getConfiguration("ketrik-firestore-studio")
@@ -581,7 +1120,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       if (connections.length === 0) {
         return [];
       }
-      return connections.map((conn) => new ConnectionTreeItem(conn));
+      return this._registerItems(connections.map((conn) => new ConnectionTreeItem(conn)));
     }
 
     const ttl = this.getCacheTTL();
@@ -611,10 +1150,17 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         : undefined
       : "root";
 
-
-    if (cacheKey && ttl > 0) {
-      const cached = this._treeCache.get(cacheKey);
-      if (cached && Date.now() - cached.timestamp < ttl) {
+    if (cacheKey) {
+      let cached = ttl > 0 ? this._treeCache.get(cacheKey) : undefined;
+      if (!cached) {
+        const hold = this._shortHoldCache.get(cacheKey);
+        if (hold && Date.now() < hold.expiresAt) {
+          cached = { items: hold.items, timestamp: hold.expiresAt };
+        } else if (hold) {
+          this._shortHoldCache.delete(cacheKey);
+        }
+      }
+      if (cached) {
         if (
           this._revealingDoc &&
           element instanceof CollectionItem &&
@@ -631,16 +1177,16 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
             if (targetSnap.exists || hasSubcollections) {
               const docKey = `doc:${element.connectionId}:${targetSnap.ref.path}`;
               const isExp = this._expandedDocIds.has(docKey);
-              cached.items.unshift(
-                new DocumentItem(
-                  targetSnap.id,
-                  targetSnap.ref,
-                  element.connectionId,
-                  targetSnap.exists ? targetSnap.data() : undefined,
-                  isExp,
-                  !targetSnap.exists
-                )
+              const revItem = new DocumentItem(
+                targetSnap.id,
+                targetSnap.ref,
+                element.connectionId,
+                targetSnap.exists ? targetSnap.data() : undefined,
+                isExp,
+                !targetSnap.exists
               );
+              this._registerItems([revItem]);
+              cached.items.unshift(revItem);
             }
           } catch {}
         }
@@ -649,10 +1195,16 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     }
 
     const storeAndReturn = (items: Item[]): Item[] => {
-      if (cacheKey && ttl > 0) {
-        this._treeCache.delete(cacheKey);
-        this._treeCache.set(cacheKey, { items, timestamp: Date.now() });
-        evictIfNeeded(this._treeCache, MAX_TREE_CACHE_SIZE);
+      this._registerItems(items);
+      if (cacheKey) {
+        this._shortHoldCache.delete(cacheKey);
+        this._shortHoldCache.set(cacheKey, { items, expiresAt: Date.now() + 2000 });
+        evictIfNeeded(this._shortHoldCache, MAX_TREE_CACHE_SIZE);
+        if (ttl > 0) {
+          this._treeCache.delete(cacheKey);
+          this._treeCache.set(cacheKey, { items, timestamp: Date.now() });
+          evictIfNeeded(this._treeCache, MAX_TREE_CACHE_SIZE);
+        }
       }
       return items;
     };
@@ -666,8 +1218,13 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
               id: collId,
               path: collId,
             } as any;
+            const sortKey = `${element.config.id}:${collId}`;
             const filter = this.getCollectionFilter(element.config.id, collId);
-            return new CollectionItem(collId, fakeRef, element.config.id, undefined, filter);
+            const docCount = this.getCollectionCount(element.config.id, collId);
+            return new CollectionItem(collId, fakeRef, element.config.id, {
+              fieldName: this._orderBy.get(sortKey)?.field ?? "id",
+              direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
+            }, filter, docCount);
           });
           return storeAndReturn(collItems);
         } catch (err: any) {
@@ -701,10 +1258,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const collItems = refs.map((ref: CollectionReference) => {
           const sortKey = `${element.config.id}:${ref.path}`;
           const filter = this.getCollectionFilter(element.config.id, ref.path);
+          const docCount = this.getCollectionCount(element.config.id, ref.path);
           return new CollectionItem(ref.id, ref, element.config.id, {
             fieldName: this._orderBy.get(sortKey)?.field ?? "id",
             direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
-          }, filter);
+          }, filter, docCount);
         });
 
         // Add Authentication, Composite Indexes, Cloud Storage, Secret Manager, and Cost & Quotas nodes alongside Root Collections
@@ -853,11 +1411,16 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
         if (!state) {
           // Initial batch fetch
+          const profileCollection = authService.getProfileCollection(element.connectionId);
           const { users, pageToken } = await authService.listUsers(element.connectionId, pageSize);
           const uids = users.map((u) => u.uid);
-          const existingProfiles = await authService.checkProfilesExist(element.connectionId, uids);
+          const existingProfiles = await authService.checkProfilesExist(
+            element.connectionId,
+            uids,
+            profileCollection
+          );
           const userItems = users.map(
-            (u) => new AuthUserItem(u, element.connectionId, existingProfiles.has(u.uid))
+            (u) => new AuthUserItem(u, element.connectionId, existingProfiles.has(u.uid), profileCollection)
           );
 
           this._authUsersPaging.set(element.connectionId, {
@@ -889,7 +1452,9 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       try {
         const conn = this._connectionManager.getConnection(element.connectionId);
         if (conn?.isLocalJson) {
-          const docData = LocalJsonService.getInstance().getDocument(conn, element.reference.path) || {};
+          const rawDocData = LocalJsonService.getInstance().getDocument(conn, element.reference.path);
+          const docData = rawDocData || {};
+          element.updateDocMeta(docData, rawDocData === undefined);
           const fieldKeys = Object.keys(docData).sort((a, b) => a.localeCompare(b));
           const items: Item[] = fieldKeys.map((key) => {
             const fieldId = `field:${element.connectionId}:${element.reference.path}#${key}`;
@@ -914,10 +1479,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const subCollections = refs.map((ref: CollectionReference) => {
           const sortKey = `${element.connectionId}:${ref.path}`;
           const filter = this.getCollectionFilter(element.connectionId, ref.path);
+          const docCount = this.getCollectionCount(element.connectionId, ref.path);
           return new CollectionItem(ref.id, ref, element.connectionId, {
             fieldName: this._orderBy.get(sortKey)?.field ?? "id",
             direction: (this._orderBy.get(sortKey)?.direction ?? "asc") as OrderByDirection,
-          }, filter);
+          }, filter, docCount);
         });
         items.push(...subCollections);
 
@@ -925,6 +1491,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const snapshot = await element.reference.get();
         if (snapshot.exists) {
           const data = snapshot.data() || {};
+          element.updateDocMeta(data, false);
           const fieldKeys = Object.keys(data).sort((a, b) => {
             const isProtoA = a.startsWith("__");
             const isProtoB = b.startsWith("__");
@@ -953,6 +1520,8 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
               )
             );
           }
+        } else {
+          element.updateDocMeta(undefined, true);
         }
 
         return storeAndReturn(items);
@@ -1037,17 +1606,53 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       return [];
     } else if (element instanceof CollectionItem) {
       const activeFilter = this.getCollectionFilter(element.connectionId, element.reference.path);
+      const activeFilterLower = activeFilter?.toLowerCase();
       try {
         const conn = this._connectionManager.getConnection(element.connectionId);
         if (conn?.isLocalJson) {
           const effectiveCollPath = element.reference?.path || element.collectionId;
           let docs = LocalJsonService.getInstance().listDocuments(conn, effectiveCollPath);
-          if (activeFilter) {
+          if (activeFilter && activeFilterLower) {
             docs = docs.filter(
               (d) =>
-                d.id.toLowerCase().includes(activeFilter) ||
-                (d.data && matchesSearchTerm(d.data, activeFilter))
+                d.id.toLowerCase().includes(activeFilterLower) ||
+                (d.data && matchesSearchTerm(d.data, activeFilterLower))
             );
+          }
+          const sortConfig = this._orderBy.get(`${element.connectionId}:${effectiveCollPath}`);
+          if (sortConfig) {
+            const field = sortConfig.field;
+            const dir = sortConfig.direction === "desc" ? -1 : 1;
+            const getNested = (obj: any, pathStr: string): any => {
+              if (!obj || typeof obj !== "object") return undefined;
+              if (pathStr in obj) return obj[pathStr];
+              return pathStr
+                .split(".")
+                .reduce((acc, p) => (acc && typeof acc === "object" ? acc[p] : undefined), obj);
+            };
+            const toComparable = (v: any): number | string | null => {
+              if (v === null || v === undefined) return null;
+              if (typeof v === "number" || typeof v === "boolean") return Number(v);
+              if (typeof v === "string") return v;
+              if (typeof v === "object" && isTimestampLike(v)) {
+                return timestampToDate(v)?.getTime() ?? 0;
+              }
+              return JSON.stringify(v);
+            };
+            docs = [...docs].sort((a, b) => {
+              if (!field || field === "id") {
+                return a.id.localeCompare(b.id) * dir;
+              }
+              const va = toComparable(getNested(a.data, field));
+              const vb = toComparable(getNested(b.data, field));
+              if (va === null && vb === null) return a.id.localeCompare(b.id) * dir;
+              if (va === null) return 1;
+              if (vb === null) return -1;
+              if (typeof va === "number" && typeof vb === "number") {
+                return (va - vb) * dir;
+              }
+              return String(va).localeCompare(String(vb)) * dir;
+            });
           }
           if (docs.length === 0 && activeFilter) {
             const emptyItem = new InfoMessageItem(
@@ -1086,16 +1691,16 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         const items: DocumentItem[] = [];
         let hasMore = false;
 
-        if (activeFilter) {
+        if (activeFilter && activeFilterLower) {
           let matchingRefs: DocumentReference[] = [];
           if (typeof element.reference.listDocuments === "function") {
             try {
               const docRefs = await element.reference.listDocuments();
-              matchingRefs = docRefs.filter((r) => r.id.toLowerCase().includes(activeFilter));
+              matchingRefs = docRefs.filter((r) => r.id.toLowerCase().includes(activeFilterLower));
             } catch {}
           }
 
-          if (matchingRefs.length === 0) {
+          if (matchingRefs.length === 0 && !activeFilter.includes("/")) {
             try {
               const directDoc = await element.reference.doc(activeFilter).get();
               if (directDoc.exists) {
@@ -1135,7 +1740,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
               const snapshots = await element.reference.limit(limit * 2).get();
               CostService.getInstance().recordOperation(element.connectionId, "read", snapshots.size);
               for (const doc of snapshots.docs) {
-                if (doc.id.toLowerCase().includes(activeFilter) || matchesSearchTerm(doc.data(), activeFilter)) {
+                if (doc.id.toLowerCase().includes(activeFilterLower) || matchesSearchTerm(doc.data(), activeFilterLower)) {
                   const docKey = `doc:${element.connectionId}:${doc.ref.path}`;
                   const isExp = this._expandedDocIds.has(docKey);
                   items.push(new DocumentItem(doc.id, doc.ref, element.connectionId, doc.data(), isExp));
@@ -1313,14 +1918,12 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     evictIfNeeded(this._paging, MAX_MAP_SIZE);
 
     // Evict previous cached collection items under the old limit
-    const prefix = `col:${connId}:${path}:`;
-    for (const k of this._treeCache.keys()) {
-      if (k.startsWith(prefix)) {
-        this._treeCache.delete(k);
-      }
-    }
+    this._deleteCachePrefix(`col:${connId}:${path}:`);
 
-    this._onDidChangeTreeData.fire(undefined);
+    const colNode = this._findLiveCollection(connId, path);
+    if (colNode) {
+      this._onDidChangeTreeData.fire(colNode);
+    }
   }
 
   /**
@@ -1339,12 +1942,13 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
     try {
       const authService = AuthService.getInstance();
+      const profileCollection = authService.getProfileCollection(connId);
       const pageSize = 25;
       const { users, pageToken } = await authService.listUsers(connId, pageSize, state.nextPageToken);
       const uids = users.map((u) => u.uid);
-      const existingProfiles = await authService.checkProfilesExist(connId, uids);
+      const existingProfiles = await authService.checkProfilesExist(connId, uids, profileCollection);
       const newItems = users.map(
-        (u) => new AuthUserItem(u, connId, existingProfiles.has(u.uid))
+        (u) => new AuthUserItem(u, connId, existingProfiles.has(u.uid), profileCollection)
       );
 
       this._authUsersPaging.set(connId, {
@@ -1353,8 +1957,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       });
 
       // Invalidate tree cache for auth branch so getChildren returns updated accumulated items
-      this._treeCache.delete(`auth:${connId}`);
-      this._onDidChangeTreeData.fire(undefined);
+      this._deleteCacheKey(`auth:${connId}`);
+      const authBranch = this._liveNodes.get(`auth:${connId}`);
+      if (authBranch) {
+        this._onDidChangeTreeData.fire(authBranch);
+      }
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to load more users: ${err.message}`);
     }
@@ -1375,7 +1982,11 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
     this._orderBy.set(key, { field, direction });
     evictIfNeeded(this._orderBy, MAX_MAP_SIZE);
 
-    this._onDidChangeTreeData.fire(undefined);
+    this._deleteCachePrefix(`col:${connId}:${path}:`);
+    const colNode = this._updateCollectionInParentCache(connId, path);
+    if (colNode) {
+      this._onDidChangeTreeData.fire(colNode);
+    }
   }
 
   /**

@@ -276,6 +276,54 @@ export class SnapshotSyncService {
     this.updateContextForEditor(vscode.window.activeTextEditor);
   }
 
+  /**
+   * Unbind any workspace snapshot / scratchpad entries whose Firestore target (collection, document, or field)
+   * was deleted, preventing autoSyncLocalSnapshots from resurrecting deleted data on subsequent saves.
+   */
+  public async unbindForDeletedTarget(
+    connectionId: string,
+    targetPath: string,
+    options?: { isCollection?: boolean; recursive?: boolean; fieldPaths?: string[] }
+  ): Promise<void> {
+    const cleanTarget = targetPath.replace(/^\/+|\/+$/g, "");
+    if (!cleanTarget) return;
+
+    let removed = false;
+    for (const [key, binding] of Array.from(this._bindings.entries())) {
+      if (binding.connectionId !== connectionId) {
+        continue;
+      }
+
+      const bindingDoc = binding.docPath.replace(/^\/+|\/+$/g, "");
+      let shouldUnbind = false;
+
+      if (options?.isCollection) {
+        shouldUnbind = bindingDoc === cleanTarget || bindingDoc.startsWith(cleanTarget + "/");
+      } else if (options?.fieldPaths && options.fieldPaths.length > 0) {
+        shouldUnbind =
+          bindingDoc === cleanTarget &&
+          binding.fieldPath !== undefined &&
+          options.fieldPaths.some(
+            (fp) => binding.fieldPath === fp || binding.fieldPath!.startsWith(fp + ".")
+          );
+      } else {
+        shouldUnbind =
+          bindingDoc === cleanTarget ||
+          (!!options?.recursive && bindingDoc.startsWith(cleanTarget + "/"));
+      }
+
+      if (shouldUnbind) {
+        this._bindings.delete(key);
+        removed = true;
+      }
+    }
+
+    if (removed) {
+      await this.saveRegistry();
+      this.updateContextForEditor(vscode.window.activeTextEditor);
+    }
+  }
+
   public async clearAllBindings(): Promise<void> {
     this._bindings.clear();
     const registryPath = this.getRegistryPath();

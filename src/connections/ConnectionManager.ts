@@ -27,6 +27,7 @@ export interface FirestoreConnectionConfig {
   secretUri?: string;
   readOnly?: boolean;
   environment?: ConnectionEnvironment;
+  authProfileCollection?: string;
 }
 
 export class ConnectionManager implements vscode.Disposable {
