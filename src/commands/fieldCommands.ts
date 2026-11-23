@@ -9,21 +9,19 @@ import { isTimestampLike, timestampToDate, formatDateTime } from "../utils/times
 import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
 import { safeFirestoreFieldUpdate } from "../webview/common/tableUtils";
-import { isProtectSystemKeysEnabled, isSystemFieldPath } from "../utils/deleteUtils";
+import {
+  confirmProductionAction,
+  getEnvironmentWarningPrefix,
+  isProtectSystemKeysEnabled,
+  isSystemFieldPath,
+} from "../utils/deleteUtils";
 
 /**
  * Guard helper to block field mutations when a connection is in Read-Only mode.
  */
 function ensureWritable(connectionId: string | undefined, actionDesc: string): boolean {
   if (!connectionId) return true;
-  const conn = ConnectionManager.getInstance().getConnection(connectionId);
-  if (conn?.readOnly) {
-    vscode.window.showErrorMessage(
-      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to ${actionDesc}.`
-    );
-    return false;
-  }
-  return true;
+  return ConnectionManager.getInstance().ensureWritable(connectionId, actionDesc);
 }
 
 /**
@@ -609,10 +607,12 @@ export async function deleteFieldCommand(
   const segments = targetItem.pathSegments && targetItem.pathSegments.length > 0 ? targetItem.pathSegments : [targetItem.fieldName];
   const fullPathStr = targetItem.fullFieldPath || segments.join(".");
 
+  const envPrefix = getEnvironmentWarningPrefix(targetItem.connectionId);
   const isSystemKey = isSystemFieldPath(segments);
-  const promptText = (isProtectSystemKeysEnabled() && isSystemKey)
-    ? `⚠️ Safe Mode Warning: "${fullPathStr}" is a System Envelope or Protocol key. Deleting it may break query filtering or lifecycle rules. Are you sure?`
-    : `Are you sure you want to delete the field "${fullPathStr}" from document "${targetItem.parentDocRef.id}"?`;
+  const promptText =
+    isProtectSystemKeysEnabled() && isSystemKey
+      ? `${envPrefix}⚠️ Safe Mode Warning: "${fullPathStr}" is a System Envelope or Protocol key. Deleting it may break query filtering or lifecycle rules. Are you sure?`
+      : `${envPrefix}Are you sure you want to delete the field "${fullPathStr}" from document "${targetItem.parentDocRef.id}"?`;
 
   const confirm = await vscode.window.showWarningMessage(
     promptText,
@@ -660,7 +660,8 @@ export async function deleteMultipleFieldsCommand(
 ) {
   let docRef: any | undefined;
   let connectionId: string | undefined;
-  let refreshTarget: any = item;
+  let scopedFieldPath: string | undefined;
+  const refreshTarget: any = item;
 
   if (item instanceof DocumentItem) {
     docRef = item.reference;
@@ -677,6 +678,7 @@ export async function deleteMultipleFieldsCommand(
   } else if (item instanceof vscode.Uri) {
     const parsed = documentFileSystemProvider.parseUri(item);
     connectionId = parsed.connectionId;
+    scopedFieldPath = parsed.fieldPath;
     if (!ensureWritable(connectionId, "delete fields")) {
       return;
     }
@@ -695,6 +697,7 @@ export async function deleteMultipleFieldsCommand(
     if (activeEditor && activeEditor.document.uri.scheme === "ketrik-firestore-studio") {
       const parsed = documentFileSystemProvider.parseUri(activeEditor.document.uri);
       connectionId = parsed.connectionId;
+      scopedFieldPath = parsed.fieldPath;
       if (parsed.docPath && !parsed.isRules) {
         const conn = ConnectionManager.getInstance().getConnection(connectionId);
         if (conn?.isLocalJson) {
@@ -718,23 +721,206 @@ export async function deleteMultipleFieldsCommand(
 
   try {
     const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    let freshDocData: Record<string, any> = {};
 
-    // Check if invoked on a DocumentFieldItem that is a Map
-    const isMapField =
-      item instanceof DocumentFieldItem &&
-      (item.contextValue?.startsWith("documentField:map") ||
-        (!item.contextValue?.startsWith("documentField:timestamp") &&
-          !item.contextValue?.startsWith("documentField:vector") &&
-          item.value &&
-          typeof item.value === "object" &&
-          !Array.isArray(item.value) &&
-          !isTimestampLike(item.value)));
+    if (conn?.isLocalJson) {
+      freshDocData = LocalJsonService.getInstance().getDocument(conn, docRef.path) || {};
+    } else {
+      CostService.getInstance().recordOperation(connectionId, "read", 1);
+      const snapshot = await docRef.get();
+      if (!snapshot.exists) {
+        vscode.window.showErrorMessage(`Document "${docRef.id}" does not exist.`);
+        return;
+      }
+      freshDocData = snapshot.data() || {};
+    }
 
-    if (isMapField) {
-      const parentSegments =
+    let targetSegments: string[] | undefined;
+    if (item instanceof DocumentFieldItem) {
+      targetSegments =
         item.pathSegments && item.pathSegments.length > 0 ? item.pathSegments : [item.fieldName];
-      const targetPathStr = item.fullFieldPath || parentSegments.join(".");
-      const mapData = item.value || {};
+    } else if (scopedFieldPath) {
+      targetSegments = Object.prototype.hasOwnProperty.call(freshDocData, scopedFieldPath)
+        ? [scopedFieldPath]
+        : scopedFieldPath.split(".").filter(Boolean);
+    }
+
+    let targetValue: any = freshDocData;
+    if (targetSegments && targetSegments.length > 0) {
+      for (const seg of targetSegments) {
+        if (Array.isArray(targetValue) && /^\d+$/.test(seg)) {
+          targetValue = targetValue[parseInt(seg, 10)];
+        } else if (targetValue && typeof targetValue === "object") {
+          targetValue = targetValue[seg];
+        } else {
+          targetValue = undefined;
+          break;
+        }
+      }
+    }
+
+    const targetPathStr =
+      item instanceof DocumentFieldItem && item.fullFieldPath
+        ? item.fullFieldPath
+        : targetSegments && targetSegments.length > 0
+          ? targetSegments.join(".")
+          : "";
+
+    const isScopedMap =
+      Boolean(targetSegments && targetSegments.length > 0) &&
+      targetValue !== null &&
+      typeof targetValue === "object" &&
+      !Array.isArray(targetValue) &&
+      !isTimestampLike(targetValue);
+
+    const isScopedArray =
+      Boolean(targetSegments && targetSegments.length > 0) && Array.isArray(targetValue);
+
+    if (isScopedArray && targetSegments) {
+      const arrData = targetValue as any[];
+      if (arrData.length === 0) {
+        vscode.window.showInformationMessage(`Array "${targetPathStr}" has no items to delete.`);
+        return;
+      }
+
+      interface ArrayPickItem extends vscode.QuickPickItem {
+        index: number;
+      }
+
+      const arrItems: ArrayPickItem[] = arrData.map((val, idx) => {
+        let preview = "";
+        try {
+          if (val === null) {
+            preview = "null";
+          } else if (Array.isArray(val)) {
+            preview = `[Array(${val.length})]`;
+          } else if (typeof val === "object") {
+            preview = `{${Object.keys(val).length} keys}`;
+          } else if (typeof val === "string") {
+            preview = `"${val.length > 35 ? val.slice(0, 32) + "..." : val}"`;
+          } else {
+            preview = String(val);
+          }
+        } catch {
+          preview = String(val);
+        }
+
+        return {
+          label: `$(symbol-array) [${idx}]`,
+          description: preview,
+          picked: false,
+          index: idx,
+        };
+      });
+
+      const selected = await vscode.window.showQuickPick(arrItems, {
+        canPickMany: true,
+        placeHolder: `Select items to delete from Array '${targetPathStr}' (${arrData.length} items)`,
+        title: `Delete Multiple Array Items (${targetPathStr})`,
+      });
+
+      if (!selected || selected.length === 0) {
+        return;
+      }
+
+      const selectedIndices = selected.map((s) => s.index);
+      const indexSet = new Set(selectedIndices);
+      const envPrefix = getEnvironmentWarningPrefix(connectionId);
+      const safeWarning =
+        isProtectSystemKeysEnabled() && isSystemFieldPath(targetSegments)
+          ? `⚠️ Safe Mode Warning: Array "${targetPathStr}" is under a System Envelope / Protocol path.\n\n`
+          : "";
+
+      const btnLabel = `Delete ${selectedIndices.length} Item${selectedIndices.length > 1 ? "s" : ""}`;
+      const confirm = await vscode.window.showWarningMessage(
+        `${envPrefix}${safeWarning}Are you sure you want to delete ${selectedIndices.length} item(s) ([${selectedIndices.slice(0, 8).join(", ")}${selectedIndices.length > 8 ? ", ..." : ""}]) from Array "${targetPathStr}"?`,
+        { modal: true },
+        btnLabel,
+        "Cancel"
+      );
+
+      if (confirm !== btnLabel) {
+        return;
+      }
+
+      const confirmedProd = await confirmProductionAction({
+        connectionId,
+        actionLabel: `Delete ${selectedIndices.length} Array Item(s)`,
+        targetSummary: `${selectedIndices.length} item(s) from Array '${targetPathStr}'`,
+        expectedInput: `DELETE ${selectedIndices.length}`,
+      });
+      if (!confirmedProd) {
+        return;
+      }
+
+      if (conn?.isLocalJson) {
+        const updatedArr = arrData.filter((_, i) => !indexSet.has(i));
+        LocalJsonService.getInstance().updateField(conn, docRef.path, targetSegments, updatedArr);
+      } else {
+        const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+        const typedDocRef = docRef as DocumentReference;
+        await firestore.runTransaction(async (tx) => {
+          const snap = await tx.get(typedDocRef);
+          if (!snap.exists) {
+            throw new Error(`Document "${typedDocRef.id}" no longer exists.`);
+          }
+          const docData = snap.data() || {};
+          let parentContainer: any = docData;
+          for (let i = 0; i < targetSegments!.length - 1; i++) {
+            const seg = targetSegments![i];
+            if (Array.isArray(parentContainer) && /^\d+$/.test(seg)) {
+              parentContainer = parentContainer[parseInt(seg, 10)];
+            } else if (parentContainer && typeof parentContainer === "object") {
+              parentContainer = parentContainer[seg];
+            } else {
+              parentContainer = undefined;
+              break;
+            }
+          }
+          const lastSeg = targetSegments![targetSegments!.length - 1];
+          const existingArr =
+            Array.isArray(parentContainer) && /^\d+$/.test(lastSeg)
+              ? parentContainer[parseInt(lastSeg, 10)]
+              : parentContainer?.[lastSeg];
+          if (!Array.isArray(existingArr)) {
+            throw new Error(`Field "${targetPathStr}" is no longer an Array.`);
+          }
+          const updatedArr = existingArr.filter((_, i) => !indexSet.has(i));
+          if (Array.isArray(parentContainer) && /^\d+$/.test(lastSeg)) {
+            parentContainer[parseInt(lastSeg, 10)] = updatedArr;
+          } else {
+            parentContainer[lastSeg] = updatedArr;
+          }
+
+          const firstNumericIdx = targetSegments!.findIndex((s) => /^\d+$/.test(s));
+          if (firstNumericIdx > 0) {
+            const topArraySegments = targetSegments!.slice(0, firstNumericIdx);
+            let topArrayVal: any = docData;
+            for (const seg of topArraySegments) {
+              topArrayVal = topArrayVal?.[seg];
+            }
+            tx.update(typedDocRef, new FieldPath(...topArraySegments), topArrayVal);
+          } else {
+            tx.update(typedDocRef, new FieldPath(...targetSegments!), updatedArr);
+          }
+        });
+        CostService.getInstance().recordOperation(connectionId, "read", 1);
+        CostService.getInstance().recordOperation(connectionId, "write", 1);
+      }
+
+      documentFileSystemProvider.invalidateAndNotify(connectionId, docRef.path);
+      vscode.window.showInformationMessage(
+        `Successfully deleted ${selectedIndices.length} item(s) from Array "${targetPathStr}".`
+      );
+      if (refreshTarget instanceof DocumentItem || refreshTarget instanceof DocumentFieldItem) {
+        explorerDataProvider.refreshNode(refreshTarget);
+      }
+      return;
+    }
+
+    if (isScopedMap && targetSegments) {
+      const parentSegments = targetSegments;
+      const mapData = targetValue || {};
       const keys = Object.keys(mapData);
 
       if (keys.length === 0) {
@@ -787,17 +973,18 @@ export async function deleteMultipleFieldsCommand(
         return;
       }
 
+      const envPrefix = getEnvironmentWarningPrefix(connectionId);
       const selectedKeys = selected.map((s) => s.key);
       const protectSystemKeys = isProtectSystemKeysEnabled();
       const isParentSystem = isSystemFieldPath(parentSegments);
       const hasSystemKeys = isParentSystem || selected.some((s) => s.isSystem);
 
-      let confirmPrompt = `Are you sure you want to delete ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"} (${selectedKeys.slice(0, 5).join(", ")}${selectedKeys.length > 5 ? "..." : ""}) from Map "${targetPathStr}"?`;
+      let confirmPrompt = `${envPrefix}Are you sure you want to delete ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"} (${selectedKeys.slice(0, 5).join(", ")}${selectedKeys.length > 5 ? "..." : ""}) from Map "${targetPathStr}"?`;
       if (protectSystemKeys && hasSystemKeys) {
         const systemKeyNames = selected.filter((s) => s.isSystem).map((s) => s.key).join(", ");
         confirmPrompt = systemKeyNames
-          ? `⚠️ Safe Mode Warning: You selected System Envelope / Protocol keys (${systemKeyNames}). Proceed with deleting all ${selectedKeys.length} properties?`
-          : `⚠️ Safe Mode Warning: Map "${targetPathStr}" is under a System Envelope / Protocol path. Proceed with deleting ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"}?`;
+          ? `${envPrefix}⚠️ Safe Mode Warning: You selected System Envelope / Protocol keys (${systemKeyNames}). Proceed with deleting all ${selectedKeys.length} properties?`
+          : `${envPrefix}⚠️ Safe Mode Warning: Map "${targetPathStr}" is under a System Envelope / Protocol path. Proceed with deleting ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"}?`;
       }
 
       const confirm = await vscode.window.showWarningMessage(
@@ -811,6 +998,16 @@ export async function deleteMultipleFieldsCommand(
         return;
       }
 
+      const confirmedProd = await confirmProductionAction({
+        connectionId,
+        actionLabel: `Delete ${selectedKeys.length} Properties`,
+        targetSummary: `${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"} from Map '${targetPathStr}'`,
+        expectedInput: `DELETE ${selectedKeys.length}`,
+      });
+      if (!confirmedProd) {
+        return;
+      }
+
       const fullKeyPaths = selectedKeys.map((k) => [...parentSegments, k].join("."));
 
       if (conn?.isLocalJson) {
@@ -819,7 +1016,9 @@ export async function deleteMultipleFieldsCommand(
         }
         documentFileSystemProvider.invalidateAndNotifyFieldDeleted(connectionId, docRef.path, fullKeyPaths);
         vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"} from "${targetPathStr}".`);
-        explorerDataProvider.refreshNode(item);
+        if (refreshTarget instanceof DocumentItem || refreshTarget instanceof DocumentFieldItem) {
+          explorerDataProvider.refreshNode(refreshTarget);
+        }
         return;
       }
 
@@ -869,23 +1068,13 @@ export async function deleteMultipleFieldsCommand(
       }
       documentFileSystemProvider.invalidateAndNotifyFieldDeleted(connectionId, docRef.path, fullKeyPaths);
       vscode.window.showInformationMessage(`Successfully deleted ${selectedKeys.length} propert${selectedKeys.length > 1 ? "ies" : "y"} from "${targetPathStr}".`);
-      explorerDataProvider.refreshNode(item);
+      if (refreshTarget instanceof DocumentItem || refreshTarget instanceof DocumentFieldItem) {
+        explorerDataProvider.refreshNode(refreshTarget);
+      }
       return;
     }
 
-    let data: Record<string, any> = {};
-
-    if (conn?.isLocalJson) {
-      data = LocalJsonService.getInstance().getDocument(conn, docRef.path) || {};
-    } else {
-      CostService.getInstance().recordOperation(connectionId, "read", 1);
-      const snapshot = await docRef.get();
-      if (!snapshot.exists) {
-        vscode.window.showErrorMessage(`Document "${docRef.id}" does not exist.`);
-        return;
-      }
-      data = snapshot.data() || {};
-    }
+    const data = freshDocData;
 
     const keys = Object.keys(data);
     if (keys.length === 0) {
@@ -939,15 +1128,16 @@ export async function deleteMultipleFieldsCommand(
       return;
     }
 
+    const envPrefix = getEnvironmentWarningPrefix(connectionId);
     const selectedKeys = selected.map((s) => s.key);
     const config = vscode.workspace.getConfiguration("ketrik-firestore-studio");
     const protectSystemKeys = config.get<boolean>("protectSystemKeys", true);
     const hasSystemKeys = selected.some((s) => s.isSystem);
 
-    let confirmPrompt = `Are you sure you want to delete ${selectedKeys.length} field(s) (${selectedKeys.slice(0, 5).join(", ")}${selectedKeys.length > 5 ? "..." : ""}) from document "${docRef.id}"?`;
+    let confirmPrompt = `${envPrefix}Are you sure you want to delete ${selectedKeys.length} field(s) (${selectedKeys.slice(0, 5).join(", ")}${selectedKeys.length > 5 ? "..." : ""}) from document "${docRef.id}"?`;
     if (protectSystemKeys && hasSystemKeys) {
       const systemKeyNames = selected.filter((s) => s.isSystem).map((s) => s.key).join(", ");
-      confirmPrompt = `⚠️ Safe Mode Warning: You selected System Envelope / Protocol keys (${systemKeyNames}). Deleting them may disrupt lifecycle operations. Proceed with deleting all ${selectedKeys.length} fields?`;
+      confirmPrompt = `${envPrefix}⚠️ Safe Mode Warning: You selected System Envelope / Protocol keys (${systemKeyNames}). Deleting them may disrupt lifecycle operations. Proceed with deleting all ${selectedKeys.length} fields?`;
     }
 
     const confirm = await vscode.window.showWarningMessage(
@@ -958,6 +1148,16 @@ export async function deleteMultipleFieldsCommand(
     );
 
     if (confirm !== `Delete ${selectedKeys.length} Field${selectedKeys.length > 1 ? "s" : ""}`) {
+      return;
+    }
+
+    const confirmedProd = await confirmProductionAction({
+      connectionId,
+      actionLabel: `Delete ${selectedKeys.length} Field(s)`,
+      targetSummary: `${selectedKeys.length} field(s) from document '${docRef.path}'`,
+      expectedInput: `DELETE ${selectedKeys.length}`,
+    });
+    if (!confirmedProd) {
       return;
     }
 
@@ -1640,6 +1840,7 @@ export async function deleteArrayItemCommand(
   } catch {
     previewStr = String(item.value);
   }
+  const envPrefix = getEnvironmentWarningPrefix(item.connectionId);
   const valueDetail = previewStr ? ` (${previewStr})` : "";
   const safeWarning =
     isProtectSystemKeysEnabled() && isSystemFieldPath(parentSegments)
@@ -1647,7 +1848,7 @@ export async function deleteArrayItemCommand(
       : "";
 
   const confirm = await vscode.window.showWarningMessage(
-    `${safeWarning}Are you sure you want to delete item [${idx}]${valueDetail} from '${parentName}'?`,
+    `${envPrefix}${safeWarning}Are you sure you want to delete item [${idx}]${valueDetail} from '${parentName}'?`,
     { modal: true },
     "Delete Item",
     "Cancel"

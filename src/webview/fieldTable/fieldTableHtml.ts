@@ -116,6 +116,10 @@ export function getFieldTableHtml(params: {
           white-space: pre-wrap;
           word-break: break-word;
         }
+        body.is-read-only .row-action-btn,
+        body.is-read-only #addEntryBtn {
+          display: none !important;
+        }
       </style>
     </head>
     <body>
@@ -129,6 +133,8 @@ export function getFieldTableHtml(params: {
           </h1>
           <span class="badge badge-substrate">${substrateType}</span>
           <span class="badge" title="Connection ID">${escapeHtml(connectionId)}</span>
+          <span id="envBadge" class="badge" style="display:none;"></span>
+          <span id="readOnlyBadge" class="badge" style="display:none; background: rgba(241,76,76,0.18); color: #f14c4c; border: 1px solid rgba(241,76,76,0.45); font-weight:600;">🔒 READ-ONLY</span>
         </div>
         <div class="toolbar-actions" id="toolbarActions">
           <button id="addEntryBtn" class="primary toggle-btn" title="Add a new entry to this field">
@@ -385,6 +391,11 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         const msg = event.data;
         if (!msg) return;
 
+        if (msg.type === 'connectionState') {
+          applyConnectionShields(!!msg.isReadOnly, msg.environment);
+          return;
+        }
+
         if (msg.type === 'error') {
           showError(msg.message || 'An error occurred');
           return;
@@ -394,6 +405,9 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
           currentHeaders = msg.headers || [];
           allRows = msg.rows || [];
           currentRows = allRows;
+          if ('isReadOnly' in msg || 'environment' in msg) {
+            applyConnectionShields(!!msg.isReadOnly, msg.environment);
+          }
           reRenderCurrentTable();
           const countEl = document.getElementById('row-count');
           if (countEl) countEl.textContent = allRows.length;
@@ -500,9 +514,40 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
         };
       }
 
+      let isReadOnly = false;
+      function applyConnectionShields(ro, environment) {
+        isReadOnly = !!ro;
+        document.body.classList.toggle('is-read-only', isReadOnly);
+        const roBadge = document.getElementById('readOnlyBadge');
+        if (roBadge) {
+          roBadge.style.display = isReadOnly ? 'inline-block' : 'none';
+        }
+        const addBtn = document.getElementById('addEntryBtn');
+        if (addBtn) {
+          addBtn.disabled = isReadOnly;
+        }
+        const envBadge = document.getElementById('envBadge');
+        if (!envBadge) return;
+        const envStyles = {
+          production: { text: '🔴 PRODUCTION', bg: 'rgba(241, 76, 76, 0.18)', color: '#f14c4c', border: '1px solid rgba(241, 76, 76, 0.45)' },
+          staging: { text: '🟡 STAGING', bg: 'rgba(255, 193, 7, 0.18)', color: '#ffc107', border: '1px solid rgba(255, 193, 7, 0.45)' },
+          development: { text: '🟢 DEV', bg: 'rgba(46, 204, 113, 0.18)', color: '#2ecc71', border: '1px solid rgba(46, 204, 113, 0.45)' },
+        }[environment];
+        if (envStyles) {
+          envBadge.textContent = envStyles.text;
+          envBadge.style.background = envStyles.bg;
+          envBadge.style.color = envStyles.color;
+          envBadge.style.border = envStyles.border;
+          envBadge.style.display = 'inline-block';
+        } else {
+          envBadge.style.display = 'none';
+        }
+      }
+
       const addEntryBtn = document.getElementById('addEntryBtn');
       if (addEntryBtn) {
         addEntryBtn.onclick = function() {
+          if (isReadOnly) return;
           vscode.postMessage({ command: 'addFieldEntry' });
         };
       }
@@ -519,7 +564,7 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
       }
 
       function startCellEdit(td) {
-        if (!td || activeEditingCell) return;
+        if (isReadOnly || !td || activeEditingCell) return;
         const field = td.getAttribute('data-field');
         const type = td.getAttribute('data-type');
         const rowId = td.getAttribute('data-row-id');
@@ -652,6 +697,7 @@ export function getFieldTableClientScript(rowIdHeader: string): string {
           const delBtn = event.target.closest('.delete-btn');
           if (delBtn) {
             event.stopPropagation();
+            if (isReadOnly) return;
             const rowId = delBtn.getAttribute('data-row-id');
             const idxStr = delBtn.getAttribute('data-index');
             vscode.postMessage({

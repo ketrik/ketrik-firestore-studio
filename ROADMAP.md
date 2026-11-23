@@ -26,6 +26,7 @@ timeline
         2026-11-13 : v1.20.0 Database Configuration, Point-in-Time Recovery (PITR) & Time Travel
         2026-11-14 : v1.21.0 Bulk Field Transformer, Auto-Fix & Safety Shields
         2026-11-15 : v1.22.0 Secret Manager Table View, Delete Secret & Docs
+        2026-11-23 : v1.22.1 Deletion Safety, Auth Profile Cascade, Production Shields & Performance
     section Planned
         Q1 2027 : v1.23.0 PII Masking, Query Explain & Auth Multi-Tenancy : v1.24.0 Schema Contract Linter & TTL Policies
         Q2 2027 : v1.23.0 Schema Contract Linter & TTL Policies : v1.24.0 Universal Cross-Collection Search & AI Queries
@@ -69,6 +70,7 @@ timeline
 | **v1.20.0** | Shipped | 2026-11-13 | Firestore Database Configuration, Point-in-Time Recovery (PITR), Time-Travel Explorer (`readTime`), 7-Day Historical Diff & 1-Click Restore |
 | **v1.21.0** | Shipped | 2026-11-14 | Collection Data Hygiene & Bulk Field Transformer (Type Casting, Backfills, Safe Batch Restructure), Schema Drift 1-Click Auto-Fix, Connection Read-Only Mode & Environment Badges (`PROD` / `STAGING` / `DEV`) |
 | **v1.22.0** | Shipped | 2026-11-15 | Secret Manager Table View (100s of secrets) & Delete Secret (`deleteSecret`), Time-Travel & PITR Guide, Table/Graph & Core Improvements |
+| **v1.22.1** | Shipped | 2026-11-23 | Deletion safety & Auth profile deep-delete, bulk Auth delete, configurable profile collection, Production type-to-confirm shields, Explorer multi-select delete, BulkWriter resilience & CPU/memory optimizations |
 | **v1.23.0** | Planned | Q1 2027 | PII Data Masking & Anonymization Engine, Firestore Query Explain (`EXPLAIN ANALYZE`) & Index Utilization Profiler, Identity Platform Multi-Tenancy (Auth tenant switching) |
 | **v1.23.0** | Planned | Q2 2027 | Schema Contract Linter & Validator (TypeScript/Zod audit), Native Time-to-Live (TTL) Policy Inspector & GC Alerts |
 | **v1.24.0** | Planned | Q2 2027 | Universal Cross-Collection Search (`Ctrl+Alt+F`), Natural Language AI Query Builder (`vscode.lm`) |

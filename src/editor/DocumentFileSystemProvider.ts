@@ -9,6 +9,8 @@ import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
 import { SnapshotSyncService } from "../services/SnapshotSyncService";
 import { PitrService } from "../pitr/PitrService";
+import { DocumentClipboard } from "../services/DocumentClipboard";
+import { DocumentCompareService } from "../services/DocumentCompareService";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -67,6 +69,25 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     this.invalidateAndNotifyMany([{ connectionId, docPath }]);
   }
 
+  private _clearStaleClipboardAndCompare(
+    connectionId: string,
+    targetPath: string,
+    includeDescendants: boolean
+  ): void {
+    const matchesTarget = (p?: string) =>
+      !!p && (p === targetPath || (includeDescendants && p.startsWith(targetPath + "/")));
+
+    const copied = DocumentClipboard.getInstance().get();
+    if (copied && copied.sourceConnectionId === connectionId && matchesTarget(copied.sourcePath)) {
+      DocumentClipboard.getInstance().clear();
+    }
+
+    const compared = DocumentCompareService.getInstance().get();
+    if (compared && compared.connectionId === connectionId && matchesTarget(compared.docPath)) {
+      DocumentCompareService.getInstance().clear();
+    }
+  }
+
   /**
    * Notify VS Code that a document was deleted, emitting a FileChangeType.Deleted event
    * and closing any open document, field, or diff tabs targeting this document.
@@ -103,6 +124,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
 
     this._evictBaselinesMatching(matches);
     this._closeTabsMatching(matches);
+    this._clearStaleClipboardAndCompare(connectionId, docPath, recursive);
 
     const docUri = vscode.Uri.from({
       scheme,
@@ -142,6 +164,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
 
     this._evictBaselinesMatching(matches);
     this._closeTabsMatching(matches);
+    this._clearStaleClipboardAndCompare(connectionId, collPath, true);
 
     const collUri = vscode.Uri.from({
       scheme,

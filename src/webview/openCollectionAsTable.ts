@@ -16,6 +16,8 @@ import { restoreDocumentFromHistoryCommand, compareDocumentWithLiveCommand } fro
 import { PITR_PRESETS } from "../pitr/types";
 import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
 import {
+  confirmProductionAction,
+  getEnvironmentWarningPrefix,
   recursiveDeleteWithCount,
   isProtectSystemKeysEnabled,
   isSystemFieldPath,
@@ -360,6 +362,10 @@ export async function openCollectionAsTable(
   // ── Data loading & Message handler ─────────────────────────────────────────
   // Start the first data fetch immediately; the webview is seeded once it reports 'ready'.
   let hasMoreState = false;
+  let suppressFileDeleteSync = false;
+  let externalDeleteTimer: NodeJS.Timeout | undefined;
+  const pendingExternalDeletedPaths = new Set<string>();
+  let pendingCollectionDeleted = false;
   const initialLoad = loadMoreDocs()
     .then((r) => {
       hasMoreState = r.hasMore;
@@ -1352,6 +1358,7 @@ export async function openCollectionAsTable(
         parsedValue = parseFilterValue(valStr);
       }
 
+      const envPrefix = isDeleteField ? getEnvironmentWarningPrefix(connectionId) : "";
       const safeModeWarning =
         isDeleteField && isProtectSystemKeysEnabled() && isSystemFieldPath(trimmedField)
           ? `⚠️ Safe Mode Warning: '${trimmedField}' is a System Envelope or Protocol field.\n\n`
@@ -1359,14 +1366,27 @@ export async function openCollectionAsTable(
 
       const confirm = await vscode.window.showWarningMessage(
         isDeleteField
-          ? `${safeModeWarning}Delete field '${trimmedField}' across ${targetPaths.length} documents?`
+          ? `${envPrefix}${safeModeWarning}Delete field '${trimmedField}' across ${targetPaths.length} documents?`
           : `Update field '${trimmedField}' to ${JSON.stringify(parsedValue)} across ${targetPaths.length} documents?`,
         { modal: true },
         "Proceed with Batch Update"
       );
       if (confirm !== "Proceed with Batch Update") return;
 
+      if (isDeleteField) {
+        const confirmedProd = await confirmProductionAction({
+          connectionId,
+          actionLabel: "Batch Delete Field",
+          targetSummary: `field '${trimmedField}' across ${targetPaths.length} document(s)`,
+          expectedInput: trimmedField,
+        });
+        if (!confirmedProd) return;
+      }
+
       try {
+        let succeededPaths: string[] = [];
+        let failedDocs: Array<{ path: string; error: string }> = [];
+
         if (liveConn?.isLocalJson) {
           for (const targetPath of targetPaths) {
             if (isDeleteField) {
@@ -1375,14 +1395,13 @@ export async function openCollectionAsTable(
               LocalJsonService.getInstance().updateField(liveConn, targetPath, trimmedField, parsedValue);
             }
           }
+          succeededPaths = [...targetPaths];
         } else {
           const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-          const chunkSize = 400;
-
-          for (let i = 0; i < targetPaths.length; i += chunkSize) {
-            const chunk = targetPaths.slice(i, i + chunkSize);
-            const batch = firestore.batch();
-            for (const targetPath of chunk) {
+          const bulkWriter = firestore.bulkWriter();
+          bulkWriter.onWriteError(() => false);
+          try {
+            const ops = targetPaths.map((targetPath) => {
               const docRef = firestore.doc(targetPath);
               const existingDoc = loadedDocByPath.get(targetPath);
               const hasLiteral =
@@ -1392,91 +1411,112 @@ export async function openCollectionAsTable(
                   ? new FieldPath(trimmedField)
                   : new FieldPath(...trimmedField.split("."));
 
-              if (isDeleteField) {
-                batch.update(docRef, fieldPathObj, FieldValue.delete());
-              } else {
-                batch.update(docRef, fieldPathObj, parsedValue);
-              }
-            }
-            await batch.commit();
+              const writePromise = isDeleteField
+                ? bulkWriter.update(docRef, fieldPathObj, FieldValue.delete())
+                : bulkWriter.update(docRef, fieldPathObj, parsedValue);
+
+              return writePromise
+                .then(() => {
+                  succeededPaths.push(targetPath);
+                })
+                .catch((err: any) => {
+                  failedDocs.push({
+                    path: targetPath,
+                    error: err?.message || String(err),
+                  });
+                });
+            });
+            await Promise.allSettled(ops);
+          } finally {
+            await bulkWriter.close().catch(() => {});
           }
-          CostService.getInstance().recordOperation(connectionId, "write", targetPaths.length);
+          if (succeededPaths.length > 0) {
+            CostService.getInstance().recordOperation(connectionId, "write", succeededPaths.length);
+          }
         }
 
-        if (isDeleteField) {
-          for (const targetPath of targetPaths) {
-            DocumentFileSystemProvider.getInstance().invalidateAndNotifyFieldDeleted(
-              connectionId,
-              targetPath,
-              trimmedField
+        if (succeededPaths.length > 0) {
+          if (isDeleteField) {
+            for (const targetPath of succeededPaths) {
+              DocumentFileSystemProvider.getInstance().invalidateAndNotifyFieldDeleted(
+                connectionId,
+                targetPath,
+                trimmedField
+              );
+            }
+          } else {
+            DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
+              succeededPaths.map((docPath) => ({ connectionId, docPath }))
             );
           }
-        } else {
-          DocumentFileSystemProvider.getInstance().invalidateAndNotifyMany(
-            targetPaths.map((docPath) => ({ connectionId, docPath }))
-          );
+
+          // Update in-memory loaded docs using O(1) Set lookup on succeeded document paths
+          const succeededPathSet = new Set(succeededPaths);
+          loadedDocs = loadedDocs.map((doc: any) => {
+            if (succeededPathSet.has(doc.__path)) {
+              const updated = { ...doc };
+              if (Object.prototype.hasOwnProperty.call(updated, trimmedField) || !trimmedField.includes(".")) {
+                if (isDeleteField) {
+                  delete updated[trimmedField];
+                } else {
+                  updated[trimmedField] = parsedValue;
+                }
+              } else {
+                const parts = trimmedField.split(".");
+                if (isDeleteField) {
+                  let cur: any = updated;
+                  for (let i = 0; i < parts.length - 1; i++) {
+                    if (!cur || typeof cur !== "object") {
+                      cur = undefined;
+                      break;
+                    }
+                    cur = cur[parts[i]];
+                  }
+                  if (cur && typeof cur === "object") {
+                    delete cur[parts[parts.length - 1]];
+                  }
+                } else {
+                  let cur: any = updated;
+                  for (let i = 0; i < parts.length - 1; i++) {
+                    if (!cur[parts[i]] || typeof cur[parts[i]] !== "object") {
+                      cur[parts[i]] = {};
+                    } else {
+                      cur[parts[i]] = Array.isArray(cur[parts[i]])
+                        ? [...cur[parts[i]]]
+                        : { ...cur[parts[i]] };
+                    }
+                    cur = cur[parts[i]];
+                  }
+                  cur[parts[parts.length - 1]] = parsedValue;
+                }
+              }
+              return updated;
+            }
+            return doc;
+          });
+
+          panel.webview.postMessage({
+            type: "batchSuccess",
+            operation: "update",
+            field: trimmedField,
+            value: parsedValue,
+            isDeleteField,
+            docPaths: succeededPaths,
+            docs: loadedDocs,
+          });
         }
 
-        vscode.window.showInformationMessage(
-          isDeleteField
-            ? `Successfully deleted field '${trimmedField}' across ${targetPaths.length} document(s)!`
-            : `Successfully updated field '${trimmedField}' across ${targetPaths.length} document(s)!`
-        );
-
-        // Update in-memory loaded docs using O(1) Set lookup on full document path
-        const targetPathSet = new Set(targetPaths);
-        loadedDocs = loadedDocs.map((doc: any) => {
-          if (targetPathSet.has(doc.__path)) {
-            const updated = { ...doc };
-            if (Object.prototype.hasOwnProperty.call(updated, trimmedField) || !trimmedField.includes(".")) {
-              if (isDeleteField) {
-                delete updated[trimmedField];
-              } else {
-                updated[trimmedField] = parsedValue;
-              }
-            } else {
-              const parts = trimmedField.split(".");
-              if (isDeleteField) {
-                let cur: any = updated;
-                for (let i = 0; i < parts.length - 1; i++) {
-                  if (!cur || typeof cur !== "object") {
-                    cur = undefined;
-                    break;
-                  }
-                  cur = cur[parts[i]];
-                }
-                if (cur && typeof cur === "object") {
-                  delete cur[parts[parts.length - 1]];
-                }
-              } else {
-                let cur: any = updated;
-                for (let i = 0; i < parts.length - 1; i++) {
-                  if (!cur[parts[i]] || typeof cur[parts[i]] !== "object") {
-                    cur[parts[i]] = {};
-                  } else {
-                    cur[parts[i]] = Array.isArray(cur[parts[i]])
-                      ? [...cur[parts[i]]]
-                      : { ...cur[parts[i]] };
-                  }
-                  cur = cur[parts[i]];
-                }
-                cur[parts[parts.length - 1]] = parsedValue;
-              }
-            }
-            return updated;
-          }
-          return doc;
-        });
-
-        panel.webview.postMessage({
-          type: "batchSuccess",
-          operation: "update",
-          field: trimmedField,
-          value: parsedValue,
-          isDeleteField,
-          docPaths: targetPaths,
-          docs: loadedDocs,
-        });
+        if (failedDocs.length > 0) {
+          vscode.window.showWarningMessage(
+            `${isDeleteField ? "Deleted" : "Updated"} field '${trimmedField}' on ${succeededPaths.length} document(s); ${failedDocs.length} failed (first: ${failedDocs[0].path}: ${failedDocs[0].error}).`
+          );
+        } else {
+          vscode.window.showInformationMessage(
+            isDeleteField
+              ? `Successfully deleted field '${trimmedField}' across ${succeededPaths.length} document(s)!`
+              : `Successfully updated field '${trimmedField}' across ${succeededPaths.length} document(s)!`
+          );
+        }
       } catch (err: any) {
         vscode.window.showErrorMessage(`Batch update failed: ${err.message}`);
       }
@@ -1512,10 +1552,11 @@ export async function openCollectionAsTable(
       const targetPathSet = new Set(targetPaths);
       const deletedDocsData = loadedDocs.filter((d) => targetPathSet.has(d.__path));
 
+      const envPrefix = getEnvironmentWarningPrefix(connectionId);
       let isDeepDelete = false;
       if (liveConn?.isLocalJson) {
         const confirm = await vscode.window.showWarningMessage(
-          `Are you sure you want to permanently delete ${targetPaths.length} document(s)? This action cannot be undone.`,
+          `${envPrefix}Are you sure you want to permanently delete ${targetPaths.length} document(s)? This action cannot be undone.`,
           { modal: true },
           "Delete Permanently",
           "Cancel"
@@ -1523,7 +1564,7 @@ export async function openCollectionAsTable(
         if (confirm !== "Delete Permanently") return;
       } else {
         const confirm = await vscode.window.showWarningMessage(
-          `Are you sure you want to permanently delete ${targetPaths.length} document(s)? This action cannot be undone.`,
+          `${envPrefix}Are you sure you want to permanently delete ${targetPaths.length} document(s)? This action cannot be undone.`,
           { modal: true },
           "Delete Documents Only",
           "Deep Delete (Docs + Subcollections)",
@@ -1533,64 +1574,33 @@ export async function openCollectionAsTable(
         isDeepDelete = confirm === "Deep Delete (Docs + Subcollections)";
       }
 
-      try {
-        if (liveConn?.isLocalJson) {
-          const grouped = new Map<string, string[]>();
-          for (const targetPath of targetPaths) {
-            const lastSlash = targetPath.lastIndexOf("/");
-            const coll = lastSlash > 0 ? targetPath.substring(0, lastSlash) : collectionPath;
-            const id = lastSlash > 0 ? targetPath.substring(lastSlash + 1) : targetPath;
-            const list = grouped.get(coll) || [];
-            list.push(id);
-            grouped.set(coll, list);
-          }
-          for (const [coll, ids] of grouped.entries()) {
-            LocalJsonService.getInstance().deleteDocuments(liveConn, coll, ids);
-          }
-          for (const targetPath of targetPaths) {
-            DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
-              connectionId,
-              targetPath,
-              false
-            );
-          }
-        } else {
-          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
-          if (isDeepDelete) {
-            await vscode.window.withProgress(
-              {
-                location: vscode.ProgressLocation.Notification,
-                title: `Deep deleting ${targetPaths.length} document(s) and nested subcollections...`,
-                cancellable: false,
-              },
-              async (progress) => {
-                for (let i = 0; i < targetPaths.length; i++) {
-                  const targetPath = targetPaths[i];
-                  progress.report({
-                    message: `[${i + 1}/${targetPaths.length}] ${targetPath}`,
-                    increment: (1 / targetPaths.length) * 100,
-                  });
-                  await recursiveDeleteWithCount(firestore, firestore.doc(targetPath), connectionId);
-                  DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
-                    connectionId,
-                    targetPath,
-                    true
-                  );
-                }
-              }
-            );
-          } else {
-            const chunkSize = 400;
-            for (let i = 0; i < targetPaths.length; i += chunkSize) {
-              const chunk = targetPaths.slice(i, i + chunkSize);
-              const batch = firestore.batch();
-              for (const targetPath of chunk) {
-                batch.delete(firestore.doc(targetPath));
-              }
-              await batch.commit();
-            }
-            CostService.getInstance().recordOperation(connectionId, "delete", targetPaths.length);
+      const confirmedProd = await confirmProductionAction({
+        connectionId,
+        actionLabel: isDeepDelete ? "Batch Deep Delete Documents" : "Batch Delete Documents",
+        targetSummary: `${targetPaths.length} document(s) in '${collectionPath || collectionId}'`,
+        expectedInput: `DELETE ${targetPaths.length}`,
+      });
+      if (!confirmedProd) return;
 
+      try {
+        let succeededPaths: string[] = [];
+        const failedDocs: Array<{ path: string; error: string }> = [];
+
+        suppressFileDeleteSync = true;
+        try {
+          if (liveConn?.isLocalJson) {
+            const grouped = new Map<string, string[]>();
+            for (const targetPath of targetPaths) {
+              const lastSlash = targetPath.lastIndexOf("/");
+              const coll = lastSlash > 0 ? targetPath.substring(0, lastSlash) : collectionPath;
+              const id = lastSlash > 0 ? targetPath.substring(lastSlash + 1) : targetPath;
+              const list = grouped.get(coll) || [];
+              list.push(id);
+              grouped.set(coll, list);
+            }
+            for (const [coll, ids] of grouped.entries()) {
+              LocalJsonService.getInstance().deleteDocuments(liveConn, coll, ids);
+            }
             for (const targetPath of targetPaths) {
               DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
                 connectionId,
@@ -1598,26 +1608,125 @@ export async function openCollectionAsTable(
                 false
               );
             }
+            succeededPaths = [...targetPaths];
+          } else {
+            const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+            if (isDeepDelete) {
+              await vscode.window.withProgress(
+                {
+                  location: vscode.ProgressLocation.Notification,
+                  title: `Deep deleting ${targetPaths.length} document(s) and nested subcollections...`,
+                  cancellable: false,
+                },
+                async (progress) => {
+                  for (let i = 0; i < targetPaths.length; i++) {
+                    const targetPath = targetPaths[i];
+                    progress.report({
+                      message: `[${i + 1}/${targetPaths.length}] ${targetPath}`,
+                      increment: (1 / targetPaths.length) * 100,
+                    });
+                    try {
+                      await recursiveDeleteWithCount(firestore, firestore.doc(targetPath), connectionId);
+                      DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
+                        connectionId,
+                        targetPath,
+                        true
+                      );
+                      succeededPaths.push(targetPath);
+                    } catch (err: any) {
+                      failedDocs.push({
+                        path: targetPath,
+                        error: err?.message || String(err),
+                      });
+                    }
+                  }
+                }
+              );
+            } else {
+              const bulkWriter = firestore.bulkWriter();
+              bulkWriter.onWriteError(() => false);
+              try {
+                const ops = targetPaths.map((targetPath) =>
+                  bulkWriter
+                    .delete(firestore.doc(targetPath))
+                    .then(() => {
+                      succeededPaths.push(targetPath);
+                      DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
+                        connectionId,
+                        targetPath,
+                        false
+                      );
+                    })
+                    .catch((err: any) => {
+                      failedDocs.push({
+                        path: targetPath,
+                        error: err?.message || String(err),
+                      });
+                    })
+                );
+                await Promise.allSettled(ops);
+              } finally {
+                await bulkWriter.close().catch(() => {});
+              }
+              if (succeededPaths.length > 0) {
+                CostService.getInstance().recordOperation(connectionId, "delete", succeededPaths.length);
+              }
+            }
+          }
+        } finally {
+          suppressFileDeleteSync = false;
+        }
+
+        if (explorerDataProvider && succeededPaths.length > 0) {
+          if (isGroup) {
+            const parentColPaths = new Set<string>();
+            for (const p of succeededPaths) {
+              const idx = p.lastIndexOf("/");
+              if (idx > 0) {
+                parentColPaths.add(p.substring(0, idx));
+              }
+            }
+            if (parentColPaths.size > 0 && parentColPaths.size <= 10) {
+              for (const pPath of parentColPaths) {
+                const pId = pPath.split("/").pop() || pPath;
+                explorerDataProvider.refreshNode(
+                  new CollectionItem(pId, { id: pId, path: pPath } as any, connectionId)
+                );
+              }
+            } else {
+              explorerDataProvider.refresh();
+            }
+          } else if (collectionPath) {
+            const colId = collectionId || collectionPath.split("/").pop() || collectionPath;
+            explorerDataProvider.refreshNode(
+              new CollectionItem(colId, { id: colId, path: collectionPath } as any, connectionId)
+            );
+          } else {
+            explorerDataProvider.refresh();
           }
         }
 
-        if (explorerDataProvider) {
-          explorerDataProvider.refresh();
+        if (failedDocs.length > 0) {
+          vscode.window.showWarningMessage(
+            `Deleted ${succeededPaths.length} document(s); ${failedDocs.length} failed (first: ${failedDocs[0].path}: ${failedDocs[0].error}).`
+          );
+        } else {
+          vscode.window.showInformationMessage(`Successfully deleted ${succeededPaths.length} document(s)!`);
         }
 
-        vscode.window.showInformationMessage(`Successfully deleted ${targetPaths.length} document(s)!`);
-        loadedDocs = loadedDocs.filter((doc: any) => !targetPathSet.has(doc.__path));
+        const succeededPathSet = new Set(succeededPaths);
+        loadedDocs = loadedDocs.filter((doc: any) => !succeededPathSet.has(doc.__path));
 
         // When documents are deleted, if more documents exist in Firestore,
         // automatically replenish the table by loading as many documents as were deleted!
-        if (hasMoreState && targetPaths.length > 0) {
-          const replenishCount = targetPaths.length;
+        if (hasMoreState && succeededPaths.length > 0) {
+          const replenishCount = succeededPaths.length;
           const { newDocs, hasMore } = await loadMoreDocs(replenishCount);
           hasMoreState = hasMore;
           panel.webview.postMessage({
             type: "batchSuccess",
             operation: "delete",
-            docPaths: targetPaths,
+            docPaths: succeededPaths,
             docs: loadedDocs,
             hasMore: hasMoreState,
           });
@@ -1636,18 +1745,19 @@ export async function openCollectionAsTable(
           panel.webview.postMessage({
             type: "batchSuccess",
             operation: "delete",
-            docPaths: targetPaths,
+            docPaths: succeededPaths,
             docs: loadedDocs,
             hasMore: hasMoreState,
           });
         }
 
-        if (!liveConn?.isLocalJson && deletedDocsData.length > 0) {
+        const succeededDeletedDocsData = deletedDocsData.filter((d) => succeededPathSet.has(d.__path));
+        if (!liveConn?.isLocalJson && succeededDeletedDocsData.length > 0) {
           try {
             await promptAndCleanupOrphanStorageFiles(
               connectionId,
-              deletedDocsData,
-              `${targetPaths.length} deleted document(s)`
+              succeededDeletedDocsData,
+              `${succeededPaths.length} deleted document(s)`
             );
           } catch { }
         }
@@ -1899,13 +2009,115 @@ export async function openCollectionAsTable(
     }
   });
 
+  // Synchronize table when documents or parent collection are deleted externally (debounced & coalesced)
+  const flushExternalDeletes = () => {
+    externalDeleteTimer = undefined;
+    if (isDisposed || loadedDocs.length === 0) {
+      pendingExternalDeletedPaths.clear();
+      pendingCollectionDeleted = false;
+      return;
+    }
+
+    if (pendingCollectionDeleted) {
+      pendingCollectionDeleted = false;
+      pendingExternalDeletedPaths.clear();
+      loadedDocs = [];
+      hasMoreState = false;
+      lastDoc = null;
+      panel.webview.postMessage({
+        type: "batchSuccess",
+        operation: "delete",
+        docPaths: [],
+        docs: [],
+        hasMore: false,
+      });
+      return;
+    }
+
+    if (pendingExternalDeletedPaths.size === 0) {
+      return;
+    }
+
+    const targets = Array.from(pendingExternalDeletedPaths);
+    pendingExternalDeletedPaths.clear();
+
+    const matchedPaths: string[] = [];
+    const survivingDocs: any[] = [];
+    for (const doc of loadedDocs) {
+      const docPath = doc.__path;
+      const isDeleted =
+        !!docPath &&
+        targets.some((t) => docPath === t || docPath.startsWith(t + "/"));
+      if (isDeleted) {
+        matchedPaths.push(docPath);
+      } else {
+        survivingDocs.push(doc);
+      }
+    }
+
+    if (matchedPaths.length > 0) {
+      loadedDocs = survivingDocs;
+      panel.webview.postMessage({
+        type: "batchSuccess",
+        operation: "delete",
+        docPaths: matchedPaths,
+        docs: loadedDocs,
+        hasMore: hasMoreState,
+      });
+    }
+  };
+
+  const fileDeleteSubscription = DocumentFileSystemProvider.getInstance().onDidChangeFile((events) => {
+    if (isDisposed || suppressFileDeleteSync || activeReadTime || loadedDocs.length === 0) {
+      return;
+    }
+
+    let queued = false;
+    for (const ev of events) {
+      if (
+        ev.type !== vscode.FileChangeType.Deleted ||
+        ev.uri.scheme !== "ketrik-firestore-studio" ||
+        ev.uri.authority !== connectionId
+      ) {
+        continue;
+      }
+      const parsed = DocumentFileSystemProvider.getInstance().parseUri(ev.uri);
+      if (parsed.isRules || parsed.fieldPath !== undefined || !parsed.docPath) {
+        continue;
+      }
+
+      if (
+        !isGroup &&
+        collectionPath &&
+        (parsed.docPath === collectionPath || collectionPath.startsWith(parsed.docPath + "/"))
+      ) {
+        pendingCollectionDeleted = true;
+        queued = true;
+        break;
+      }
+
+      pendingExternalDeletedPaths.add(parsed.docPath);
+      queued = true;
+    }
+
+    if (queued && !externalDeleteTimer) {
+      externalDeleteTimer = setTimeout(flushExternalDeletes, 80);
+    }
+  });
+
   panel.onDidDispose(() => {
     isDisposed = true;
     activeCollectionPanels.delete(panelKey);
     stopLiveWatch(true);
+    if (externalDeleteTimer) {
+      clearTimeout(externalDeleteTimer);
+      externalDeleteTimer = undefined;
+    }
+    pendingExternalDeletedPaths.clear();
     messageSubscription.dispose();
     viewStateSubscription.dispose();
     connSubscription.dispose();
+    fileDeleteSubscription.dispose();
     loadedDocs = [];
     headers = [];
     lastDoc = null;

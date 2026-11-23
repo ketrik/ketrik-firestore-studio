@@ -7,7 +7,11 @@ import { ConnectionManager } from "../connections/ConnectionManager";
 import { CostService } from "../cost/costService";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
-import { isProtectSystemKeysEnabled, isSystemFieldPath } from "../utils/deleteUtils";
+import {
+  getEnvironmentWarningPrefix,
+  isProtectSystemKeysEnabled,
+  isSystemFieldPath,
+} from "../utils/deleteUtils";
 
 interface FieldPanelContext {
   panel: vscode.WebviewPanel;
@@ -309,12 +313,37 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
   };
   activeFieldPanels.set(panelKey, ctx);
 
+  function getConnectionStatePayload() {
+    const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
+    return {
+      type: "connectionState",
+      isReadOnly: !!conn?.readOnly,
+      environment: conn?.environment,
+    };
+  }
+
+  let lastReadOnly: boolean | undefined;
+  let lastEnv: string | undefined;
+  const connChangeSubscription = ConnectionManager.getInstance().onDidChangeConnections(() => {
+    const nextState = getConnectionStatePayload();
+    if (nextState.isReadOnly !== lastReadOnly || nextState.environment !== lastEnv) {
+      lastReadOnly = nextState.isReadOnly;
+      lastEnv = nextState.environment;
+      panel.webview.postMessage(nextState);
+    }
+  });
+
   const messageSubscription = panel.webview.onDidReceiveMessage(async (message) => {
     if (message.command === "ready" || message.command === "clearSearch") {
+      const connState = getConnectionStatePayload();
+      lastReadOnly = connState.isReadOnly;
+      lastEnv = connState.environment;
       panel.webview.postMessage({
         type: "init",
         headers: ctx.headers,
         rows: ctx.rows,
+        isReadOnly: connState.isReadOnly,
+        environment: connState.environment,
       });
       return;
     }
@@ -456,12 +485,13 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
         return;
       }
       const { rowId, index } = message;
+      const envPrefix = getEnvironmentWarningPrefix(item.connectionId);
       const safeWarning =
         isProtectSystemKeysEnabled() && isSystemFieldPath([...fieldSegments, String(rowId)])
           ? `⚠️ Safe Mode Warning: '${targetFieldPath}' or entry '${rowId}' is a System Envelope or Protocol key.\n\n`
           : "";
       const confirm = await vscode.window.showWarningMessage(
-        `${safeWarning}Are you sure you want to delete entry '${rowId}' from '${targetFieldPath}'?`,
+        `${envPrefix}${safeWarning}Are you sure you want to delete entry '${rowId}' from '${targetFieldPath}'?`,
         { modal: true },
         "Delete Entry",
         "Cancel"
@@ -747,10 +777,13 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
   });
 
   // Immediate postMessage fallback in case client is already active
+  const initialConnState = getConnectionStatePayload();
   panel.webview.postMessage({
     type: "init",
     headers,
     rows,
+    isReadOnly: initialConnState.isReadOnly,
+    environment: initialConnState.environment,
   });
 
   // Listen to file changes from DocumentFileSystemProvider to keep open field table in live sync
@@ -813,6 +846,7 @@ export async function openFieldAsTable(item: DocumentFieldItem) {
     activeFieldPanels.delete(panelKey);
     messageSubscription.dispose();
     fileChangeSubscription.dispose();
+    connChangeSubscription.dispose();
     if (fileChangeDebounce) {
       clearTimeout(fileChangeDebounce);
       fileChangeDebounce = undefined;

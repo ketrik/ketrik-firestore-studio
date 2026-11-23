@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.22.0",
+  "version": "1.22.1",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -211,6 +211,12 @@
           "type": "boolean",
           "default": true,
           "description": "Safe Mode: Warn and require explicit confirmation when deleting or renaming System Envelope ('_') or Operational Protocol ('__') keys.",
+          "scope": "window"
+        },
+        "ketrik-firestore-studio.requireProductionTypeToConfirm": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require typing the target name or confirmation token before executing high-impact deletions (collections, documents, batch deletes, multi-field deletes, and Auth users) on connections tagged as Production.",
           "scope": "window"
         },
         "ketrik-firestore-studio.authProfileCollection": {
@@ -1314,6 +1320,11 @@
           "group": "2_edit@2"
         },
         {
+          "command": "ketrik-firestore-studio.deleteDocument",
+          "when": "resourceScheme == ketrik-firestore-studio && resourceExtname == .json",
+          "group": "9_danger@1"
+        },
+        {
           "command": "ketrik-firestore-studio.diffSnapshotWithFirestore",
           "when": "resourceScheme == file && ketrik-firestore-studio.isSnapshotFile",
           "group": "navigation@1"
@@ -1860,11 +1871,6 @@
           "group": "inline@3"
         },
         {
-          "command": "ketrik-firestore-studio.deleteAuthUser",
-          "when": "view == ketrik-firestore-studio-view && viewItem =~ /^authUser:.*:rw$/",
-          "group": "inline@4"
-        },
-        {
           "command": "ketrik-firestore-studio.openAuthUserClaims",
           "when": "view == ketrik-firestore-studio-view && viewItem =~ /^authUser:/",
           "group": "1_actions@1"
@@ -1912,7 +1918,7 @@
         {
           "command": "ketrik-firestore-studio.deleteAuthUser",
           "when": "view == ketrik-firestore-studio-view && viewItem =~ /^authUser:.*:rw$/",
-          "group": "1_actions@7"
+          "group": "9_danger@1"
         },
         {
           "command": "ketrik-firestore-studio.openCollectionAsTable",
@@ -2180,11 +2186,6 @@
           "group": "inline@3"
         },
         {
-          "command": "ketrik-firestore-studio.deleteField",
-          "when": "view == ketrik-firestore-studio-view && viewItem =~ /^documentField:.*:rw$/",
-          "group": "inline@4"
-        },
-        {
           "command": "ketrik-firestore-studio.revealFieldSecretPayload",
           "when": "view == ketrik-firestore-studio-view && viewItem =~ /^documentField:secretRef:/",
           "group": "1_open@0"
@@ -2266,7 +2267,7 @@
         },
         {
           "command": "ketrik-firestore-studio.deleteMultipleFields",
-          "when": "view == ketrik-firestore-studio-view && viewItem =~ /^documentField:map:.*:rw$/",
+          "when": "view == ketrik-firestore-studio-view && viewItem =~ /^documentField:(map|array):.*:rw$/",
           "group": "9_danger@2"
         },
         {
@@ -2293,11 +2294,6 @@
           "command": "ketrik-firestore-studio.refreshItem",
           "when": "view == ketrik-firestore-studio-view && viewItem =~ /^documentFieldArrayItem:/",
           "group": "inline@3"
-        },
-        {
-          "command": "ketrik-firestore-studio.deleteArrayItem",
-          "when": "view == ketrik-firestore-studio-view && viewItem =~ /^documentFieldArrayItem:.*:rw$/",
-          "group": "inline@4"
         },
         {
           "command": "ketrik-firestore-studio.revealFieldSecretPayload",

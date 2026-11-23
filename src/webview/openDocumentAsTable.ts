@@ -18,6 +18,9 @@ import {
 import { FieldPath } from "firebase-admin/firestore";
 import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
 import {
+  collectSubcollectionStorageSample,
+  confirmProductionAction,
+  getEnvironmentWarningPrefix,
   recursiveDeleteWithCount,
   isProtectSystemKeysEnabled,
   isSystemFieldPath,
@@ -185,6 +188,26 @@ export async function openDocumentAsTable(
   activeDocumentPanels.set(panelKey, ctx);
   let suppressNextFileChange = false;
 
+  function getConnectionStatePayload() {
+    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    return {
+      type: "connectionState",
+      isReadOnly: !!conn?.readOnly,
+      environment: conn?.environment,
+    };
+  }
+
+  let lastReadOnly: boolean | undefined;
+  let lastEnv: string | undefined;
+  const connChangeSubscription = ConnectionManager.getInstance().onDidChangeConnections(() => {
+    const nextState = getConnectionStatePayload();
+    if (nextState.isReadOnly !== lastReadOnly || nextState.environment !== lastEnv) {
+      lastReadOnly = nextState.isReadOnly;
+      lastEnv = nextState.environment;
+      panel.webview.postMessage(nextState);
+    }
+  });
+
   async function getDocRef() {
     const conn = ConnectionManager.getInstance().getConnection(connectionId);
     if (conn?.isLocalJson) {
@@ -196,12 +219,17 @@ export async function openDocumentAsTable(
 
   const messageSubscription = panel.webview.onDidReceiveMessage(async (message) => {
     if (message.command === "ready") {
+      const connState = getConnectionStatePayload();
+      lastReadOnly = connState.isReadOnly;
+      lastEnv = connState.environment;
       panel.webview.postMessage({
         type: "init",
         documentId,
         docPath,
         parentCollectionPath,
         fields: ctx.fields,
+        isReadOnly: connState.isReadOnly,
+        environment: connState.environment,
       });
       return;
     }
@@ -222,12 +250,15 @@ export async function openDocumentAsTable(
         }
         ctx.docData = freshData;
         ctx.fields = parseFields(freshData);
+        const connState = getConnectionStatePayload();
         panel.webview.postMessage({
           type: "init",
           documentId,
           docPath,
           parentCollectionPath,
           fields: ctx.fields,
+          isReadOnly: connState.isReadOnly,
+          environment: connState.environment,
         });
         vscode.window.showInformationMessage(`Refreshed document '${documentId}'!`);
       } catch (err: any) {
@@ -387,12 +418,13 @@ export async function openDocumentAsTable(
         return;
       }
       const { field } = message;
+      const envPrefix = getEnvironmentWarningPrefix(connectionId);
       const safeWarning =
         isProtectSystemKeysEnabled() && isSystemFieldPath([field])
           ? `⚠️ Safe Mode Warning: '${field}' is a System Envelope or Protocol key. Deleting it may break query filtering or lifecycle rules.\n\n`
           : "";
       const confirm = await vscode.window.showWarningMessage(
-        `${safeWarning}Are you sure you want to delete field '${field}' from '${docPath}'?`,
+        `${envPrefix}${safeWarning}Are you sure you want to delete field '${field}' from '${docPath}'?`,
         { modal: true },
         "Delete Field",
         "Cancel"
@@ -573,16 +605,26 @@ export async function openDocumentAsTable(
       }
 
       const savedDocData = ctx.docData;
+      const envPrefix = getEnvironmentWarningPrefix(connectionId);
+      let subSample: Record<string, any> | undefined;
 
       try {
         if (delConn?.isLocalJson) {
           const confirm = await vscode.window.showWarningMessage(
-            `Are you sure you want to delete entire document '${docPath}'?`,
+            `${envPrefix}Are you sure you want to delete entire document '${docPath}'?`,
             { modal: true },
             "Delete Document",
             "Cancel"
           );
           if (confirm !== "Delete Document") return;
+
+          const confirmedProd = await confirmProductionAction({
+            connectionId,
+            actionLabel: "Delete Document",
+            targetSummary: `document '${docPath}'`,
+            expectedInput: "DELETE",
+          });
+          if (!confirmedProd) return;
 
           LocalJsonService.getInstance().deleteDocument(delConn, docPath);
           DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
@@ -601,14 +643,14 @@ export async function openDocumentAsTable(
           const confirm =
             subcollections.length > 0
               ? await vscode.window.showWarningMessage(
-                  `Document '${docPath}' has ${subcollections.length} subcollection(s) (${subcollections.map((s) => s.id).join(", ")}). How would you like to delete it?`,
+                  `${envPrefix}Document '${docPath}' has ${subcollections.length} subcollection(s) (${subcollections.map((s) => s.id).join(", ")}). How would you like to delete it?`,
                   { modal: true },
                   "Deep Delete (Doc + Subcollections)",
                   "Delete Document Only",
                   "Cancel"
                 )
               : await vscode.window.showWarningMessage(
-                  `Are you sure you want to delete entire document '${docPath}'?`,
+                  `${envPrefix}Are you sure you want to delete entire document '${docPath}'?`,
                   { modal: true },
                   "Delete Document",
                   "Cancel"
@@ -617,7 +659,15 @@ export async function openDocumentAsTable(
           if (!confirm || confirm === "Cancel") return;
 
           const isDeep = confirm === "Deep Delete (Doc + Subcollections)";
+          const confirmedProd = await confirmProductionAction({
+            connectionId,
+            actionLabel: isDeep ? "Deep Delete Document & Subcollections" : "Delete Document",
+            targetSummary: `document '${docPath}'`,
+            expectedInput: isDeep ? documentId : "DELETE",
+          });
+          if (!confirmedProd) return;
           if (isDeep) {
+            subSample = await collectSubcollectionStorageSample(docRef, connectionId);
             await vscode.window.withProgress(
               {
                 location: vscode.ProgressLocation.Notification,
@@ -660,12 +710,19 @@ export async function openDocumentAsTable(
         panel.dispose();
         vscode.window.showInformationMessage(`Document '${documentId}' deleted!`);
 
-        if (!delConn?.isLocalJson && savedDocData && Object.keys(savedDocData).length > 0) {
-          try {
-            await promptAndCleanupOrphanStorageFiles(connectionId, savedDocData, documentId);
-          } catch { }
-        }
         if (!delConn?.isLocalJson) {
+          const storageScanObj: Record<string, any> = {};
+          if (savedDocData && Object.keys(savedDocData).length > 0) {
+            storageScanObj.root = savedDocData;
+          }
+          if (subSample) {
+            storageScanObj.subcollections = subSample;
+          }
+          if (Object.keys(storageScanObj).length > 0) {
+            try {
+              await promptAndCleanupOrphanStorageFiles(connectionId, storageScanObj, documentId);
+            } catch { }
+          }
           try {
             await maybePromptDeleteAuthUserForProfile(
               connectionId,
@@ -750,6 +807,7 @@ export async function openDocumentAsTable(
     activeDocumentPanels.delete(panelKey);
     messageSubscription.dispose();
     fileChangeSubscription.dispose();
+    connChangeSubscription.dispose();
     if (fileChangeDebounce) {
       clearTimeout(fileChangeDebounce);
       fileChangeDebounce = undefined;

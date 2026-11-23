@@ -8,7 +8,11 @@ import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider
 import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
-import { recursiveDeleteWithCount } from "../utils/deleteUtils";
+import {
+  confirmProductionAction,
+  getEnvironmentWarningPrefix,
+  recursiveDeleteWithCount,
+} from "../utils/deleteUtils";
 
 /**
  * Open collection in table view.
@@ -176,13 +180,10 @@ export async function addCollectionCommand(
     return;
   }
 
-  const conn = ConnectionManager.getInstance().getConnection(connectionId);
-  if (conn?.readOnly) {
-    vscode.window.showErrorMessage(
-      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to create collections.`
-    );
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "create collections")) {
     return;
   }
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
 
   const collectionId = await vscode.window.showInputBox({
     prompt: "Enter Collection ID",
@@ -271,18 +272,41 @@ export async function deleteCollectionCommand(
   }
 
   const connectionManager = ConnectionManager.getInstance();
-  const conn = connectionManager.getConnection(item.connectionId);
-  if (conn?.readOnly) {
-    vscode.window.showErrorMessage(
-      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete collections.`
-    );
+  if (!connectionManager.ensureWritable(item.connectionId, "delete collections")) {
     return;
   }
+  const conn = connectionManager.getConnection(item.connectionId);
   const connName = conn?.name || item.connectionId;
   const collPath = item.reference?.path || item.collectionId;
+  const envPrefix = getEnvironmentWarningPrefix(item.connectionId);
+
+  let preflightCount: number | undefined;
+  try {
+    if (conn?.isLocalJson) {
+      preflightCount = LocalJsonService.getInstance().listDocuments(conn, collPath).length;
+    } else if (item.reference) {
+      const snap = await item.reference.count().get();
+      preflightCount = snap.data().count;
+      CostService.getInstance().recordOperation(
+        item.connectionId,
+        "read",
+        Math.max(1, Math.ceil(preflightCount / 1000))
+      );
+    }
+  } catch {
+    preflightCount = undefined;
+  }
+
+  const countLine =
+    preflightCount !== undefined
+      ? `\nTop-level documents: ~${preflightCount.toLocaleString()}`
+      : "";
+  const storageNote = !conn?.isLocalJson
+    ? "\nNote: Cloud Storage files referenced inside this collection are not automatically deleted."
+    : "";
 
   const confirm = await vscode.window.showWarningMessage(
-    `Are you sure you want to permanently delete collection "${item.collectionId}" and all its documents from "${connName}"?\n\nPath: ${collPath}\n\n⚠️ This action is irreversible!`,
+    `${envPrefix}Are you sure you want to permanently delete collection "${item.collectionId}" and all its documents from "${connName}"?\n\nPath: ${collPath}${countLine}${storageNote}\n\n⚠️ This action is irreversible!`,
     { modal: true },
     "Delete Collection",
     "Cancel"
@@ -292,20 +316,41 @@ export async function deleteCollectionCommand(
     return;
   }
 
+  const confirmedProd = await confirmProductionAction({
+    connectionId: item.connectionId,
+    actionLabel: "Delete Collection",
+    targetSummary: `collection '${collPath}'`,
+    expectedInput: item.collectionId,
+  });
+  if (!confirmedProd) {
+    return;
+  }
+
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: `Deleting collection "${item.collectionId}" from "${connName}"...`,
       cancellable: false,
     },
-    async () => {
+    async (progress) => {
       try {
         let deletedCount = 0;
         if (conn?.isLocalJson) {
           LocalJsonService.getInstance().deleteCollection(conn, collPath);
         } else {
           const firestore = await connectionManager.getFirestore(item.connectionId);
-          deletedCount = await recursiveDeleteWithCount(firestore, item.reference, item.connectionId);
+          deletedCount = await recursiveDeleteWithCount(
+            firestore,
+            item.reference,
+            item.connectionId,
+            (count) => {
+              if (count === 1 || count % 10 === 0) {
+                progress.report({
+                  message: `Deleted ${count.toLocaleString()} document(s)...`,
+                });
+              }
+            }
+          );
         }
 
         DocumentFileSystemProvider.getInstance().invalidateAndNotifyCollectionDeleted(item.connectionId, collPath);
@@ -375,10 +420,7 @@ export async function deleteMultipleCollectionsCommand(
     vscode.window.showErrorMessage("Connection not found.");
     return;
   }
-  if (conn.readOnly) {
-    vscode.window.showErrorMessage(
-      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete collections.`
-    );
+  if (!connectionManager.ensureWritable(conn.id, "delete collections")) {
     return;
   }
 
@@ -421,15 +463,63 @@ export async function deleteMultipleCollectionsCommand(
 
   const selectedIds = picks.map((p) => p.collectionId);
   const collListStr = selectedIds.join(", ");
+  const envPrefix = getEnvironmentWarningPrefix(conn.id);
+
+  let preflightTotal: number | undefined;
+  if (selectedIds.length <= 20) {
+    try {
+      if (conn.isLocalJson) {
+        preflightTotal = selectedIds.reduce(
+          (sum, id) => sum + LocalJsonService.getInstance().listDocuments(conn, id).length,
+          0
+        );
+      } else {
+        const firestore = await connectionManager.getFirestore(conn.id);
+        const counts = await Promise.all(
+          selectedIds.map(async (id) => {
+            const snap = await firestore.collection(id).count().get();
+            const c = snap.data().count;
+            CostService.getInstance().recordOperation(
+              conn.id,
+              "read",
+              Math.max(1, Math.ceil(c / 1000))
+            );
+            return c;
+          })
+        );
+        preflightTotal = counts.reduce((sum, c) => sum + c, 0);
+      }
+    } catch {
+      preflightTotal = undefined;
+    }
+  }
+
+  const totalLine =
+    preflightTotal !== undefined
+      ? `\nEstimated top-level documents: ~${preflightTotal.toLocaleString()}`
+      : "";
+  const storageNote = !conn.isLocalJson
+    ? "\nNote: Cloud Storage files referenced inside these collections are not automatically deleted."
+    : "";
 
   const confirm = await vscode.window.showWarningMessage(
-    `Are you sure you want to permanently delete ${selectedIds.length} collection(s) (${collListStr}) from "${conn.name}"?\n\n⚠️ ALL DOCUMENTS AND SUBCOLLECTIONS WILL BE DESTROYED! This action cannot be undone.`,
+    `${envPrefix}Are you sure you want to permanently delete ${selectedIds.length} collection(s) (${collListStr}) from "${conn.name}"?${totalLine}${storageNote}\n\n⚠️ ALL DOCUMENTS AND SUBCOLLECTIONS WILL BE DESTROYED! This action cannot be undone.`,
     { modal: true },
     `Delete ${selectedIds.length} Collection(s)`,
     "Cancel"
   );
 
   if (confirm !== `Delete ${selectedIds.length} Collection(s)`) {
+    return;
+  }
+
+  const confirmedProd = await confirmProductionAction({
+    connectionId: conn.id,
+    actionLabel: `Delete ${selectedIds.length} Collection(s)`,
+    targetSummary: `${selectedIds.length} collection(s) (${collListStr})`,
+    expectedInput: selectedIds.length === 1 ? selectedIds[0] : `DELETE ${selectedIds.length}`,
+  });
+  if (!confirmedProd) {
     return;
   }
 
@@ -441,6 +531,7 @@ export async function deleteMultipleCollectionsCommand(
     },
     async (progress) => {
       let deletedCount = 0;
+      let totalDocsDeleted = 0;
       try {
         const total = selectedIds.length;
 
@@ -465,7 +556,19 @@ export async function deleteMultipleCollectionsCommand(
               increment: (1 / total) * 100,
             });
             const collRef = firestore.collection(collId);
-            await recursiveDeleteWithCount(firestore, collRef, conn.id);
+            const collDeleted = await recursiveDeleteWithCount(
+              firestore,
+              collRef,
+              conn.id,
+              (count) => {
+                if (count === 1 || count % 10 === 0) {
+                  progress.report({
+                    message: `[${i + 1}/${total}] Deleting '${collId}' (${count.toLocaleString()} doc(s))...`,
+                  });
+                }
+              }
+            );
+            totalDocsDeleted += collDeleted;
             DocumentFileSystemProvider.getInstance().invalidateAndNotifyCollectionDeleted(conn.id, collId);
             explorerDataProvider?.clearCollectionMetadata(conn.id, collId);
             deletedCount++;
@@ -473,7 +576,9 @@ export async function deleteMultipleCollectionsCommand(
         }
 
         vscode.window.showInformationMessage(
-          `Successfully deleted ${deletedCount} collection(s) from "${conn.name}".`
+          conn.isLocalJson
+            ? `Successfully deleted ${deletedCount} collection(s) from "${conn.name}".`
+            : `Successfully deleted ${deletedCount} collection(s) (${totalDocsDeleted.toLocaleString()} doc(s)) from "${conn.name}".`
         );
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to delete collections: ${err.message}`);

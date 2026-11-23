@@ -688,6 +688,8 @@ export function getAuthUsersTableHtml(connectionId: string): string {
 
     function applyConnectionState(state, skipRender) {
       if (!state) return;
+      const readOnlyChanged =
+        typeof state.isReadOnly === 'boolean' && state.isReadOnly !== isReadOnly;
       if (typeof state.isReadOnly === 'boolean') {
         isReadOnly = state.isReadOnly;
       }
@@ -746,7 +748,7 @@ export function getAuthUsersTableHtml(connectionId: string): string {
       }
 
       if (!skipRender && allUsers.length > 0) {
-        if (collectionChanged || 'isReadOnly' in state) {
+        if (collectionChanged || readOnlyChanged) {
           renderTable();
         }
       } else if (!skipRender) {

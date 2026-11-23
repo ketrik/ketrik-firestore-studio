@@ -6,6 +6,11 @@ import ExplorerDataProvider from "../explorer/ExplorerDataProvider";
 import { DocumentFileSystemProvider } from "../editor/DocumentFileSystemProvider";
 import openPath from "../commands/openPath";
 import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
+import {
+  collectSubcollectionStorageSample,
+  confirmProductionAction,
+  getEnvironmentWarningPrefix,
+} from "../utils/deleteUtils";
 
 function resolveConnectionId(
   target?: AuthUserItem | AuthUsersBranchItem | ConnectionTreeItem | { id?: string; connectionId?: string } | string
@@ -562,8 +567,9 @@ export async function executeDeleteAuthUserFlow(params: {
     ? [deleteBothOption, "Delete Auth User Only", deleteProfileOnlyOption, "Cancel"]
     : ["Delete Auth User Only", "Cancel"];
 
+  const envPrefix = getEnvironmentWarningPrefix(connectionId);
   const choice = await vscode.window.showWarningMessage(
-    `Are you sure you want to permanently delete user '${userLabel}' (UID: ${uid})?${profileDetail}${namedDbWarning}`,
+    `${envPrefix}Are you sure you want to permanently delete user '${userLabel}' (UID: ${uid})?${profileDetail}${namedDbWarning}`,
     { modal: true },
     ...options
   );
@@ -572,7 +578,60 @@ export async function executeDeleteAuthUserFlow(params: {
     return { authDeleted: false, profileDeleted: false };
   }
 
+  const confirmToken = params.userRecord?.email || params.userIdentifier || uid;
+  const actionLabel =
+    choice === deleteProfileOnlyOption
+      ? "Delete User Profile"
+      : choice === "Delete Auth User Only"
+        ? "Delete Auth User"
+        : "Delete Auth User & Profile";
+  const targetSummary =
+    choice === deleteProfileOnlyOption
+      ? `profile '/${profilePathLabel}' for user '${userLabel}'`
+      : `Auth user '${userLabel}' (UID: ${uid})${
+          choice !== "Delete Auth User Only" && hasProfileOrSub
+            ? ` and profile '/${profilePathLabel}'`
+            : ""
+        }`;
+  const confirmedProd = await confirmProductionAction({
+    connectionId,
+    actionLabel,
+    targetSummary,
+    expectedInput: confirmToken,
+  });
+  if (!confirmedProd) {
+    return { authDeleted: false, profileDeleted: false };
+  }
+
+  const sampleProfileSubcollections = async (docPaths: string[] | undefined): Promise<Record<string, any> | undefined> => {
+    if (!hasSubcollections || !docPaths || docPaths.length === 0) {
+      return undefined;
+    }
+    try {
+      const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+      const samples: Record<string, any> = {};
+      let remaining = 25;
+      for (const p of docPaths) {
+        if (remaining <= 0) break;
+        const subSample = await collectSubcollectionStorageSample(
+          firestore.doc(p),
+          connectionId,
+          remaining
+        );
+        if (subSample) {
+          const count = Object.keys(subSample).length;
+          samples[p] = subSample;
+          remaining -= count;
+        }
+      }
+      return Object.keys(samples).length > 0 ? samples : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   if (choice === deleteProfileOnlyOption) {
+    const subSample = await sampleProfileSubcollections(targetProfileDocPaths);
     try {
       const res = await vscode.window.withProgress(
         {
@@ -606,11 +665,18 @@ export async function executeDeleteAuthUserFlow(params: {
         vscode.window.showInformationMessage(
           `Deleted Firestore profile '/${profilePathLabel}'${subText} while keeping Firebase Auth user '${userLabel}'.`
         );
+        const profileStorageObj: Record<string, any> = {};
         if (profile?.data && Object.keys(profile.data).length > 0) {
+          profileStorageObj.profileData = profile.data;
+        }
+        if (subSample) {
+          profileStorageObj.subcollections = subSample;
+        }
+        if (Object.keys(profileStorageObj).length > 0) {
           try {
             await promptAndCleanupOrphanStorageFiles(
               connectionId,
-              { profileData: profile.data },
+              profileStorageObj,
               userLabel
             );
           } catch { }
@@ -639,6 +705,12 @@ export async function executeDeleteAuthUserFlow(params: {
     const scan: Record<string, any> = {};
     if (shouldDeleteProfile && profile?.data) {
       scan.profileData = profile.data;
+    }
+    if (shouldDeleteProfile && hasSubcollections) {
+      const subSample = await sampleProfileSubcollections(targetProfileDocPaths);
+      if (subSample) {
+        scan.subcollections = subSample;
+      }
     }
     if (userRecord?.photoURL) {
       scan.photoURL = userRecord.photoURL;
@@ -737,8 +809,9 @@ export async function executeBulkDeleteAuthUsersFlow(params: {
     authService.getProfileCollection(connectionId);
   const namedDbWarning = getNamedDatabaseAuthWarning(connectionId);
 
+  const envPrefix = getEnvironmentWarningPrefix(connectionId);
   const choice = await vscode.window.showWarningMessage(
-    `Are you sure you want to permanently delete ${uniqueUids.length} selected Firebase Auth user(s)?\n\nSelecting profile deletion will also recursively delete any matching '/${collectionName}/<uid>' profile documents and all nested subcollections.${namedDbWarning}`,
+    `${envPrefix}Are you sure you want to permanently delete ${uniqueUids.length} selected Firebase Auth user(s)?\n\nSelecting profile deletion will also recursively delete any matching '/${collectionName}/<uid>' profile documents and all nested subcollections.${namedDbWarning}`,
     { modal: true },
     "Delete Auth Users & Profiles (+ Subcollections)",
     "Delete Auth Users Only",
@@ -750,6 +823,17 @@ export async function executeBulkDeleteAuthUsersFlow(params: {
   }
 
   const deleteProfiles = choice === "Delete Auth Users & Profiles (+ Subcollections)";
+  const confirmedProd = await confirmProductionAction({
+    connectionId,
+    actionLabel: deleteProfiles ? "Bulk Delete Auth Users & Profiles" : "Bulk Delete Auth Users",
+    targetSummary: `${uniqueUids.length} Firebase Auth user(s)${
+      deleteProfiles ? ` and matching '/${collectionName}/<uid>' profiles` : ""
+    }`,
+    expectedInput: `DELETE ${uniqueUids.length}`,
+  });
+  if (!confirmedProd) {
+    return { deletedUids: [] };
+  }
 
   try {
     const result = await vscode.window.withProgress(
@@ -860,16 +944,27 @@ export async function maybePromptDeleteAuthUserForProfile(
     return;
   }
 
+  const envPrefix = getEnvironmentWarningPrefix(connectionId);
   const userLabel = authUser.email || authUser.displayName || authUser.uid;
   const namedDbWarning = getNamedDatabaseAuthWarning(connectionId);
   const confirm = await vscode.window.showWarningMessage(
-    `Deleted Firestore profile '${cleanPath}'. A matching Firebase Auth account exists for '${userLabel}' (UID: ${authUser.uid}). Delete the Firebase Auth user as well?${namedDbWarning}`,
+    `${envPrefix}Deleted Firestore profile '${cleanPath}'. A matching Firebase Auth account exists for '${userLabel}' (UID: ${authUser.uid}). Delete the Firebase Auth user as well?${namedDbWarning}`,
     { modal: true },
     "Delete Firebase Auth User",
     "Keep Auth User"
   );
 
   if (confirm !== "Delete Firebase Auth User") {
+    return;
+  }
+
+  const confirmedProd = await confirmProductionAction({
+    connectionId,
+    actionLabel: "Delete Matching Auth User",
+    targetSummary: `Firebase Auth user '${userLabel}' (UID: ${authUser.uid})`,
+    expectedInput: authUser.email || authUser.uid,
+  });
+  if (!confirmedProd) {
     return;
   }
 

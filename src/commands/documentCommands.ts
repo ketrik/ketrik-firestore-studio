@@ -12,11 +12,17 @@ import { TemplateService } from "../services/TemplateService";
 import { LocalJsonService } from "../services/LocalJsonService";
 import { CostService } from "../cost/costService";
 import { promptAndCleanupOrphanStorageFiles } from "../storage/storageCommands";
+import { StorageService } from "../storage/storageService";
 import { FieldPath, FieldValue, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { openDocumentAsTable } from "../webview/openDocumentAsTable";
 import { SnapshotSyncService } from "../services/SnapshotSyncService";
 import { reviveTimestamps } from "../utils/timestampUtils";
-import { recursiveDeleteWithCount } from "../utils/deleteUtils";
+import {
+  collectSubcollectionStorageSample,
+  confirmProductionAction,
+  getEnvironmentWarningPrefix,
+  recursiveDeleteWithCount,
+} from "../utils/deleteUtils";
 import { scheme } from "../constants";
 import { maybePromptDeleteAuthUserForProfile } from "../auth/authCommands";
 
@@ -117,13 +123,10 @@ export async function createDocumentCommand(
     return;
   }
 
-  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
-  if (conn?.readOnly) {
-    vscode.window.showErrorMessage(
-      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to create documents.`
-    );
+  if (!ConnectionManager.getInstance().ensureWritable(item.connectionId, "create documents")) {
     return;
   }
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
 
   const docId = await vscode.window.showInputBox({
     prompt: "Enter Document ID (leave blank for auto-generated ID)",
@@ -199,39 +202,93 @@ export async function createDocumentCommand(
 
 /**
  * Delete a document with optional Deep Delete of subcollections.
+ * Supports DocumentItem from Explorer Tree or virtual Document/Field editor Uri fallback.
  */
 export async function deleteDocumentCommand(
-  item: DocumentItem,
+  item: DocumentItem | vscode.Uri | undefined,
   explorerDataProvider: ExplorerDataProvider
 ) {
-  if (!item?.documentId) {
+  let targetItem: DocumentItem | undefined = item instanceof DocumentItem ? item : undefined;
+  let fieldTabNotice = "";
+
+  if (!targetItem) {
+    const targetUri =
+      item instanceof vscode.Uri ? item : vscode.window.activeTextEditor?.document.uri;
+    if (targetUri && targetUri.scheme === scheme) {
+      const parsed = DocumentFileSystemProvider.getInstance().parseUri(targetUri);
+      if (parsed.connectionId && parsed.docPath && !parsed.isRules) {
+        if (parsed.fieldPath) {
+          fieldTabNotice = `Note: You are currently viewing field '${parsed.fieldPath}'. This action will delete the ENTIRE parent document '${parsed.docPath}'.\n\n`;
+        }
+        try {
+          const targetConn = ConnectionManager.getInstance().getConnection(parsed.connectionId);
+          const docId = parsed.docPath.split("/").pop() || parsed.docPath;
+          const lastSlash = parsed.docPath.lastIndexOf("/");
+          const collPath = lastSlash > 0 ? parsed.docPath.substring(0, lastSlash) : parsed.docPath;
+          const collId = collPath.split("/").pop() || collPath;
+          let docRef: any;
+          if (targetConn?.isLocalJson) {
+            docRef = {
+              id: docId,
+              path: parsed.docPath,
+              parent: { id: collId, path: collPath },
+            };
+          } else {
+            const firestore = await ConnectionManager.getInstance().getFirestore(parsed.connectionId);
+            docRef = firestore.doc(parsed.docPath);
+          }
+          targetItem = new DocumentItem(docId, docRef, parsed.connectionId);
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to resolve document for deletion: ${err?.message || err}`);
+          return;
+        }
+      }
+    }
+  }
+
+  if (!targetItem?.documentId) {
+    vscode.window.showErrorMessage("No document selected to delete.");
     return;
   }
 
-  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
-  if (conn?.readOnly) {
-    vscode.window.showErrorMessage(
-      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to delete documents.`
-    );
+  if (!ConnectionManager.getInstance().ensureWritable(targetItem.connectionId, "delete documents")) {
     return;
   }
+  const conn = ConnectionManager.getInstance().getConnection(targetItem.connectionId);
+  const envPrefix = getEnvironmentWarningPrefix(targetItem.connectionId);
+  const docId = targetItem.documentId || targetItem.reference.id;
+
   if (conn?.isLocalJson) {
     const confirm = await vscode.window.showWarningMessage(
-      `Are you sure you want to delete local document "${item.documentId}"?`,
+      `${envPrefix}${fieldTabNotice}Are you sure you want to delete local document "${targetItem.documentId}"?`,
       { modal: true },
       "Delete",
       "Cancel"
     );
     if (confirm !== "Delete") return;
 
+    const confirmedProd = await confirmProductionAction({
+      connectionId: targetItem.connectionId,
+      actionLabel: "Delete Document",
+      targetSummary: `document '${targetItem.reference.path}'`,
+      expectedInput: "DELETE",
+    });
+    if (!confirmedProd) return;
+
     try {
-      LocalJsonService.getInstance().deleteDocument(conn, item.reference.path);
-      DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(item.connectionId, item.reference.path);
-      vscode.window.showInformationMessage(`Deleted local document "${item.documentId}".`);
-      const lastSlash = item.reference.path.lastIndexOf("/");
-      const collPath = lastSlash > 0 ? item.reference.path.substring(0, lastSlash) : item.reference.path;
+      LocalJsonService.getInstance().deleteDocument(conn, targetItem.reference.path);
+      DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
+        targetItem.connectionId,
+        targetItem.reference.path
+      );
+      vscode.window.showInformationMessage(`Deleted local document "${targetItem.documentId}".`);
+      const lastSlash = targetItem.reference.path.lastIndexOf("/");
+      const collPath =
+        lastSlash > 0
+          ? targetItem.reference.path.substring(0, lastSlash)
+          : targetItem.reference.path;
       const collId = collPath.split("/").pop() || collPath;
-      const parentItem = new CollectionItem(collId, { id: collId, path: collPath } as any, item.connectionId);
+      const parentItem = new CollectionItem(collId, { id: collId, path: collPath } as any, targetItem.connectionId);
       explorerDataProvider.refreshNode(parentItem);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to delete local document: ${err.message}`);
@@ -241,7 +298,7 @@ export async function deleteDocumentCommand(
 
   let subcollections: FirebaseFirestore.CollectionReference[];
   try {
-    subcollections = await item.reference.listCollections();
+    subcollections = await targetItem.reference.listCollections();
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to inspect subcollections: ${err.message}`);
     return;
@@ -251,16 +308,16 @@ export async function deleteDocumentCommand(
   let confirm: string | undefined;
 
   if (hasSubcollections) {
-    if (item.isMissingDocument) {
+    if (targetItem.isMissingDocument) {
       confirm = await vscode.window.showWarningMessage(
-        `Phantom document "${item.label}" has ${subcollections.length} subcollection(s) (${subcollections.map((s) => s.id).join(", ")}). Delete all nested subcollections?`,
+        `${envPrefix}${fieldTabNotice}Phantom document "${targetItem.label}" has ${subcollections.length} subcollection(s) (${subcollections.map((s) => s.id).join(", ")}). Delete all nested subcollections?`,
         { modal: true },
         "Deep Delete (Subcollections)",
         "Cancel"
       );
     } else {
       confirm = await vscode.window.showWarningMessage(
-        `Document "${item.label}" has ${subcollections.length} subcollection(s) (${subcollections.map((s) => s.id).join(", ")}). How would you like to delete it?`,
+        `${envPrefix}${fieldTabNotice}Document "${targetItem.label}" has ${subcollections.length} subcollection(s) (${subcollections.map((s) => s.id).join(", ")}). How would you like to delete it?`,
         { modal: true },
         "Deep Delete (Doc + Subcollections)",
         "Delete Document Only",
@@ -269,7 +326,7 @@ export async function deleteDocumentCommand(
     }
   } else {
     confirm = await vscode.window.showWarningMessage(
-      `Are you sure you want to delete the document "${item.label}"?`,
+      `${envPrefix}${fieldTabNotice}Are you sure you want to delete the document "${targetItem.label}"?`,
       { modal: true },
       "Delete",
       "Cancel"
@@ -280,40 +337,61 @@ export async function deleteDocumentCommand(
     return;
   }
 
+  const isDeepConfirm =
+    confirm === "Deep Delete (Doc + Subcollections)" || confirm === "Deep Delete (Subcollections)";
+  const confirmedProd = await confirmProductionAction({
+    connectionId: targetItem.connectionId,
+    actionLabel: isDeepConfirm ? "Deep Delete Document & Subcollections" : "Delete Document",
+    targetSummary: `document '${targetItem.reference.path}'`,
+    expectedInput: isDeepConfirm ? docId : "DELETE",
+  });
+  if (!confirmedProd) {
+    return;
+  }
+
   let docData: Record<string, any> | undefined;
-  if (!item.isMissingDocument) {
+  if (!targetItem.isMissingDocument) {
     try {
-      const snap = await item.reference.get();
-      CostService.getInstance().recordOperation(item.connectionId, "read", 1);
+      const snap = await targetItem.reference.get();
+      CostService.getInstance().recordOperation(targetItem.connectionId, "read", 1);
       if (snap.exists) {
         docData = snap.data();
       }
     } catch { }
   }
 
-  if (confirm === "Deep Delete (Doc + Subcollections)" || confirm === "Deep Delete (Subcollections)") {
+  if (isDeepConfirm) {
+    const subSample = await collectSubcollectionStorageSample(targetItem.reference, targetItem.connectionId);
     let deepDeleted = false;
     let deletedCount = 0;
 
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: `Deep deleting document "${item.label}" and all subcollections...`,
+        title: `Deep deleting document "${targetItem.label}" and all subcollections...`,
         cancellable: false,
       },
       async () => {
         try {
-          const firestore = await ConnectionManager.getInstance().getFirestore(item.connectionId);
-          deletedCount = await recursiveDeleteWithCount(firestore, item.reference, item.connectionId);
+          const firestore = await ConnectionManager.getInstance().getFirestore(targetItem.connectionId);
+          deletedCount = await recursiveDeleteWithCount(
+            firestore,
+            targetItem.reference,
+            targetItem.connectionId
+          );
           DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
-            item.connectionId,
-            item.reference.path,
+            targetItem.connectionId,
+            targetItem.reference.path,
             true
           );
           vscode.window.showInformationMessage(
-            `Deleted document "${item.label}" and all nested subcollections (${deletedCount} doc(s)).`
+            `Deleted document "${targetItem.label}" and all nested subcollections (${deletedCount} doc(s)).`
           );
-          const parentItem = new CollectionItem(item.reference.parent.id, item.reference.parent, item.connectionId);
+          const parentItem = new CollectionItem(
+            targetItem.reference.parent.id,
+            targetItem.reference.parent,
+            targetItem.connectionId
+          );
           explorerDataProvider.refreshNode(parentItem);
           deepDeleted = true;
         } catch (err: any) {
@@ -322,17 +400,28 @@ export async function deleteDocumentCommand(
       }
     );
 
-    if (deepDeleted && docData) {
-      try {
-        await promptAndCleanupOrphanStorageFiles(item.connectionId, docData, item.label as string);
-      } catch { }
-    }
     if (deepDeleted) {
+      const storageScanObj: Record<string, any> = {};
+      if (docData) {
+        storageScanObj.root = docData;
+      }
+      if (subSample) {
+        storageScanObj.subcollections = subSample;
+      }
+      if (Object.keys(storageScanObj).length > 0) {
+        try {
+          await promptAndCleanupOrphanStorageFiles(
+            targetItem.connectionId,
+            storageScanObj,
+            targetItem.label as string
+          );
+        } catch { }
+      }
       try {
         await maybePromptDeleteAuthUserForProfile(
-          item.connectionId,
-          item.reference.path,
-          item.documentId || item.reference.id,
+          targetItem.connectionId,
+          targetItem.reference.path,
+          targetItem.documentId || targetItem.reference.id,
           explorerDataProvider,
           docData
         );
@@ -340,33 +429,286 @@ export async function deleteDocumentCommand(
     }
   } else if (confirm === "Delete" || confirm === "Delete Document Only") {
     try {
-      await item.reference.delete();
-      CostService.getInstance().recordOperation(item.connectionId, "delete", 1);
+      await targetItem.reference.delete();
+      CostService.getInstance().recordOperation(targetItem.connectionId, "delete", 1);
       DocumentFileSystemProvider.getInstance().invalidateAndNotifyDocumentDeleted(
-        item.connectionId,
-        item.reference.path,
+        targetItem.connectionId,
+        targetItem.reference.path,
         false
       );
       vscode.window.showInformationMessage("Document deleted!");
-      const parentItem = new CollectionItem(item.reference.parent.id, item.reference.parent, item.connectionId);
+      const parentItem = new CollectionItem(
+        targetItem.reference.parent.id,
+        targetItem.reference.parent,
+        targetItem.connectionId
+      );
       explorerDataProvider.refreshNode(parentItem);
 
       if (docData) {
         try {
-          await promptAndCleanupOrphanStorageFiles(item.connectionId, docData, item.label as string);
+          await promptAndCleanupOrphanStorageFiles(
+            targetItem.connectionId,
+            docData,
+            targetItem.label as string
+          );
         } catch { }
       }
       try {
         await maybePromptDeleteAuthUserForProfile(
-          item.connectionId,
-          item.reference.path,
-          item.documentId || item.reference.id,
+          targetItem.connectionId,
+          targetItem.reference.path,
+          targetItem.documentId || targetItem.reference.id,
           explorerDataProvider,
           docData
         );
       } catch { }
     } catch (err: any) {
       vscode.window.showErrorMessage("Failed to delete document: " + err.message);
+    }
+  }
+}
+
+/**
+ * Batch-delete multiple multi-selected DocumentItems from the Explorer Tree.
+ */
+export async function deleteMultipleDocumentsCommand(
+  items: DocumentItem[],
+  explorerDataProvider: ExplorerDataProvider
+): Promise<void> {
+  if (!items || items.length === 0) {
+    return;
+  }
+
+  const byPath = new Map<string, DocumentItem>();
+  for (const it of items) {
+    if (it?.reference?.path) {
+      byPath.set(it.reference.path, it);
+    }
+  }
+  const uniqueItems = Array.from(byPath.values());
+  if (uniqueItems.length === 0) {
+    return;
+  }
+  if (uniqueItems.length === 1) {
+    await deleteDocumentCommand(uniqueItems[0], explorerDataProvider);
+    return;
+  }
+
+  const connIds = new Set(uniqueItems.map((it) => it.connectionId));
+  if (connIds.size !== 1) {
+    vscode.window.showWarningMessage(
+      "Multi-select delete only supports documents within the same connection."
+    );
+    return;
+  }
+
+  const connectionId = uniqueItems[0].connectionId;
+  if (!ConnectionManager.getInstance().ensureWritable(connectionId, "delete documents")) {
+    return;
+  }
+
+  const conn = ConnectionManager.getInstance().getConnection(connectionId);
+  const envPrefix = getEnvironmentWarningPrefix(connectionId);
+
+  let isDeep = false;
+  if (conn?.isLocalJson) {
+    const confirm = await vscode.window.showWarningMessage(
+      `${envPrefix}Are you sure you want to permanently delete ${uniqueItems.length} selected local document(s)? This action cannot be undone.`,
+      { modal: true },
+      "Delete Permanently",
+      "Cancel"
+    );
+    if (confirm !== "Delete Permanently") {
+      return;
+    }
+  } else {
+    const confirm = await vscode.window.showWarningMessage(
+      `${envPrefix}Are you sure you want to permanently delete ${uniqueItems.length} selected document(s)? This action cannot be undone.`,
+      { modal: true },
+      "Delete Documents Only",
+      "Deep Delete (Docs + Subcollections)",
+      "Cancel"
+    );
+    if (!confirm || confirm === "Cancel") {
+      return;
+    }
+    isDeep = confirm === "Deep Delete (Docs + Subcollections)";
+  }
+
+  const confirmedProd = await confirmProductionAction({
+    connectionId,
+    actionLabel: isDeep ? "Batch Deep Delete Documents" : "Batch Delete Documents",
+    targetSummary: `${uniqueItems.length} selected document(s)`,
+    expectedInput: `DELETE ${uniqueItems.length}`,
+  });
+  if (!confirmedProd) {
+    return;
+  }
+
+  const fsProvider = DocumentFileSystemProvider.getInstance();
+  const affectedParents = new Map<string, CollectionItem>();
+  const registerParent = (it: DocumentItem) => {
+    const parentPath =
+      it.reference.parent?.path ||
+      (it.reference.path.includes("/")
+        ? it.reference.path.substring(0, it.reference.path.lastIndexOf("/"))
+        : "");
+    const parentId = it.reference.parent?.id || parentPath.split("/").pop() || parentPath;
+    if (parentPath && !affectedParents.has(parentPath)) {
+      affectedParents.set(
+        parentPath,
+        new CollectionItem(parentId, it.reference.parent || ({ id: parentId, path: parentPath } as any), connectionId)
+      );
+    }
+  };
+
+  try {
+    if (conn?.isLocalJson) {
+      const grouped = new Map<string, DocumentItem[]>();
+      for (const it of uniqueItems) {
+        const docPath = it.reference.path;
+        const lastSlash = docPath.lastIndexOf("/");
+        const collPath = lastSlash > 0 ? docPath.substring(0, lastSlash) : docPath;
+        const list = grouped.get(collPath) || [];
+        list.push(it);
+        grouped.set(collPath, list);
+        registerParent(it);
+      }
+      for (const [collPath, groupItems] of grouped.entries()) {
+        LocalJsonService.getInstance().deleteDocuments(
+          conn,
+          collPath,
+          groupItems.map((it) => it.documentId || it.reference.id)
+        );
+      }
+      for (const it of uniqueItems) {
+        fsProvider.invalidateAndNotifyDocumentDeleted(connectionId, it.reference.path, false);
+      }
+      vscode.window.showInformationMessage(`Deleted ${uniqueItems.length} local document(s).`);
+    } else {
+      const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+      const storageUrls = new Set<string>();
+      const storageService = StorageService.getInstance();
+      const sampleItems = uniqueItems.slice(0, 25);
+      try {
+        const snapshots = await firestore.getAll(...sampleItems.map((it) => it.reference));
+        if (snapshots.length > 0) {
+          CostService.getInstance().recordOperation(connectionId, "read", snapshots.length);
+        }
+        for (const snap of snapshots) {
+          if (snap.exists) {
+            const found = storageService.extractStorageUrlsFromObject(snap.data());
+            for (const ref of found) {
+              if (ref.rawUrl) {
+                storageUrls.add(ref.rawUrl);
+              }
+            }
+          }
+        }
+      } catch { }
+
+      if (isDeep) {
+        const subSampleItems = uniqueItems.slice(0, 10);
+        const perDocLimit = Math.max(1, Math.floor(25 / Math.min(uniqueItems.length, 25)));
+        for (const it of subSampleItems) {
+          const subSample = await collectSubcollectionStorageSample(
+            it.reference,
+            connectionId,
+            perDocLimit
+          );
+          if (subSample) {
+            for (const u of subSample.urls) {
+              storageUrls.add(u);
+            }
+          }
+        }
+
+        const storageScanObj = storageUrls.size > 0 ? { urls: Array.from(storageUrls) } : undefined;
+        let totalDocsDeleted = 0;
+        let succeededDocs = 0;
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Deep deleting ${uniqueItems.length} document(s) and nested subcollections...`,
+            cancellable: false,
+          },
+          async (progress) => {
+            for (let i = 0; i < uniqueItems.length; i++) {
+              const it = uniqueItems[i];
+              progress.report({
+                message: `[${i + 1}/${uniqueItems.length}] ${it.reference.path}`,
+                increment: (1 / uniqueItems.length) * 100,
+              });
+              totalDocsDeleted += await recursiveDeleteWithCount(firestore, it.reference, connectionId);
+              fsProvider.invalidateAndNotifyDocumentDeleted(connectionId, it.reference.path, true);
+              registerParent(it);
+              succeededDocs++;
+            }
+          }
+        );
+        vscode.window.showInformationMessage(
+          `Deep deleted ${succeededDocs} document(s) and subcollections (${totalDocsDeleted.toLocaleString()} Firestore doc(s)).`
+        );
+
+        if (succeededDocs > 0 && storageScanObj) {
+          try {
+            await promptAndCleanupOrphanStorageFiles(
+              connectionId,
+              storageScanObj,
+              `${uniqueItems.length} selected document(s)`
+            );
+          } catch { }
+        }
+      } else {
+        const storageScanObj = storageUrls.size > 0 ? { urls: Array.from(storageUrls) } : undefined;
+        const bulkWriter = firestore.bulkWriter();
+        bulkWriter.onWriteError(() => false);
+        let deletedCount = 0;
+        let failedCount = 0;
+        try {
+          const ops = uniqueItems.map((it) =>
+            bulkWriter
+              .delete(it.reference)
+              .then(() => {
+                deletedCount++;
+                fsProvider.invalidateAndNotifyDocumentDeleted(connectionId, it.reference.path, false);
+                registerParent(it);
+              })
+              .catch(() => {
+                failedCount++;
+              })
+          );
+          await Promise.allSettled(ops);
+        } finally {
+          await bulkWriter.close().catch(() => {});
+        }
+        if (deletedCount > 0) {
+          CostService.getInstance().recordOperation(connectionId, "delete", deletedCount);
+        }
+        if (failedCount > 0) {
+          vscode.window.showWarningMessage(
+            `Deleted ${deletedCount} document(s); ${failedCount} could not be deleted.`
+          );
+        } else {
+          vscode.window.showInformationMessage(`Successfully deleted ${deletedCount} document(s).`);
+        }
+
+        if (deletedCount > 0 && storageScanObj) {
+          try {
+            await promptAndCleanupOrphanStorageFiles(
+              connectionId,
+              storageScanObj,
+              `${uniqueItems.length} selected document(s)`
+            );
+          } catch { }
+        }
+      }
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to delete documents: ${err?.message || err}`);
+  } finally {
+    for (const parentCol of affectedParents.values()) {
+      explorerDataProvider.refreshNode(parentCol);
     }
   }
 }
@@ -383,13 +725,10 @@ export async function duplicateDocumentCommand(
     return;
   }
 
-  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
-  if (conn?.readOnly) {
-    vscode.window.showErrorMessage(
-      `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to duplicate documents.`
-    );
+  if (!ConnectionManager.getInstance().ensureWritable(item.connectionId, "duplicate documents")) {
     return;
   }
+  const conn = ConnectionManager.getInstance().getConnection(item.connectionId);
   const newDocId = await vscode.window.showInputBox({
     prompt: `Duplicate document "${item.documentId}"`,
     value: `${item.documentId}_copy`,

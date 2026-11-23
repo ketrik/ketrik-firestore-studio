@@ -15,6 +15,7 @@ import {
   jumpToDocumentCommand,
   createDocumentCommand,
   deleteDocumentCommand,
+  deleteMultipleDocumentsCommand,
   duplicateDocumentCommand,
   copyDocumentCommand,
   copyDocumentIdCommand,
@@ -73,6 +74,7 @@ import {
   openAuthUserProfileCommand,
   manageAuthUsersCommand,
   deleteAuthUserCommand,
+  executeBulkDeleteAuthUsersFlow,
   resetAuthUserPasswordCommand,
   cloneAuthUserCommand,
   mintCustomTokenCommand,
@@ -192,6 +194,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const explorerView = vscode.window.createTreeView("ketrik-firestore-studio-view", {
     treeDataProvider: explorerDataProvider,
+    canSelectMany: true,
   });
   explorerDataProvider.setTreeView(explorerView);
   context.subscriptions.push(explorerView);
@@ -400,7 +403,29 @@ export async function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.deleteAuthUser",
-      (item?: any) => deleteAuthUserCommand(item, explorerDataProvider, documentFileSystemProvider)
+      async (item?: any, selectedItems?: unknown[]) => {
+        if (
+          Array.isArray(selectedItems) &&
+          selectedItems.length > 1 &&
+          selectedItems.every((s): s is AuthUserItem => s instanceof AuthUserItem)
+        ) {
+          const connIds = new Set(selectedItems.map((s) => s.connectionId));
+          if (connIds.size !== 1) {
+            vscode.window.showWarningMessage(
+              "Multi-select delete only supports Auth users within the same connection."
+            );
+            return;
+          }
+          await executeBulkDeleteAuthUsersFlow({
+            connectionId: selectedItems[0].connectionId,
+            uids: selectedItems.map((s) => s.user.uid),
+            explorerDataProvider,
+            fsProvider: documentFileSystemProvider,
+          });
+          return;
+        }
+        await deleteAuthUserCommand(item, explorerDataProvider, documentFileSystemProvider);
+      }
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.resetAuthUserPassword",
@@ -602,7 +627,17 @@ export async function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.deleteDocument",
-      (item: DocumentItem) => deleteDocumentCommand(item, explorerDataProvider)
+      async (item?: DocumentItem | vscode.Uri, selectedItems?: unknown[]) => {
+        if (
+          Array.isArray(selectedItems) &&
+          selectedItems.length > 1 &&
+          selectedItems.every((s): s is DocumentItem => s instanceof DocumentItem)
+        ) {
+          await deleteMultipleDocumentsCommand([...selectedItems], explorerDataProvider);
+          return;
+        }
+        await deleteDocumentCommand(item, explorerDataProvider);
+      }
     ),
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.duplicateDocument",
@@ -675,8 +710,37 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "ketrik-firestore-studio.deleteSelectedTreeItem",
       async () => {
-        const selected = explorerView.selection[0];
-        if (!selected) return;
+        const selection = explorerView.selection;
+        if (!selection || selection.length === 0) return;
+
+        if (selection.length > 1) {
+          if (selection.every((s): s is DocumentItem => s instanceof DocumentItem)) {
+            await deleteMultipleDocumentsCommand([...selection] as DocumentItem[], explorerDataProvider);
+            return;
+          }
+          if (selection.every((s): s is AuthUserItem => s instanceof AuthUserItem)) {
+            const connIds = new Set(selection.map((s) => s.connectionId));
+            if (connIds.size !== 1) {
+              vscode.window.showWarningMessage(
+                "Multi-select delete only supports Auth users within the same connection."
+              );
+              return;
+            }
+            await executeBulkDeleteAuthUsersFlow({
+              connectionId: selection[0].connectionId,
+              uids: selection.map((s) => s.user.uid),
+              explorerDataProvider,
+              fsProvider: documentFileSystemProvider,
+            });
+            return;
+          }
+          vscode.window.showWarningMessage(
+            "Multi-select delete currently supports multiple Documents or Auth Users within the same connection."
+          );
+          return;
+        }
+
+        const selected = selection[0];
         if (selected instanceof DocumentFieldItem) {
           if (selected.isArrayElement) {
             await deleteArrayItemCommand(selected, explorerDataProvider);

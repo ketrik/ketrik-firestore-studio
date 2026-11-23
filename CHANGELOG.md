@@ -2,6 +2,33 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.22.1] - 2026-11-23
+
+### Added
+- **Auth Profile Collection & Deep Cascade Deletion**:
+  * Configurable `ketrik-firestore-studio.authProfileCollection` setting and per-connection override (`authProfileCollection`) with bounded `uid`-field fallback lookup (`inspectProfile`).
+  * **Bulk Auth User Deletion (`auth.deleteUsers()`)**: Sticky multi-select checkboxes and batch toolbar in Auth Users Table, plus Explorer multi-select support.
+  * **"Delete Profile Doc Only" & Reverse Cleanup Prompt**: Keep Firebase Auth accounts when deleting only their profile (+ nested subcollections), and prompt to delete the matching Auth user after deleting a profile document in Explorer or Document Table.
+  * **Named-Database Scope Warning**: Explicit project-wide impact warning when deleting Auth users from secondary/named Firestore database connections.
+  * **Paginated User Picker**: Added `nextPageToken` pagination (`Load next 100 users...`) and direct Email/UID lookup (`findUserByEmailOrUid`) to `pickAuthUser`.
+- **Production Safety & Confirmation Friction**:
+  * **Type-to-Confirm Protection (`ketrik-firestore-studio.requireProductionTypeToConfirm`)**: Requires typing the target name or confirmation token before destructive deletions on `production` connections, with `🔴 [PRODUCTION]` / `🟡 [STAGING]` confirmation banners.
+- **Explorer Multi-Select Delete & Field/Collection UX**:
+  * Enabled `canSelectMany: true` on Explorer Tree for batch deleting multi-selected Documents and Auth Users (via keyboard or right-click context menu).
+  * Virtual Document `Delete Document` action in `editor/title` with field-tab notice when invoked from a sub-field tab.
+  * Multi-select Array element deletion in `deleteMultipleFieldsCommand` alongside Map properties and root fields (always backed by fresh snapshots).
+  * Pre-flight document `count()` estimates, live deleted-count progress reporting, and bounded subcollection Cloud Storage URL sampling during deep deletes.
+- **Read-Only & Environment Shields**: Live `isReadOnly` and `environment` badges plus disabled mutation controls in Auth Users Table, Document Table, and Field Table.
+
+### Changed & Fixed
+- **Safe Auth Deletion Ordering**: `deleteUserAndProfile()` deletes the Auth user first so partial failures never orphan live Auth accounts without profiles, and deep-deletes nested profile subcollections recursively via `BulkWriter`.
+- **Context Menu Safety**: Removed destructive `inline` hover delete buttons (`deleteAuthUser`, `deleteField`, `deleteArrayItem`) and isolated `deleteAuthUser` in `9_danger`.
+- **Batch Resilience & Cross-View Live Sync**: Switched Collection Table `promptBatchUpdate` and `promptBatchDelete` to `BulkWriter` for per-document error isolation, targeted parent Explorer refreshes, synced open Collection Tables on external deletes, cleared stale `DocumentClipboard` / `DocumentCompareService` targets on deletion, and consolidated `ensureWritable` guards.
+
+### Optimized
+- **Webview & Event Coalescing**: Suppressed self-triggered delete sync during batch deletes, coalesced external delete events (80ms debounce), and deduplicated `connectionState` IPC broadcasts across webviews.
+- **Memory Footprint**: Extracted Cloud Storage URL strings immediately during subcollection and batch sampling (`collectSubcollectionStorageSample`, `deleteMultipleDocumentsCommand`) instead of retaining full Firestore document payloads in memory.
+
 ## [1.21.0] - 2026-11-14
 
 ### Added

@@ -61,15 +61,33 @@ export async function openAuthUsersAsTable(
     };
   }
 
+  let lastReadOnly: boolean | undefined;
+  let lastEnv: string | undefined;
+  let lastProfileCollection: string | undefined;
+
+  function postConnectionStateIfChanged() {
+    const nextState = getConnectionStatePayload();
+    if (
+      nextState.isReadOnly !== lastReadOnly ||
+      nextState.environment !== lastEnv ||
+      nextState.profileCollection !== lastProfileCollection
+    ) {
+      lastReadOnly = nextState.isReadOnly;
+      lastEnv = nextState.environment;
+      lastProfileCollection = nextState.profileCollection;
+      panel.webview.postMessage(nextState);
+    }
+  }
+
   const connChangeSub = ConnectionManager.getInstance().onDidChangeConnections(() => {
-    panel.webview.postMessage(getConnectionStatePayload());
+    postConnectionStateIfChanged();
   });
   const configChangeSub = vscode.workspace.onDidChangeConfiguration((e) => {
     if (
       e.affectsConfiguration("ketrik-firestore-studio.authProfileCollection") ||
       e.affectsConfiguration("ketrik-firestore-studio.connections")
     ) {
-      panel.webview.postMessage(getConnectionStatePayload());
+      postConnectionStateIfChanged();
     }
   });
 
@@ -117,6 +135,9 @@ export async function openAuthUsersAsTable(
       currentNextPageToken = result.pageToken;
 
       const state = getConnectionStatePayload();
+      lastReadOnly = state.isReadOnly;
+      lastEnv = state.environment;
+      lastProfileCollection = state.profileCollection;
       panel.webview.postMessage({
         type: "setUsers",
         users: mapUsers(result.users),
