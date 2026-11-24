@@ -19,6 +19,7 @@ import {
   CostQuotaBranchItem,
   DocumentFieldItem,
   DocumentItem,
+  IndexCollectionGroupItem,
   InfoMessageItem,
   Item,
   ShowMoreAuthUsersItem,
@@ -40,6 +41,7 @@ import { LocalJsonService } from "../services/LocalJsonService";
 import { isTimestampLike, timestampToDate } from "../utils/timestampUtils";
 import { CostService } from "../cost/costService";
 import { matchesSearchTerm } from "../webview/common/tableUtils";
+import { handleMissingIndexError } from "../commands/indexCommands";
 
 /** Maximum number of entries kept in the paging/orderBy state maps (LRU eviction). */
 const MAX_MAP_SIZE = 200;
@@ -202,6 +204,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
   private _refreshWaiters = new Map<string, Array<() => void>>();
   private _revealingDoc: { connectionId: string; docPath: string; docId: string } | null = null;
   private _revealDebounceTimer: NodeJS.Timeout | undefined;
+  private _indexPollTimers = new Map<string, NodeJS.Timeout>();
 
   private _deleteCacheKey(key: string): void {
     this._treeCache.delete(key);
@@ -334,6 +337,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       clearTimeout(this._revealDebounceTimer);
       this._revealDebounceTimer = undefined;
     }
+    for (const t of this._indexPollTimers.values()) {
+      clearTimeout(t);
+    }
+    this._indexPollTimers.clear();
     for (const d of this._treeViewDisposables) {
       d.dispose();
     }
@@ -1089,8 +1096,13 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       return secretsCache?.items.find(
         (it) => it instanceof SecretTreeItem && it.secret.id === element.version.secretId
       );
-    } else if (element instanceof CompositeIndexItem) {
+    } else if (element instanceof IndexCollectionGroupItem) {
       return new CompositeIndexesBranchItem(element.connectionId);
+    } else if (element instanceof CompositeIndexItem) {
+      const grouped = this._liveNodes.get(
+        `indexGroup:${element.connectionId}:${element.index.collectionGroup}`
+      );
+      return grouped || new CompositeIndexesBranchItem(element.connectionId);
     } else if (element instanceof StorageBucketTreeItem) {
       return new StorageBucketsBranchItem(element.connectionId);
     } else if (element instanceof StorageFolderTreeItem) {
@@ -1302,9 +1314,47 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
       try {
         const indexesService = IndexesService.getInstance();
         const indexes = await indexesService.listCompositeIndexes(element.connectionId);
-        if (indexes.length === 0) {
-          return storeAndReturn([]);
+
+        const existingTimer = this._indexPollTimers.get(element.connectionId);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+          this._indexPollTimers.delete(element.connectionId);
         }
+        if (indexes.some((idx) => idx.state === "CREATING")) {
+          const timer = setTimeout(() => {
+            this._indexPollTimers.delete(element.connectionId);
+            this._deleteCacheKey(`indexes:${element.connectionId}`);
+            const liveBranch = this._liveNodes.get(`indexes:${element.connectionId}`);
+            if (liveBranch) {
+              this._onDidChangeTreeData.fire(liveBranch);
+            }
+          }, 10000);
+          this._indexPollTimers.set(element.connectionId, timer);
+        }
+
+        if (indexes.length === 0) {
+          return storeAndReturn([
+            new InfoMessageItem("No composite indexes deployed", "info", "infoMessage", {
+              command: "ketrik-firestore-studio.buildCompositeIndex",
+              title: "Create Composite Index",
+              arguments: [element],
+            }),
+          ]);
+        }
+
+        if (indexes.length >= 15) {
+          const grouped = new Map<string, typeof indexes>();
+          for (const idx of indexes) {
+            const arr = grouped.get(idx.collectionGroup) || [];
+            arr.push(idx);
+            grouped.set(idx.collectionGroup, arr);
+          }
+          const groupItems = Array.from(grouped.entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([cg, list]) => new IndexCollectionGroupItem(element.connectionId, cg, list));
+          return storeAndReturn(groupItems);
+        }
+
         const indexItems = indexes.map((idx) => new CompositeIndexItem(element.connectionId, idx));
         return storeAndReturn(indexItems);
       } catch (err: any) {
@@ -1313,6 +1363,10 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         );
         return [];
       }
+    } else if (element instanceof IndexCollectionGroupItem) {
+      return storeAndReturn(
+        element.indexes.map((idx) => new CompositeIndexItem(element.connectionId, idx))
+      );
     } else if (element instanceof StorageBucketsBranchItem) {
       try {
         const storageService = StorageService.getInstance();
@@ -1474,8 +1528,13 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
 
         const items: Item[] = [];
 
-        // 1. Fetch subcollections
-        const refs = (await element.reference.listCollections()) as CollectionReference[];
+        // Fetch subcollections, document snapshot, and warm fieldOverrides/TTL cache in parallel
+        const [refs, snapshot] = await Promise.all([
+          element.reference.listCollections() as Promise<CollectionReference[]>,
+          element.reference.get(),
+          IndexesService.getInstance().ensureFieldOverridesLoaded(element.connectionId),
+        ]);
+
         const subCollections = refs.map((ref: CollectionReference) => {
           const sortKey = `${element.connectionId}:${ref.path}`;
           const filter = this.getCollectionFilter(element.connectionId, ref.path);
@@ -1487,8 +1546,7 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
         });
         items.push(...subCollections);
 
-        // 2. Fetch document snapshot and list root variables / fields
-        const snapshot = await element.reference.get();
+        // 2. List root variables / fields
         if (snapshot.exists) {
           const data = snapshot.data() || {};
           element.updateDocMeta(data, false);
@@ -1890,9 +1948,22 @@ export default class ExplorerDataProvider implements vscode.TreeDataProvider<Ite
           return storeAndReturn(items);
         }
       } catch (err: any) {
-        vscode.window.showErrorMessage(
-          `Failed to load documents for collection '${element.collectionId}': ${err.message}`
-        );
+        const sortCfg = this._orderBy.get(`${element.connectionId}:${element.reference.path}`);
+        if (
+          !handleMissingIndexError(err, {
+            connectionId: element.connectionId,
+            collectionGroup: element.collectionId,
+            isGroup: false,
+            queryClauses:
+              sortCfg?.field && sortCfg.field !== "id"
+                ? [{ field: sortCfg.field, op: "==" }]
+                : undefined,
+          })
+        ) {
+          vscode.window.showErrorMessage(
+            `Failed to load documents for collection '${element.collectionId}': ${err.message}`
+          );
+        }
         return [];
       }
     }

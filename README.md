@@ -1,7 +1,7 @@
 # Ketrik Firestore Studio
 
 [![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Code-Extension-007acc?style=flat-square&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=ketrik.ketrik-firestore-studio)
-[![Version](https://img.shields.io/badge/Release-v1.22.1-2ecc71?style=flat-square)](ROADMAP.md)
+[![Version](https://img.shields.io/badge/Release-v1.23.0-2ecc71?style=flat-square)](ROADMAP.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 The definitive, enterprise-grade Visual Studio Code extension for exploring, querying, mutating, and managing **Google Cloud Firestore**, **Firebase Authentication**, **Security Rules**, and **Local Emulators** directly inside your IDE.
@@ -38,10 +38,11 @@ Unlike basic viewers that only render static JSON trees, **Ketrik Firestore Stud
 * **Batch Operations**: Checkbox multi-select for bulk field updates, atomic removals (`FieldValue.delete()`), and chunked `WriteBatch` deletions.
 * **Single-Read Document Lookup**: Fetch any document by ID directly from the server using 1 billable read without scanning collections.
 
-### 2. Firestore Composite Indexes Suite
-* **Dedicated Tree Branch**: Live view of all deployed indexes under each connection with status badges (`READY` ✅, `Building` ⏳, `Needs Repair` ⚠️) and query scopes (`📁 Collection` vs `🌐 Group`).
-* **Two-Way `firestore.indexes.json` Sync**: Snapshot live indexes into your workspace, compare via graphical side-by-side diff, and deploy changes directly to Cloud Firestore.
-* **Visual Index Builder & Error Catcher**: 1-click launcher when queries encounter `FAILED_PRECONDITION` index required errors, parsing field specifications instantly.
+### 2. Firestore Composite, Vector Indexes & TTL Suite
+* **Dedicated Tree Branch & Table View**: Live view of all deployed composite and vector (`[VECTOR:dim]`) indexes with status badges (`READY` ✅, `Building` ⏳, `Needs Repair` ⚠️), query scopes (`COLLECTION`, `COLLECTION_GROUP`, `COLLECTION_RECURSIVE`), and a full **Indexes & TTL Table View** (`openIndexesAsTable`) with 10s auto-polling for building indexes.
+* **Two-Way `firestore.indexes.json` Sync**: Snapshot live indexes and field overrides into your workspace (respecting `firebase.json` paths), compare via canonical side-by-side diff, validate with built-in JSON Schema, and deploy or prune orphans with Production safety shields.
+* **1-Click Missing Index Auto-Fix & Query Explain (`EXPLAIN ANALYZE`)**: Automatically decodes `create_composite=` index links from Firestore errors across table queries, vector search, aggregations, live watch, and tree sorting; includes an inline **⚡ Explain** profiler showing indexes used, scanned entries, and server latency.
+* **Field Overrides & TTL Policies**: Inspect single-field index exemptions, exempt large fields from indexing, and enable/disable Time-to-Live (TTL) expiration policies.
 
 ### 3. Data Synthesis, Import & Schema Generation
 * **Synthetic Mock Data Generator**: Right-click any collection $\rightarrow$ generate up to 5,000 documents with intelligent type detection (names, emails, phones, avatars, prices, statuses, IDs, geo coordinates, timestamps).

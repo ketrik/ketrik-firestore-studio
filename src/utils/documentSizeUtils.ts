@@ -22,11 +22,69 @@ export interface DocumentSizeInfo {
   percentageOfLimit: number;
   isWarning: boolean;
   isCritical: boolean;
+  indexEntries: number;
+  indexEntryPercentage: number;
+  largeIndexedStrings: number;
 }
 
 export const FIRESTORE_MAX_DOC_SIZE_BYTES = 1048576; // 1 MiB (1,048,576 bytes)
 export const WARNING_THRESHOLD_BYTES = 750 * 1024; // 750 KB (73.2% of 1MB limit)
 export const CRITICAL_THRESHOLD_BYTES = 950 * 1024; // 950 KB (92.8% of 1MB limit)
+export const FIRESTORE_MAX_INDEX_ENTRIES = 40000;
+export const WARNING_INDEX_ENTRIES = 20000;
+export const CRITICAL_INDEX_ENTRIES = 35000;
+
+/**
+ * Estimates the number of single-field index entries Firestore creates for a document
+ * (2 entries per scalar leaf for ASC/DESC, 1 entry per array element, plus large-string detection > 1500B).
+ */
+export function estimateDocumentIndexEntries(data: any): { entries: number; largeStringFields: number } {
+  let entries = 0;
+  let largeStringFields = 0;
+
+  const walk = (val: any, inArray: boolean, depth: number) => {
+    if (depth > 50) return;
+    if (val === null || val === undefined || typeof val === "boolean" || typeof val === "number") {
+      entries += inArray ? 1 : 2;
+      return;
+    }
+    if (typeof val === "string") {
+      entries += inArray ? 1 : 2;
+      if (getUtf8ByteLength(val) > 1500) {
+        largeStringFields++;
+      }
+      return;
+    }
+    if (
+      (typeof val === "object" && typeof val._seconds === "number" && typeof val._nanoseconds === "number") ||
+      val instanceof Date ||
+      (val && typeof val.toMillis === "function") ||
+      (typeof val === "object" && typeof val.latitude === "number" && typeof val.longitude === "number") ||
+      (val && typeof val.path === "string")
+    ) {
+      entries += inArray ? 1 : 2;
+      return;
+    }
+    if (Array.isArray(val)) {
+      for (const item of val) {
+        walk(item, true, depth + 1);
+      }
+      return;
+    }
+    if (typeof val === "object") {
+      for (const key in val) {
+        if (Object.prototype.hasOwnProperty.call(val, key)) {
+          walk(val[key], false, depth + 1);
+        }
+      }
+    }
+  };
+
+  if (data && typeof data === "object") {
+    walk(data, false, 0);
+  }
+  return { entries, largeStringFields };
+}
 
 
 /**
@@ -161,8 +219,11 @@ export function formatBytes(bytes: number): string {
 export function getDocumentSizeInfo(data: any, docPath?: string): DocumentSizeInfo {
   const bytes = calculateDocumentSize(data, docPath);
   const percentageOfLimit = Math.min(100, (bytes / FIRESTORE_MAX_DOC_SIZE_BYTES) * 100);
-  const isWarning = bytes >= WARNING_THRESHOLD_BYTES && bytes < CRITICAL_THRESHOLD_BYTES;
-  const isCritical = bytes >= CRITICAL_THRESHOLD_BYTES;
+  const { entries: indexEntries, largeStringFields: largeIndexedStrings } = estimateDocumentIndexEntries(data);
+  const indexEntryPercentage = Math.min(100, (indexEntries / FIRESTORE_MAX_INDEX_ENTRIES) * 100);
+  const isCritical = bytes >= CRITICAL_THRESHOLD_BYTES || indexEntries >= CRITICAL_INDEX_ENTRIES;
+  const isWarning =
+    !isCritical && (bytes >= WARNING_THRESHOLD_BYTES || indexEntries >= WARNING_INDEX_ENTRIES);
 
   return {
     bytes,
@@ -170,5 +231,8 @@ export function getDocumentSizeInfo(data: any, docPath?: string): DocumentSizeIn
     percentageOfLimit: Math.round(percentageOfLimit * 10) / 10,
     isWarning,
     isCritical,
+    indexEntries,
+    indexEntryPercentage: Math.round(indexEntryPercentage * 10) / 10,
+    largeIndexedStrings,
   };
 }

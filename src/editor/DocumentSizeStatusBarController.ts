@@ -157,14 +157,18 @@ export class DocumentSizeStatusBarController implements vscode.Disposable {
     md.appendMarkdown(`- **Current Size:** \`${formatted}\` (\`${sizeInfo.bytes.toLocaleString()}\` bytes)\n`);
     md.appendMarkdown(`- **Maximum Allowed:** \`1,048,576\` bytes (1 MiB)\n`);
     md.appendMarkdown(`- **Capacity Used:** \`${percent}%\`\n`);
+    md.appendMarkdown(`- **Est. Index Entries:** \`~${sizeInfo.indexEntries.toLocaleString()}\` / \`40,000\` max (\`${sizeInfo.indexEntryPercentage}%\`)\n`);
+    if (sizeInfo.largeIndexedStrings > 0) {
+      md.appendMarkdown(`- **Large String Fields (>1.5 KB):** \`${sizeInfo.largeIndexedStrings}\` *(consider exempting from single-field indexing)*\n`);
+    }
     md.appendMarkdown(`- **Document Path:** \`${docPath}\`\n\n`);
 
     if (sizeInfo.isCritical) {
-      md.appendMarkdown(`> ⚠️ **CRITICAL**: Document is very close to or exceeds the 1MB Firestore limit. Writes may fail.\n`);
+      md.appendMarkdown(`> ⚠️ **CRITICAL**: Document is very close to or exceeds Firestore's 1MB size or 40,000 index-entry limit. Writes may fail.\n`);
     } else if (sizeInfo.isWarning) {
-      md.appendMarkdown(`> ⚠️ **WARNING**: Document exceeds 750 KB. Consider normalizing sub-fields or splitting into subcollections.\n`);
+      md.appendMarkdown(`> ⚠️ **WARNING**: Document exceeds 750 KB or 20,000 index entries. Consider exempting large fields from indexing or splitting into subcollections.\n`);
     } else {
-      md.appendMarkdown(`*Calculated per Google Cloud Firestore storage size specs (fields, types, path overhead).*`);
+      md.appendMarkdown(`*Calculated per Google Cloud Firestore storage size & single-field index specs.*`);
     }
 
     this._statusBarItem.tooltip = md;

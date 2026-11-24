@@ -22,6 +22,8 @@ import {
   isProtectSystemKeysEnabled,
   isSystemFieldPath,
 } from "../utils/deleteUtils";
+import { handleMissingIndexError } from "../commands/indexCommands";
+import { IndexesService } from "../indexes/indexesService";
 
 export { QueryClause };
 
@@ -96,6 +98,7 @@ export async function openCollectionAsTable(
   let headers: string[] = [];
   let activeQueryClauses: QueryClause[] = [];
   let activeMatchMode: "and" | "or" = "and";
+  let activeOrderBy: { field: string; direction: "asc" | "desc" } | undefined;
   let isLoading = false;
   let activeReadTime: Date | undefined = (item as any).readTime;
 
@@ -110,42 +113,49 @@ export async function openCollectionAsTable(
     return firestore.collection(collectionPath);
   }
 
-  /** Build an executable Firestore query applying all active where clauses. */
-  async function buildBaseQuery(): Promise<Query> {
+  /** Build an executable Firestore query applying all active (or provided) where clauses and orderBy. */
+  async function buildBaseQuery(
+    clausesOverride?: QueryClause[],
+    matchModeOverride?: "and" | "or",
+    orderByOverride?: { field: string; direction: "asc" | "desc" }
+  ): Promise<Query> {
     let q: Query = await getBaseQueryTarget();
-    if (activeQueryClauses.length === 0) {
-      return q;
-    }
+    const targetClauses = clausesOverride ?? activeQueryClauses;
+    const targetMode = matchModeOverride ?? activeMatchMode;
+    const targetOrder = orderByOverride ?? activeOrderBy;
 
-    const filters: import("firebase-admin/firestore").Filter[] = [];
+    if (targetClauses.length > 0) {
+      const filters: import("firebase-admin/firestore").Filter[] = [];
 
-    for (const clause of activeQueryClauses) {
-      if (!clause.field || !clause.op) continue;
+      for (const clause of targetClauses) {
+        if (!clause.field || !clause.op) continue;
 
-      if (clause.op === "starts-with") {
-        const prefix = String(clause.value || "");
-        const endPrefix = prefix + "\uf8ff";
-        // Compiles to field >= prefix AND field < prefix + \uf8ff
-        filters.push(
-          Filter.and(
-            Filter.where(clause.field, ">=", prefix),
-            Filter.where(clause.field, "<", endPrefix)
-          )
-        );
-      } else {
-        const parsedVal = parseFilterValue(clause.value, clause.op);
-        filters.push(Filter.where(clause.field, clause.op, parsedVal));
+        if (clause.op === "starts-with") {
+          const prefix = String(clause.value || "");
+          const endPrefix = prefix + "\uf8ff";
+          filters.push(
+            Filter.and(
+              Filter.where(clause.field, ">=", prefix),
+              Filter.where(clause.field, "<", endPrefix)
+            )
+          );
+        } else {
+          const parsedVal = parseFilterValue(clause.value, clause.op);
+          filters.push(Filter.where(clause.field, clause.op, parsedVal));
+        }
+      }
+
+      if (filters.length > 0) {
+        if (targetMode === "or") {
+          q = q.where(Filter.or(...filters));
+        } else {
+          q = q.where(Filter.and(...filters));
+        }
       }
     }
 
-    if (filters.length === 0) {
-      return q;
-    }
-
-    if (activeMatchMode === "or") {
-      q = q.where(Filter.or(...filters));
-    } else {
-      q = q.where(Filter.and(...filters));
+    if (targetOrder?.field) {
+      q = q.orderBy(targetOrder.field, targetOrder.direction);
     }
 
     return q;
@@ -286,30 +296,14 @@ export async function openCollectionAsTable(
       const hasMore = docs.length === pageSize && !reachedCap;
       return { newDocs: docs, hasMore };
     } catch (err: any) {
-      const match = (err.message || "").match(/https:\/\/console\.firebase\.google\.com\S+/);
-      if (match) {
-        const indexUrl = match[0];
-        vscode.window.showErrorMessage(
-          `Query requires a composite index. Create it via Firebase Console or Visual Studio Code:`,
-          "Create Index in Firebase Console",
-          "Build / Add to firestore.indexes.json",
-          "Copy Index URL"
-        ).then(async (action) => {
-          if (action === "Create Index in Firebase Console") {
-            vscode.env.openExternal(vscode.Uri.parse(indexUrl));
-          } else if (action === "Build / Add to firestore.indexes.json") {
-            // Trigger Visual Composite Index Builder pre-seeded with this collection & query
-            await vscode.commands.executeCommand("ketrik-firestore-studio.buildCompositeIndex", {
-              connectionId,
-              collectionGroup: collectionId,
-              collectionId,
-            });
-          } else if (action === "Copy Index URL") {
-            vscode.env.clipboard.writeText(indexUrl);
-            vscode.window.showInformationMessage("Index URL copied to clipboard!");
-          }
-        });
-      } else {
+      if (
+        !handleMissingIndexError(err, {
+          connectionId,
+          collectionGroup: collectionId,
+          isGroup,
+          queryClauses: activeQueryClauses,
+        })
+      ) {
         vscode.window.showErrorMessage(`Failed to load documents for '${collectionId}': ${err.message}`);
       }
 
@@ -325,7 +319,23 @@ export async function openCollectionAsTable(
 
   const bookmarkKey = isGroup ? `group:${collectionId}` : collectionId;
 
-  async function loadSavedBookmarks(): Promise<Record<string, QueryClause[]>> {
+  async function loadFieldOverrideHints(): Promise<{ ttlFields: string[]; exemptFields: string[] }> {
+    try {
+      const overrides = await IndexesService.getInstance().listFieldOverrides(connectionId);
+      const ttlFields: string[] = [];
+      const exemptFields: string[] = [];
+      for (const ov of overrides) {
+        if (ov.collectionGroup !== collectionId) continue;
+        if (ov.ttlConfig) ttlFields.push(ov.fieldPath);
+        if (!ov.usesAncestorConfig && ov.indexes.length === 0) exemptFields.push(ov.fieldPath);
+      }
+      return { ttlFields, exemptFields };
+    } catch {
+      return { ttlFields: [], exemptFields: [] };
+    }
+  }
+
+  async function loadSavedBookmarks(): Promise<Record<string, any>> {
     const uri = await getQueriesFileUri();
     if (!uri) return {};
     try {
@@ -337,7 +347,12 @@ export async function openCollectionAsTable(
     }
   }
 
-  async function saveBookmark(name: string, clauses: QueryClause[]) {
+  async function saveBookmark(
+    name: string,
+    payload:
+      | QueryClause[]
+      | { clauses: QueryClause[]; matchMode?: "and" | "or"; orderByField?: string; orderByDir?: "asc" | "desc" }
+  ) {
     const uri = await getQueriesFileUri();
     if (!uri) {
       vscode.window.showWarningMessage("Open a workspace folder to save query bookmarks to .vscode/firestore-queries.json");
@@ -352,7 +367,7 @@ export async function openCollectionAsTable(
     if (!existing[bookmarkKey]) {
       existing[bookmarkKey] = {};
     }
-    existing[bookmarkKey][name] = clauses;
+    existing[bookmarkKey][name] = payload;
 
     const content = Buffer.from(JSON.stringify(existing, null, 2), "utf8");
     await vscode.workspace.fs.writeFile(uri, content);
@@ -454,7 +469,10 @@ export async function openCollectionAsTable(
       try {
         await initialLoad;
       } catch {}
-      const bookmarks = await loadSavedBookmarks();
+      const [bookmarks, overrideHints] = await Promise.all([
+        loadSavedBookmarks(),
+        loadFieldOverrideHints(),
+      ]);
       const liveConn = ConnectionManager.getInstance().getConnection(connectionId);
       panel.webview.postMessage({
         type: "init",
@@ -462,6 +480,8 @@ export async function openCollectionAsTable(
         docs: loadedDocs,
         hasMore: hasMoreState,
         bookmarks,
+        ttlFields: overrideHints.ttlFields,
+        exemptFields: overrideHints.exemptFields,
         activeReadTime: activeReadTime ? activeReadTime.toISOString() : null,
         isReadOnly: !!liveConn?.readOnly,
         environment: liveConn?.environment,
@@ -503,6 +523,13 @@ export async function openCollectionAsTable(
       if (isLoading) return;
       activeQueryClauses = (message.clauses as QueryClause[]) || [];
       activeMatchMode = message.matchMode === "or" ? "or" : "and";
+      activeOrderBy =
+        typeof message.orderByField === "string" && message.orderByField.trim()
+          ? {
+              field: message.orderByField.trim(),
+              direction: message.orderByDir === "desc" ? "desc" : "asc",
+            }
+          : undefined;
       loadedDocs = [];
       lastDoc = null;
       headers = [];
@@ -527,6 +554,7 @@ export async function openCollectionAsTable(
       if (isLoading) return;
       activeQueryClauses = [];
       activeMatchMode = "and";
+      activeOrderBy = undefined;
       loadedDocs = [];
       lastDoc = null;
       headers = [];
@@ -564,7 +592,10 @@ export async function openCollectionAsTable(
       try {
         const { hasMore } = await loadMoreDocs();
         hasMoreState = hasMore;
-        const bookmarks = await loadSavedBookmarks();
+        const [bookmarks, overrideHints] = await Promise.all([
+          loadSavedBookmarks(),
+          loadFieldOverrideHints(),
+        ]);
         const liveConn = getLiveConn();
         panel.webview.postMessage({
           type: "init",
@@ -572,6 +603,8 @@ export async function openCollectionAsTable(
           docs: loadedDocs,
           hasMore: hasMoreState,
           bookmarks,
+          ttlFields: overrideHints.ttlFields,
+          exemptFields: overrideHints.exemptFields,
           isReadOnly: !!liveConn?.readOnly,
           environment: liveConn?.environment,
         });
@@ -638,7 +671,10 @@ export async function openCollectionAsTable(
         headers = [];
         const { hasMore } = await loadMoreDocs();
         hasMoreState = hasMore;
-        const bookmarks = await loadSavedBookmarks();
+        const [bookmarks, overrideHints] = await Promise.all([
+          loadSavedBookmarks(),
+          loadFieldOverrideHints(),
+        ]);
         const liveConn = getLiveConn();
         panel.webview.postMessage({
           type: "init",
@@ -646,6 +682,8 @@ export async function openCollectionAsTable(
           docs: loadedDocs,
           hasMore: hasMoreState,
           bookmarks,
+          ttlFields: overrideHints.ttlFields,
+          exemptFields: overrideHints.exemptFields,
           isReadOnly: !!liveConn?.readOnly,
           environment: liveConn?.environment,
         });
@@ -1098,7 +1136,18 @@ export async function openCollectionAsTable(
           topK,
         });
       } catch (err: any) {
-        vscode.window.showErrorMessage(`Vector Search failed: ${err.message}`);
+        if (
+          !handleMissingIndexError(err, {
+            connectionId,
+            collectionGroup: collectionId,
+            isGroup,
+            queryClauses: activeQueryClauses,
+            vectorField,
+            vectorDimension: parsedVector.length,
+          })
+        ) {
+          vscode.window.showErrorMessage(`Vector Search failed: ${err.message}`);
+        }
       }
       return;
     }
@@ -1139,7 +1188,16 @@ export async function openCollectionAsTable(
           `${isGroup ? "Collection Group" : "Collection"} '${collectionId}' has ${count.toLocaleString()} document(s).`
         );
       } catch (err: any) {
-        vscode.window.showErrorMessage(`Failed to count collection: ${err.message}`);
+        if (
+          !handleMissingIndexError(err, {
+            connectionId,
+            collectionGroup: collectionId,
+            isGroup,
+            queryClauses: activeQueryClauses,
+          })
+        ) {
+          vscode.window.showErrorMessage(`Failed to count collection: ${err.message}`);
+        }
       }
     }
 
@@ -1183,8 +1241,180 @@ export async function openCollectionAsTable(
           );
         }
       } catch (err: any) {
-        vscode.window.showErrorMessage(`Failed to estimate query cost: ${err.message}`);
+        if (
+          !handleMissingIndexError(err, {
+            connectionId,
+            collectionGroup: collectionId,
+            isGroup,
+            queryClauses: activeQueryClauses,
+          })
+        ) {
+          vscode.window.showErrorMessage(`Failed to estimate query cost: ${err.message}`);
+        }
       }
+    }
+
+    if (message.command === "explainQuery") {
+      const clauses = (message.clauses as QueryClause[]) || activeQueryClauses;
+      const matchMode = message.matchMode === "or" ? "or" : message.matchMode === "and" ? "and" : activeMatchMode;
+      const orderByOverride =
+        typeof message.orderByField === "string" && message.orderByField.trim()
+          ? {
+              field: message.orderByField.trim(),
+              direction: (message.orderByDir === "desc" ? "desc" : "asc") as "asc" | "desc",
+            }
+          : undefined;
+
+      try {
+        const liveConn = getLiveConn();
+        if (liveConn?.isLocalJson) {
+          panel.webview.postMessage({
+            type: "explainError",
+            message: "Query Explain is only supported on Cloud Firestore (not Local JSON databases).",
+          });
+          return;
+        }
+        if (liveConn?.isEmulator) {
+          panel.webview.postMessage({
+            type: "explainError",
+            message: "Query Explain (EXPLAIN ANALYZE) is not supported by the local Firestore Emulator.",
+          });
+          return;
+        }
+
+        const baseQuery = await buildBaseQuery(clauses, matchMode, orderByOverride);
+        const explainRes = await (baseQuery.limit(limit) as any).explain({ analyze: true });
+        const metrics = explainRes?.metrics;
+        const planSummary = metrics?.planSummary;
+        const execStats = metrics?.executionStats;
+
+        const indexesUsed = Array.isArray(planSummary?.indexesUsed)
+          ? planSummary.indexesUsed
+          : [];
+        const debugStats = (execStats?.debugStats || {}) as Record<string, any>;
+        const indexEntriesScanned =
+          debugStats.index_entries_scanned ?? debugStats.indexEntriesScanned ?? null;
+
+        let executionDurationMs: number | null = null;
+        if (execStats?.executionDuration) {
+          const sec = Number(execStats.executionDuration.seconds || 0);
+          const nanos = Number(execStats.executionDuration.nanos || 0);
+          executionDurationMs = sec * 1000 + nanos / 1_000_000;
+        }
+
+        const readOps = Number(execStats?.readOperations ?? 0);
+        if (readOps > 0) {
+          CostService.getInstance().recordOperation(connectionId, "read", readOps);
+        }
+
+        panel.webview.postMessage({
+          type: "explainResult",
+          indexesUsed,
+          resultsReturned: execStats?.resultsReturned ?? null,
+          readOperations: execStats?.readOperations ?? null,
+          indexEntriesScanned,
+          executionDurationMs,
+        });
+      } catch (err: any) {
+        if (
+          !handleMissingIndexError(err, {
+            connectionId,
+            collectionGroup: collectionId,
+            isGroup,
+            queryClauses: clauses,
+          })
+        ) {
+          vscode.window.showErrorMessage(`Query Explain failed: ${err?.message || err}`);
+        }
+        panel.webview.postMessage({
+          type: "explainError",
+          message: err?.message || String(err),
+        });
+      }
+      return;
+    }
+
+    if (message.command === "explainVectorQuery") {
+      const vectorField = ((message.vectorField as string) || "").trim();
+      const rawVector = message.queryVector;
+      const distanceMeasure = (message.distanceMeasure as "COSINE" | "EUCLIDEAN" | "DOT_PRODUCT") || "COSINE";
+      const topK = Math.max(1, Math.min(Number(message.limit) || 10, 100));
+      const distanceThreshold = typeof message.distanceThreshold === "number" ? message.distanceThreshold : undefined;
+
+      if (!vectorField) {
+        panel.webview.postMessage({ type: "explainError", message: "Vector field path is required." });
+        return;
+      }
+
+      let parsedVector: number[] = [];
+      if (Array.isArray(rawVector)) {
+        parsedVector = rawVector.map((n) => Number(n)).filter((n) => !isNaN(n));
+      } else if (typeof rawVector === "string") {
+        try {
+          const parsed = JSON.parse(rawVector.trim());
+          if (Array.isArray(parsed)) parsedVector = parsed.map((n) => Number(n)).filter((n) => !isNaN(n));
+        } catch {
+          parsedVector = rawVector.split(",").map((s) => Number(s.trim())).filter((n) => !isNaN(n));
+        }
+      }
+
+      if (parsedVector.length === 0) {
+        panel.webview.postMessage({ type: "explainError", message: "Provide a valid non-empty query vector." });
+        return;
+      }
+
+      try {
+        const liveConn = getLiveConn();
+        if (liveConn?.isLocalJson || liveConn?.isEmulator) {
+          panel.webview.postMessage({
+            type: "explainError",
+            message: "Vector Query Explain is only supported on Cloud Firestore.",
+          });
+          return;
+        }
+
+        const baseQuery = await buildBaseQuery();
+        const options: any = { limit: topK, distanceMeasure, distanceResultField: "__vector_distance" };
+        if (distanceThreshold !== undefined) options.distanceThreshold = distanceThreshold;
+
+        const vectorQuery = (baseQuery as any).findNearest(vectorField, parsedVector, options);
+        const explainRes = await vectorQuery.explain({ analyze: true });
+        const metrics = explainRes?.metrics;
+        const execStats = metrics?.executionStats;
+        const debugStats = (execStats?.debugStats || {}) as Record<string, any>;
+        let executionDurationMs: number | null = null;
+        if (execStats?.executionDuration) {
+          executionDurationMs =
+            Number(execStats.executionDuration.seconds || 0) * 1000 +
+            Number(execStats.executionDuration.nanos || 0) / 1_000_000;
+        }
+        const readOps = Number(execStats?.readOperations ?? 0);
+        if (readOps > 0) CostService.getInstance().recordOperation(connectionId, "read", readOps);
+
+        panel.webview.postMessage({
+          type: "explainResult",
+          indexesUsed: Array.isArray(metrics?.planSummary?.indexesUsed) ? metrics.planSummary.indexesUsed : [],
+          resultsReturned: execStats?.resultsReturned ?? null,
+          readOperations: execStats?.readOperations ?? null,
+          indexEntriesScanned: debugStats.index_entries_scanned ?? debugStats.indexEntriesScanned ?? null,
+          executionDurationMs,
+        });
+      } catch (err: any) {
+        if (
+          !handleMissingIndexError(err, {
+            connectionId,
+            collectionGroup: collectionId,
+            isGroup,
+            queryClauses: activeQueryClauses,
+            vectorField,
+            vectorDimension: parsedVector.length,
+          })
+        ) {
+          vscode.window.showErrorMessage(`Vector Query Explain failed: ${err?.message || err}`);
+        }
+        panel.webview.postMessage({ type: "explainError", message: err?.message || String(err) });
+      }
+      return;
     }
 
     if (message.command === "calculateAggregates") {
@@ -1292,7 +1522,16 @@ export async function openCollectionAsTable(
         );
       } catch (err: any) {
         panel.webview.postMessage({ type: "aggregateError", error: err.message });
-        vscode.window.showErrorMessage(`Failed to calculate aggregates for '${field}': ${err.message}`);
+        if (
+          !handleMissingIndexError(err, {
+            connectionId,
+            collectionGroup: collectionId,
+            isGroup,
+            queryClauses: activeQueryClauses,
+          })
+        ) {
+          vscode.window.showErrorMessage(`Failed to calculate aggregates for '${field}': ${err.message}`);
+        }
       }
     }
 
@@ -1768,8 +2007,11 @@ export async function openCollectionAsTable(
 
     if (message.command === "promptSaveBookmark") {
       const clauses = (message.clauses as QueryClause[]) || [];
-      if (clauses.length === 0) {
-        vscode.window.showWarningMessage("No query clauses defined to bookmark.");
+      const orderByField = typeof message.orderByField === "string" ? message.orderByField.trim() : "";
+      const orderByDir = message.orderByDir === "desc" ? "desc" : "asc";
+      const matchMode = message.matchMode === "or" ? "or" : "and";
+      if (clauses.length === 0 && !orderByField) {
+        vscode.window.showWarningMessage("No query clauses or Order By defined to bookmark.");
         return;
       }
       const bookmarkName = await vscode.window.showInputBox({
@@ -1780,7 +2022,11 @@ export async function openCollectionAsTable(
       });
       if (!bookmarkName) return;
 
-      await saveBookmark(bookmarkName.trim(), clauses);
+      await saveBookmark(bookmarkName.trim(), {
+        clauses,
+        matchMode,
+        ...(orderByField ? { orderByField, orderByDir } : {}),
+      });
       const updatedBookmarks = await loadSavedBookmarks();
       panel.webview.postMessage({
         type: "bookmarksLoaded",
@@ -1802,6 +2048,13 @@ export async function openCollectionAsTable(
 
     if (message.command === "openSchemaAnalyzer") {
       openSchemaAnalyzer({ connectionId, collectionPath });
+    }
+
+    if (message.command === "openCollectionIndexes") {
+      await vscode.commands.executeCommand("ketrik-firestore-studio.openIndexesAsTable", {
+        connectionId,
+        collectionId,
+      });
     }
 
     if (message.command === "openDataGraph") {
@@ -1959,7 +2212,16 @@ export async function openCollectionAsTable(
         },
         (error) => {
           stopLiveWatch(true);
-          vscode.window.showErrorMessage(`Live Watch subscription error: ${error.message}`);
+          if (
+            !handleMissingIndexError(error, {
+              connectionId,
+              collectionGroup: collectionId,
+              isGroup,
+              queryClauses: activeQueryClauses,
+            })
+          ) {
+            vscode.window.showErrorMessage(`Live Watch subscription error: ${error.message}`);
+          }
         }
       );
 

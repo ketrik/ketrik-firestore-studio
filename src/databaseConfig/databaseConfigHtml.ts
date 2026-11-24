@@ -10,7 +10,16 @@ function escapeHtmlConfig(val: any): string {
     .replace(/'/g, "&#39;");
 }
 
-export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: string): string {
+export interface DatabaseIndexSummary {
+  compositeCount: number;
+  ttlPolicies: Array<{ collectionGroup: string; fieldPath: string; state: string }>;
+}
+
+export function getDatabaseConfigHtml(
+  data: DatabaseMetadata,
+  connectionName: string,
+  indexSummary?: DatabaseIndexSummary
+): string {
   const isPitrEnabled = data.pointInTimeRecoveryEnablement === "POINT_IN_TIME_RECOVERY_ENABLED";
   const isDeleteProtected = data.deleteProtectionState === "DELETE_PROTECTION_ENABLED";
   const isPessimistic = data.concurrencyMode === "PESSIMISTIC";
@@ -429,7 +438,37 @@ export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: st
     </div>
   </div>
 
-  <!-- Section 3: Metadata -->
+  <!-- Section 3: Indexes & TTL Policies -->
+  <div class="card">
+    <div class="card-title">
+      <span>🗂️ Indexes &amp; Time-to-Live (TTL) Policies</span>
+      <button class="btn btn-primary" id="btnOpenIndexesTable">🗂️ Open Indexes &amp; TTL Explorer</button>
+    </div>
+    <div class="card-desc">
+      Composite &amp; vector indexes deployed on this database along with active document expiration (TTL) policies.
+    </div>
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-label">Composite &amp; Vector Indexes</div>
+        <div class="setting-sub">Active server-side multi-field and kNN vector indexes</div>
+      </div>
+      <div style="font-size: 13px; font-weight: 600;">${indexSummary?.compositeCount ?? 0}</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-label">Active TTL Policies (${indexSummary?.ttlPolicies?.length ?? 0})</div>
+        <div class="setting-sub">
+          ${indexSummary && indexSummary.ttlPolicies.length > 0
+            ? indexSummary.ttlPolicies
+                .map((p) => `<code>${escapeHtmlConfig(p.collectionGroup)}.${escapeHtmlConfig(p.fieldPath)}</code> (${escapeHtmlConfig(p.state)})`)
+                .join(" &nbsp;•&nbsp; ")
+            : "No active TTL expiration policies configured."}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 4: Metadata -->
   <div class="card">
     <div class="card-title">
       <span>⚙️ Infrastructure & Region Details</span>
@@ -495,6 +534,10 @@ export function getDatabaseConfigHtml(data: DatabaseMetadata, connectionName: st
 
     document.getElementById("btnOpenTimeTravel")?.addEventListener("click", () => {
       vscode.postMessage({ command: "openTimeTravel" });
+    });
+
+    document.getElementById("btnOpenIndexesTable")?.addEventListener("click", () => {
+      vscode.postMessage({ command: "openIndexesTable" });
     });
 
     document.getElementById("togglePitr")?.addEventListener("change", (e) => {

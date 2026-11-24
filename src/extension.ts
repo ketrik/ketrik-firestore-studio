@@ -133,7 +133,15 @@ import { RulesService } from "./rules/RulesService";
 import { scheme } from "./constants";
 import { DocumentFileSystemProvider } from "./editor/DocumentFileSystemProvider";
 import ExplorerDataProvider from "./explorer/ExplorerDataProvider";
-import { AuthUserItem, CollectionItem, ConnectionTreeItem, DocumentFieldItem, DocumentItem, Item } from "./explorer/items";
+import {
+  AuthUserItem,
+  CollectionItem,
+  CompositeIndexItem,
+  ConnectionTreeItem,
+  DocumentFieldItem,
+  DocumentItem,
+  Item,
+} from "./explorer/items";
 import { openFieldAsTable } from "./webview/openFieldAsTable";
 import { openAuthUsersAsTable } from "./webview/openAuthUsersAsTable";
 import { ConnectionManager } from "./connections/ConnectionManager";
@@ -161,21 +169,35 @@ export async function activate(context: vscode.ExtensionContext) {
   const connectionManager = ConnectionManager.getInstance();
   context.subscriptions.push(connectionManager);
 
-  // Initialize EmulatorService singleton for auto-discovery and lifecycle
-  const emulatorService = EmulatorService.getInstance();
-  await emulatorService.init(context);
-  context.subscriptions.push(emulatorService);
-
-  const explorerDataProvider = new ExplorerDataProvider();
-  context.subscriptions.push(explorerDataProvider);
+  // Initialize and register DocumentFileSystemProvider IMMEDIATELY and synchronously
+  // so that restored ketrik-firestore-studio:// editor tabs on IDE reopen never race with async startup tasks.
+  const documentFileSystemProvider = DocumentFileSystemProvider.getInstance();
+  documentFileSystemProvider.setContext(context);
+  context.subscriptions.push(documentFileSystemProvider);
+  context.subscriptions.push(
+    vscode.workspace.registerFileSystemProvider(
+      scheme,
+      documentFileSystemProvider,
+      { isCaseSensitive: true }
+    )
+  );
 
   // Initialize RulesService singleton to watch firestore.rules
   const rulesService = RulesService.getInstance();
   rulesService.setContext(context);
   context.subscriptions.push(rulesService);
 
-  const documentFileSystemProvider = DocumentFileSystemProvider.getInstance();
-  context.subscriptions.push(documentFileSystemProvider);
+  // Initialize SnapshotSyncService singleton early so virtual tab restoration can resolve workspace mirrors
+  const snapshotSyncService = SnapshotSyncService.getInstance();
+  context.subscriptions.push(snapshotSyncService);
+
+  const explorerDataProvider = new ExplorerDataProvider();
+  context.subscriptions.push(explorerDataProvider);
+
+  // Initialize EmulatorService singleton for auto-discovery and lifecycle (non-blocking so startup prompts don't stall activation)
+  const emulatorService = EmulatorService.getInstance();
+  context.subscriptions.push(emulatorService);
+  void emulatorService.init(context);
 
   // Initialize status bar item for active Firestore document storage size
   const documentSizeStatusBar = new DocumentSizeStatusBarController();
@@ -201,10 +223,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Initialize OverviewService singleton
   context.subscriptions.push(OverviewService.getInstance());
-
-  // Initialize SnapshotSyncService singleton
-  const snapshotSyncService = SnapshotSyncService.getInstance();
-  context.subscriptions.push(snapshotSyncService);
 
   // Initialize SecretManagerService singleton
   context.subscriptions.push(SecretManagerService.getInstance());
@@ -734,8 +752,23 @@ export async function activate(context: vscode.ExtensionContext) {
             });
             return;
           }
+          if (selection.every((s): s is CompositeIndexItem => s instanceof CompositeIndexItem)) {
+            const connIds = new Set(selection.map((s) => s.connectionId));
+            if (connIds.size !== 1) {
+              vscode.window.showWarningMessage(
+                "Multi-select delete only supports composite indexes within the same connection."
+              );
+              return;
+            }
+            await vscode.commands.executeCommand(
+              "ketrik-firestore-studio.deleteIndex",
+              selection[0],
+              [...selection]
+            );
+            return;
+          }
           vscode.window.showWarningMessage(
-            "Multi-select delete currently supports multiple Documents or Auth Users within the same connection."
+            "Multi-select delete currently supports multiple Documents, Auth Users, or Composite Indexes within the same connection."
           );
           return;
         }
@@ -753,6 +786,8 @@ export async function activate(context: vscode.ExtensionContext) {
           await deleteCollectionCommand(selected, explorerDataProvider);
         } else if (selected instanceof AuthUserItem) {
           await deleteAuthUserCommand(selected, explorerDataProvider, documentFileSystemProvider);
+        } else if (selected instanceof CompositeIndexItem) {
+          await vscode.commands.executeCommand("ketrik-firestore-studio.deleteIndex", selected);
         }
       }
     ),
@@ -1038,32 +1073,28 @@ export async function activate(context: vscode.ExtensionContext) {
   registerStorageCommands(context, explorerDataProvider);
   registerSecretCommands(context, explorerDataProvider);
 
-  context.subscriptions.push(
-    vscode.workspace.registerFileSystemProvider(
-      scheme,
-      documentFileSystemProvider,
-      { isCaseSensitive: true }
-    )
-  );
-
   // Automatically enforce JSON syntax highlighting for all opened Firestore JSON documents
-  context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument((document) => {
-      if (document.uri.scheme === scheme) {
-        if (
-          (document.uri.path.endsWith(".rules") || document.uri.path.endsWith("/firestore.rules")) &&
-          document.languageId !== "firestore-rules"
-        ) {
-          vscode.languages.setTextDocumentLanguage(document, "firestore-rules");
-        } else if (
-          !document.uri.path.endsWith(".rules") &&
-          !document.uri.path.endsWith("/firestore.rules") &&
-          document.languageId !== "json"
-        ) {
-          vscode.languages.setTextDocumentLanguage(document, "json");
-        }
+  const ensureVirtualDocLanguage = (document: vscode.TextDocument) => {
+    if (document.uri.scheme === scheme) {
+      if (
+        (document.uri.path.endsWith(".rules") || document.uri.path.endsWith("/firestore.rules")) &&
+        document.languageId !== "firestore-rules"
+      ) {
+        void vscode.languages.setTextDocumentLanguage(document, "firestore-rules");
+      } else if (
+        !document.uri.path.endsWith(".rules") &&
+        !document.uri.path.endsWith("/firestore.rules") &&
+        document.languageId !== "json"
+      ) {
+        void vscode.languages.setTextDocumentLanguage(document, "json");
       }
-    })
+    }
+  };
+  for (const doc of vscode.workspace.textDocuments) {
+    ensureVirtualDocLanguage(doc);
+  }
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument(ensureVirtualDocLanguage)
   );
 }
 

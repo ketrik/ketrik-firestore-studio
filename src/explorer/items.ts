@@ -6,6 +6,7 @@ import { RulesParser } from "../rules/RulesParser";
 import { isTimestampLike, timestampToDate, formatDateTime, formatRelativeTime } from "../utils/timestampUtils";
 import { SecretManagerService, SecretMetadata, SecretVersionMetadata } from "../secrets/SecretManagerService";
 import { isDryDashboard, isRuntimeDashboard } from "../services/dashboardTranspiler";
+import { IndexesService } from "../indexes/indexesService";
 
 function getConnectionMeta(connectionId: string): {
   substrate: "cloud" | "emulator" | "local";
@@ -388,15 +389,35 @@ export class DocumentFieldItem extends Item {
         ? " [System Envelope / Index]"
         : "";
     const typeLabel = isTimestamp ? "timestamp" : valType;
+    const parentCollId = parentDocRef?.parent?.id || "";
+    const fieldOverrideMeta = parentCollId
+      ? IndexesService.getInstance().getCachedFieldMeta(connectionId, parentCollId, this.fullFieldPath)
+      : undefined;
+    const isTtlActive = Boolean(fieldOverrideMeta?.ttlConfig);
+    const isExpiredTtl =
+      isTtlActive && timestampDate !== undefined && timestampDate.getTime() < Date.now();
+    const isExemptField =
+      Boolean(fieldOverrideMeta && !fieldOverrideMeta.usesAncestorConfig && fieldOverrideMeta.indexes.length === 0);
+
+    if (isTtlActive && this.description) {
+      this.description = `${this.description} • ⏳ TTL${isExpiredTtl ? " (⚠️ Expired)" : ""}`;
+    } else if (isExemptField && this.description) {
+      this.description = `${this.description} • 🚫 Unindexed`;
+    }
+
     if (isSecretRef) {
       this.tooltip = `Field: ${this.fullFieldPath} (Google Secret Link)${tierLabel}\nSecret: ${value}\nDoc: ${parentDocRef.path}`;
     } else if (this.isArrayElement) {
       this.tooltip = `Array Item [${this.arrayIndex}] (${typeLabel})${tierLabel}\nPath: ${this.fullFieldPath}\nDoc: ${parentDocRef.path}`;
     } else if (isTimestamp && timestampDate) {
       const epochSec = Math.floor(timestampDate.getTime() / 1000);
-      this.tooltip = `Field: ${this.fullFieldPath} (timestamp)${tierLabel}\nDate: ${timestampDate.toISOString()}\nLocal: ${formatDateTime(timestampDate)}\nEpoch Seconds: ${epochSec}\nDoc: ${parentDocRef.path}`;
+      const ttlNote = isTtlActive
+        ? `\nTTL Policy: ⏳ ${fieldOverrideMeta!.ttlConfig!.state}${isExpiredTtl ? " (⚠️ Expired — Pending GC)" : ""}`
+        : "";
+      this.tooltip = `Field: ${this.fullFieldPath} (timestamp)${tierLabel}\nDate: ${timestampDate.toISOString()}\nLocal: ${formatDateTime(timestampDate)}\nEpoch Seconds: ${epochSec}${ttlNote}\nDoc: ${parentDocRef.path}`;
     } else {
-      this.tooltip = `Field: ${this.fullFieldPath} (${typeLabel})${tierLabel}\nDoc: ${parentDocRef.path}`;
+      const idxNote = isExemptField ? `\nSingle-Field Index: 🚫 Exempt (Unindexed)` : "";
+      this.tooltip = `Field: ${this.fullFieldPath} (${typeLabel})${tierLabel}${idxNote}\nDoc: ${parentDocRef.path}`;
     }
     this.iconPath = new vscode.ThemeIcon(icon, iconColor);
 
@@ -636,6 +657,31 @@ export class CompositeIndexesBranchItem extends Item {
 }
 
 /**
+ * A Tree View item grouping Composite Indexes by collectionGroup when a project has many indexes.
+ */
+export class IndexCollectionGroupItem extends Item {
+  reference = undefined;
+
+  constructor(
+    public connectionId: string,
+    public collectionGroup: string,
+    public indexes: import("../indexes/indexesService").FirestoreCompositeIndex[]
+  ) {
+    super(collectionGroup, vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = `indexGroup:${connectionId}:${collectionGroup}`;
+    this.contextValue = "indexCollectionGroup";
+    const creatingCount = indexes.filter((i) => i.state === "CREATING").length;
+    const repairCount = indexes.filter((i) => i.state === "NEEDS_REPAIR").length;
+    const statusParts: string[] = [`${indexes.length} index${indexes.length === 1 ? "" : "es"}`];
+    if (creatingCount > 0) statusParts.push(`⏳ ${creatingCount} building`);
+    if (repairCount > 0) statusParts.push(`⚠️ ${repairCount} needs repair`);
+    this.description = statusParts.join(" • ");
+    this.iconPath = new vscode.ThemeIcon("folder", new vscode.ThemeColor("charts.blue"));
+    this.tooltip = `${collectionGroup}: ${indexes.length} composite/vector index(es)`;
+  }
+}
+
+/**
  * A Tree View item representing an individual Composite Index.
  */
 export class CompositeIndexItem extends Item {
@@ -645,9 +691,12 @@ export class CompositeIndexItem extends Item {
     public connectionId: string,
     public index: import("../indexes/indexesService").FirestoreCompositeIndex
   ) {
-    // Formulate a concise summary of the index fields, e.g. "status ASC, createdAt DESC" or "__name__ ASC, embedding (VECTOR)"
+    // Formulate a concise summary of the index fields, e.g. "status ASC, createdAt DESC" or "embedding [VECTOR:768]"
     const fieldsDesc = index.fields
       .map((f) => {
+        if (f.vectorConfig) {
+          return `${f.fieldPath} [VECTOR:${f.vectorConfig.dimension}]`;
+        }
         if (f.arrayConfig === "CONTAINS") {
           return `${f.fieldPath} ⋲ [CONTAINS]`;
         }
@@ -666,7 +715,12 @@ export class CompositeIndexItem extends Item {
     const { access } = getConnectionMeta(connectionId);
     this.contextValue = `compositeIndex:${access}`;
 
-    const scopeBadge = index.queryScope === "COLLECTION_GROUP" ? "🌐 Group" : "📁 Collection";
+    const scopeBadge =
+      index.queryScope === "COLLECTION_GROUP"
+        ? "🌐 Group"
+        : index.queryScope === "COLLECTION_RECURSIVE"
+          ? "🌲 Recursive"
+          : "📁 Collection";
     let stateBadge = "READY";
     let iconName = "check";
     let iconColor: vscode.ThemeColor | undefined = new vscode.ThemeColor("charts.green");
@@ -690,7 +744,11 @@ export class CompositeIndexItem extends Item {
       `Fields:\n${index.fields
         .map(
           (f) =>
-            `  - ${f.fieldPath} (${f.arrayConfig === "CONTAINS" ? "ARRAY_CONTAINS" : f.order || "ASCENDING"
+            `  - ${f.fieldPath} (${f.vectorConfig
+              ? `VECTOR:${f.vectorConfig.dimension}`
+              : f.arrayConfig === "CONTAINS"
+                ? "ARRAY_CONTAINS"
+                : f.order || "ASCENDING"
             })`
         )
         .join("\n")}`,

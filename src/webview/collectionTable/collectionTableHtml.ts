@@ -905,6 +905,9 @@ export function getCollectionTableHtml(
               <div class="more-item" id="moreDataGraphItem" title="Opens interactive Data Graph in a new tab">
                 <span>🕸️</span> Data Graph <span style="margin-left:auto; opacity:0.55; font-size:0.85em;">↗</span>
               </div>
+              <div class="more-item" id="moreIndexesItem" title="Opens Composite Indexes, Field Overrides & TTL Policies for this collection">
+                <span>🗂️</span> Indexes &amp; TTL <span style="margin-left:auto; opacity:0.55; font-size:0.85em;">↗</span>
+              </div>
               <div id="moreViewDivider" class="more-divider" style="display:none;"></div>
               <div id="moreViewHeader" class="more-header-label" style="display:none;">View Columns</div>
               <div class="more-item" id="moreProtoItem" style="display:none;">
@@ -926,6 +929,7 @@ export function getCollectionTableHtml(
           <button id="calcAggBtn" style="display:none;"></button>
           <button id="toggleSchemaHealthBtn" style="display:none;"></button>
           <button id="openDataGraphBtn" style="display:none;"></button>
+          <button id="openIndexesBtn" style="display:none;"></button>
           <button id="toggleProtoBtn" style="display:none;"></button>
           <button id="toggleEnvBtn" style="display:none;"></button>
         </div>
@@ -1011,10 +1015,19 @@ export function getCollectionTableHtml(
           </div>
         </div>
         <div id="clauseList"></div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap; font-size:0.85em;">
+          <label style="opacity:0.8;">Order By (optional):</label>
+          <input id="queryOrderField" type="text" placeholder="e.g. createdAt" style="padding:3px 7px; font-size:0.92em; width:160px; font-family:var(--mono-font);" />
+          <select id="queryOrderDir" style="padding:3px 7px; font-size:0.92em;">
+            <option value="asc">ASC ↑</option>
+            <option value="desc">DESC ↓</option>
+          </select>
+        </div>
         <div class="query-footer">
           <button id="addClauseBtn" class="secondary icon-btn">+ Add Clause</button>
           <div class="query-header-actions">
             <button id="estimateQueryCostBtn" class="secondary icon-btn" title="Calculate pre-flight read cost using a 1-read aggregation before fetching documents">💰 Estimate Cost</button>
+            <button id="explainQueryBtn" class="secondary icon-btn" title="Run Firestore EXPLAIN ANALYZE to inspect index utilization, scanned entries, and latency">⚡ Explain</button>
             <button id="resetQueryBtn" class="secondary">Reset</button>
             <button id="runQueryBtn">▶ Run Query</button>
           </div>
@@ -1028,6 +1041,7 @@ export function getCollectionTableHtml(
             <span style="font-size:0.82em; opacity:0.8; font-weight:normal;">(findNearest similarity search)</span>
           </div>
           <div style="display:flex; gap:8px;">
+            <button id="explainVectorBtn" class="secondary" title="Run EXPLAIN ANALYZE on this vector kNN query">⚡ Explain</button>
             <button id="runVectorBtn" style="background: #8a2be2; border-color: #9d4edd; color: #fff;">Execute kNN Search</button>
             <button id="resetVectorBtn" class="secondary">Reset</button>
           </div>
@@ -1059,6 +1073,7 @@ export function getCollectionTableHtml(
           </div>
         </div>
       </div>
+      <div id="explainResultBanner" style="display:none; margin:8px 0 4px 0; padding:10px 12px; border-radius:4px; background:rgba(55, 148, 255, 0.08); border:1px solid rgba(55, 148, 255, 0.35); font-size:0.85em;"></div>
 
       <div class="info-bar" id="infoBar" style="display:none;">
         <div class="info-text">
@@ -1271,11 +1286,20 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         return null;
       }
 
+      let ttlFieldSet = new Set();
+      let exemptFieldSet = new Set();
+
       function renderHeaderCell(h) {
         const isProto = h.startsWith('__');
         const isEnv = h.startsWith('_') && !isProto;
         let cls = isProto ? 'protocol-header col-proto' : isEnv ? 'envelope-header col-env' : '';
         let badge = isProto ? '<span class="th-tag protocol">protocol</span>' : isEnv ? '<span class="th-tag envelope">envelope</span>' : '';
+        if (ttlFieldSet.has(h)) {
+          badge += '<span class="th-tag" style="background:rgba(78,201,176,0.18); color:#4ec9b0;" title="TTL Policy Active">⏳ TTL</span>';
+        }
+        if (exemptFieldSet.has(h) || exemptFieldSet.has('*')) {
+          badge += '<span class="th-tag" style="background:rgba(204,167,0,0.18); color:#cca700;" title="Single-Field Indexing Exempt">🚫</span>';
+        }
         return '<th class="' + cls + '">' + badge + escapeHtml(h) + '</th>';
       }
 
@@ -1768,6 +1792,8 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           allLoadedDocs = msg.docs || [];
           lastDocs = allLoadedDocs;
           hasMoreState = !!msg.hasMore;
+          ttlFieldSet = new Set(Array.isArray(msg.ttlFields) ? msg.ttlFields : []);
+          exemptFieldSet = new Set(Array.isArray(msg.exemptFields) ? msg.exemptFields : []);
           updateTimeInputValue();
           if (msg.bookmarks) {
             updateBookmarksDropdown(msg.bookmarks);
@@ -1806,6 +1832,72 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
               badge.style.color = 'var(--vscode-errorForeground, #f48771)';
               badge.style.borderColor = 'var(--vscode-errorForeground, #f48771)';
             }
+          }
+        }
+
+        if (msg.type === 'explainResult') {
+          const btn = document.getElementById('explainQueryBtn');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '⚡ Explain';
+          }
+          const vecBtn = document.getElementById('explainVectorBtn');
+          if (vecBtn) {
+            vecBtn.disabled = false;
+            vecBtn.innerHTML = '⚡ Explain';
+          }
+          const banner = document.getElementById('explainResultBanner');
+          if (banner) {
+            const indexesUsed = Array.isArray(msg.indexesUsed) ? msg.indexesUsed : [];
+            const idxHtml = indexesUsed.length > 0
+              ? indexesUsed.map(i => '<code style="background:rgba(128,128,128,0.18); padding:1px 5px; border-radius:3px; margin-right:4px;">' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</code>').join('')
+              : '<span style="opacity:0.75;">Default / Primary Key Scan</span>';
+            const scanned = msg.indexEntriesScanned !== undefined && msg.indexEntriesScanned !== null ? Number(msg.indexEntriesScanned).toLocaleString() : 'N/A';
+            const returned = msg.resultsReturned !== undefined && msg.resultsReturned !== null ? Number(msg.resultsReturned).toLocaleString() : 'N/A';
+            const reads = msg.readOperations !== undefined && msg.readOperations !== null ? Number(msg.readOperations).toLocaleString() : 'N/A';
+            const duration = msg.executionDurationMs !== undefined && msg.executionDurationMs !== null ? Number(msg.executionDurationMs).toFixed(1) + ' ms' : 'N/A';
+            const multiMergeWarn = indexesUsed.length > 1
+              ? '<span style="color:#e5c07b; margin-left:8px;">⚠️ Index Merge (' + indexesUsed.length + ' indexes) — consider a dedicated composite index</span>'
+              : '';
+            banner.innerHTML =
+              '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">' +
+                '<strong>⚡ Query Explain Profiler (EXPLAIN ANALYZE)</strong>' +
+                '<button id="closeExplainBannerBtn" class="secondary" style="padding:1px 6px; font-size:0.85em;">✕</button>' +
+              '</div>' +
+              '<div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:6px;">' +
+                '<span><strong>Returned:</strong> ' + returned + '</span>' +
+                '<span><strong>Index Entries Scanned:</strong> ' + scanned + '</span>' +
+                '<span><strong>Read Ops:</strong> ' + reads + '</span>' +
+                '<span><strong>Server Duration:</strong> ' + duration + '</span>' +
+              '</div>' +
+              '<div><strong>Indexes Used:</strong> ' + idxHtml + multiMergeWarn + '</div>';
+            banner.style.display = 'block';
+            const closeBtn = document.getElementById('closeExplainBannerBtn');
+            if (closeBtn) closeBtn.onclick = () => { banner.style.display = 'none'; };
+          }
+        }
+
+        if (msg.type === 'explainError') {
+          const btn = document.getElementById('explainQueryBtn');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '⚡ Explain';
+          }
+          const vecBtn = document.getElementById('explainVectorBtn');
+          if (vecBtn) {
+            vecBtn.disabled = false;
+            vecBtn.innerHTML = '⚡ Explain';
+          }
+          const banner = document.getElementById('explainResultBanner');
+          if (banner && msg.message) {
+            banner.innerHTML =
+              '<div style="display:flex; justify-content:space-between; align-items:center;">' +
+                '<span>⚠️ <strong>Explain Unavailable:</strong> ' + escapeHtml(msg.message) + '</span>' +
+                '<button id="closeExplainBannerBtn" class="secondary" style="padding:1px 6px; font-size:0.85em;">✕</button>' +
+              '</div>';
+            banner.style.display = 'block';
+            const closeBtn = document.getElementById('closeExplainBannerBtn');
+            if (closeBtn) closeBtn.onclick = () => { banner.style.display = 'none'; };
           }
         }
 
@@ -2183,17 +2275,33 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           value: r.querySelector('.clause-val').value.trim(),
         })).filter(c => c.field !== '');
 
-        vscode.postMessage({ command: 'promptSaveBookmark', clauses });
+        const matchMode = document.getElementById('queryMatchMode') ? document.getElementById('queryMatchMode').value : 'and';
+        const orderByField = document.getElementById('queryOrderField') ? document.getElementById('queryOrderField').value.trim() : '';
+        const orderByDir = document.getElementById('queryOrderDir') ? document.getElementById('queryOrderDir').value : 'asc';
+        vscode.postMessage({ command: 'promptSaveBookmark', clauses, matchMode, orderByField, orderByDir });
       };
 
       document.getElementById('bookmarksDropdown').onchange = function() {
         const name = this.value;
         if (!name || !savedBookmarksMap[name]) return;
-        const clauses = savedBookmarksMap[name];
+        const entry = savedBookmarksMap[name];
+        const clauses = Array.isArray(entry) ? entry : (entry.clauses || []);
+        const matchMode = !Array.isArray(entry) && entry.matchMode ? entry.matchMode : 'and';
+        const orderByField = !Array.isArray(entry) && entry.orderByField ? entry.orderByField : '';
+        const orderByDir = !Array.isArray(entry) && entry.orderByDir ? entry.orderByDir : 'asc';
+
         document.getElementById('clauseList').innerHTML = '';
-        clauses.forEach(c => {
-          createClauseRow(c.field, c.op, c.value);
-        });
+        if (clauses.length > 0) {
+          clauses.forEach(c => createClauseRow(c.field, c.op, c.value));
+        } else {
+          createClauseRow();
+        }
+        const mmEl = document.getElementById('queryMatchMode');
+        if (mmEl) mmEl.value = matchMode;
+        const obFieldEl = document.getElementById('queryOrderField');
+        if (obFieldEl) obFieldEl.value = orderByField;
+        const obDirEl = document.getElementById('queryOrderDir');
+        if (obDirEl) obDirEl.value = orderByDir;
       };
 
       document.getElementById('estimateQueryCostBtn').onclick = function() {
@@ -2201,6 +2309,43 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         this.innerHTML = '<span>⏳</span> Estimating...';
         vscode.postMessage({ command: 'estimateQueryCost' });
       };
+
+      document.getElementById('explainQueryBtn').onclick = function() {
+        this.disabled = true;
+        this.innerHTML = '<span>⏳</span> Explaining...';
+        const rows = Array.from(document.querySelectorAll('.clause-row'));
+        const clauses = rows.map(r => ({
+          field: r.querySelector('.clause-field').value.trim(),
+          op: r.querySelector('.clause-op').value,
+          value: r.querySelector('.clause-val').value.trim(),
+        })).filter(c => c.field !== '');
+        const matchMode = document.getElementById('queryMatchMode') ? document.getElementById('queryMatchMode').value : 'and';
+        const orderByField = document.getElementById('queryOrderField') ? document.getElementById('queryOrderField').value.trim() : '';
+        const orderByDir = document.getElementById('queryOrderDir') ? document.getElementById('queryOrderDir').value : 'asc';
+        vscode.postMessage({ command: 'explainQuery', clauses, matchMode, orderByField, orderByDir });
+      };
+
+      const explainVecBtn = document.getElementById('explainVectorBtn');
+      if (explainVecBtn) {
+        explainVecBtn.onclick = function() {
+          this.disabled = true;
+          this.innerHTML = '<span>⏳</span> Explaining...';
+          const vectorField = document.getElementById('vectorFieldInput').value.trim();
+          const queryVector = document.getElementById('vectorQueryInput').value.trim();
+          const distanceMeasure = document.getElementById('vectorMeasureSelect').value;
+          const limit = Number(document.getElementById('vectorLimitInput').value) || 10;
+          const thresholdVal = document.getElementById('vectorThresholdInput').value.trim();
+          const distanceThreshold = thresholdVal !== '' && !isNaN(Number(thresholdVal)) ? Number(thresholdVal) : undefined;
+          vscode.postMessage({
+            command: 'explainVectorQuery',
+            vectorField,
+            queryVector,
+            distanceMeasure,
+            limit,
+            distanceThreshold
+          });
+        };
+      }
 
       document.getElementById('countCollBtn').onclick = function() {
         this.disabled = true;
@@ -2310,6 +2455,13 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         };
       }
 
+      const openIndexesBtn = document.getElementById('openIndexesBtn');
+      if (openIndexesBtn) {
+        openIndexesBtn.onclick = function() {
+          vscode.postMessage({ command: 'openCollectionIndexes' });
+        };
+      }
+
       document.getElementById('runVectorBtn').onclick = function() {
         const vectorField = document.getElementById('vectorFieldInput').value.trim();
         const queryVector = document.getElementById('vectorQueryInput').value.trim();
@@ -2356,11 +2508,13 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
           value: r.querySelector('.clause-val').value.trim(),
         })).filter(c => c.field !== '');
 
-        if (clauses.length === 0) {
+        const matchMode = document.getElementById('queryMatchMode') ? document.getElementById('queryMatchMode').value : 'and';
+        const orderByField = document.getElementById('queryOrderField') ? document.getElementById('queryOrderField').value.trim() : '';
+        const orderByDir = document.getElementById('queryOrderDir') ? document.getElementById('queryOrderDir').value : 'asc';
+        if (clauses.length === 0 && !orderByField) {
           return;
         }
-        const matchMode = document.getElementById('queryMatchMode') ? document.getElementById('queryMatchMode').value : 'and';
-        vscode.postMessage({ command: 'runServerQuery', clauses, matchMode });
+        vscode.postMessage({ command: 'runServerQuery', clauses, matchMode, orderByField, orderByDir });
       };
 
       document.getElementById('resetQueryBtn').onclick = function() {
@@ -2368,6 +2522,12 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
         createClauseRow();
         const matchModeEl = document.getElementById('queryMatchMode');
         if (matchModeEl) matchModeEl.value = 'and';
+        const orderFieldEl = document.getElementById('queryOrderField');
+        if (orderFieldEl) orderFieldEl.value = '';
+        const orderDirEl = document.getElementById('queryOrderDir');
+        if (orderDirEl) orderDirEl.value = 'asc';
+        const explainBannerEl = document.getElementById('explainResultBanner');
+        if (explainBannerEl) explainBannerEl.style.display = 'none';
         vscode.postMessage({ command: 'resetServerQuery' });
       };
 
@@ -3139,6 +3299,15 @@ export function getCollectionTableClientScript(isCollectionGroup = false): strin
             e.stopPropagation();
             moreDropdown.style.display = 'none';
             document.getElementById('openDataGraphBtn')?.click();
+          });
+        }
+
+        const moreIndexesItem = document.getElementById('moreIndexesItem');
+        if (moreIndexesItem) {
+          moreIndexesItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            moreDropdown.style.display = 'none';
+            document.getElementById('openIndexesBtn')?.click();
           });
         }
 

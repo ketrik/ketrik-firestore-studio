@@ -1,8 +1,9 @@
 import { createHash } from "crypto";
+import * as fs from "fs";
 import * as vscode from "vscode";
 import { FieldPath } from "firebase-admin/firestore";
 import { reviveTimestamps } from "../utils/timestampUtils";
-import { ConnectionManager } from "../connections/ConnectionManager";
+import { ConnectionManager, FirestoreConnectionConfig } from "../connections/ConnectionManager";
 import { scheme } from "../constants";
 import { RulesService } from "../rules/RulesService";
 import { LocalJsonService } from "../services/LocalJsonService";
@@ -14,6 +15,13 @@ import { DocumentCompareService } from "../services/DocumentCompareService";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+
+interface PersistedDocCacheEntry {
+  data: any;
+  ctime: number;
+  mtime: number;
+  savedAt: number;
+}
 
 export interface ParsedDocumentUri {
   connectionId: string;
@@ -50,6 +58,176 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   /** Version (update time + content hash) each open file was last loaded/saved with, for conflict detection. */
   private _baselines = new Map<string, { updateTime: string; hash: string }>();
   private static readonly MAX_BASELINES = 200;
+
+  /** Persistent L2 cache so virtual tabs restored when VS Code reopens still resolve even if a connection or emulator is offline. */
+  private _context: vscode.ExtensionContext | null = null;
+  private _persistedCache = new Map<string, PersistedDocCacheEntry>();
+  private _persistFlushTimer: NodeJS.Timeout | null = null;
+  private static readonly PERSISTED_CACHE_KEY = "ketrik-firestore-studio.virtualDocCache.v1";
+  private static readonly MAX_PERSISTED_DOCS = 60;
+  private static readonly MAX_PERSISTED_DOC_BYTES = 256 * 1024;
+
+  public setContext(context: vscode.ExtensionContext): void {
+    this._context = context;
+    try {
+      const stored = context.globalState.get<Record<string, PersistedDocCacheEntry>>(
+        DocumentFileSystemProvider.PERSISTED_CACHE_KEY
+      );
+      if (stored && typeof stored === "object") {
+        for (const [k, v] of Object.entries(stored)) {
+          if (v && typeof v === "object" && "data" in v) {
+            this._persistedCache.set(k, v);
+          }
+        }
+      }
+    } catch { }
+  }
+
+  private _rememberPersistedDoc(
+    connectionId: string,
+    docPath: string,
+    data: any,
+    ctime?: number,
+    mtime?: number
+  ): void {
+    try {
+      const serialized = JSON.stringify(data ?? {});
+      if (Buffer.byteLength(serialized, "utf8") > DocumentFileSystemProvider.MAX_PERSISTED_DOC_BYTES) {
+        return;
+      }
+      const key = `${connectionId}:${docPath}`;
+      const now = Date.now();
+      const existing = this._persistedCache.get(key);
+      this._persistedCache.delete(key);
+      this._persistedCache.set(key, {
+        data: JSON.parse(serialized),
+        ctime: ctime ?? existing?.ctime ?? now,
+        mtime: mtime ?? now,
+        savedAt: now,
+      });
+      while (this._persistedCache.size > DocumentFileSystemProvider.MAX_PERSISTED_DOCS) {
+        const oldest = this._persistedCache.keys().next().value;
+        if (oldest === undefined) break;
+        this._persistedCache.delete(oldest);
+      }
+      this._schedulePersistFlush();
+    } catch { }
+  }
+
+  private _evictPersistedDoc(connectionId: string, docPath: string, includeDescendants = false): void {
+    const exact = `${connectionId}:${docPath}`;
+    const prefix = `${connectionId}:${docPath}/`;
+    let changed = false;
+    if (this._persistedCache.delete(exact)) {
+      changed = true;
+    }
+    if (includeDescendants) {
+      for (const k of Array.from(this._persistedCache.keys())) {
+        if (k.startsWith(prefix)) {
+          this._persistedCache.delete(k);
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      this._schedulePersistFlush();
+    }
+  }
+
+  private _schedulePersistFlush(): void {
+    if (!this._context) return;
+    if (this._persistFlushTimer) {
+      clearTimeout(this._persistFlushTimer);
+    }
+    this._persistFlushTimer = setTimeout(() => {
+      this._persistFlushTimer = null;
+      if (!this._context) return;
+      const obj: Record<string, PersistedDocCacheEntry> = {};
+      for (const [k, v] of this._persistedCache.entries()) {
+        obj[k] = v;
+      }
+      void this._context.globalState.update(DocumentFileSystemProvider.PERSISTED_CACHE_KEY, obj);
+    }, 300);
+    this._persistFlushTimer.unref?.();
+  }
+
+  /**
+   * Look up a cached document or field payload from either the persistent L2 cache
+   * or an existing `.firestore/<connectionId>/<docPath>` workspace mirror on disk.
+   */
+  private _getFallbackPayload(
+    connectionId: string,
+    docPath: string,
+    fieldPath?: string
+  ): { found: boolean; data: any; ctime: number; mtime: number } {
+    const now = Date.now();
+    // 1. Check workspace .firestore/ deterministic snapshot file first (if user or auto-mirror saved it)
+    try {
+      const mirrorPath = SnapshotSyncService.getInstance().getDeterministicSnapshotPath(
+        connectionId,
+        docPath,
+        fieldPath
+      );
+      if (fs.existsSync(mirrorPath)) {
+        const stat = fs.statSync(mirrorPath);
+        const parsed = JSON.parse(fs.readFileSync(mirrorPath, "utf8"));
+        return { found: true, data: parsed, ctime: stat.ctimeMs || now, mtime: stat.mtimeMs || now };
+      }
+      // If looking for a fieldPath and the parent document mirror exists on disk, extract the field from it
+      if (fieldPath !== undefined) {
+        const parentMirrorPath = SnapshotSyncService.getInstance().getDeterministicSnapshotPath(
+          connectionId,
+          docPath,
+          undefined
+        );
+        if (fs.existsSync(parentMirrorPath)) {
+          const stat = fs.statSync(parentMirrorPath);
+          const parentData = JSON.parse(fs.readFileSync(parentMirrorPath, "utf8"));
+          const nested = this.getNestedFieldValue(parentData, fieldPath);
+          if (nested.found) {
+            return { found: true, data: nested.value, ctime: stat.ctimeMs || now, mtime: stat.mtimeMs || now };
+          }
+        }
+      }
+    } catch { }
+
+    // 2. Check L2 persisted extension globalState cache
+    const persisted = this._persistedCache.get(`${connectionId}:${docPath}`);
+    if (persisted) {
+      if (fieldPath !== undefined) {
+        const nested = this.getNestedFieldValue(persisted.data, fieldPath);
+        if (nested.found) {
+          return { found: true, data: nested.value, ctime: persisted.ctime, mtime: persisted.mtime };
+        }
+      } else {
+        return { found: true, data: persisted.data, ctime: persisted.ctime, mtime: persisted.mtime };
+      }
+    }
+
+    return { found: false, data: undefined, ctime: now, mtime: now };
+  }
+
+  /**
+   * Resolve a connection by ID, or fall back when a restored tab references an older emulator/default connection ID.
+   */
+  private _resolveConnection(connectionId: string): FirestoreConnectionConfig | undefined {
+    const connMgr = ConnectionManager.getInstance();
+    const connections = connMgr.getConnections();
+    const exact = connections.find((c) => c.id === connectionId);
+    if (exact) {
+      return exact;
+    }
+    if (connectionId.startsWith("conn_emulator_")) {
+      const emulatorConn = connections.find((c) => c.isEmulator);
+      if (emulatorConn) {
+        return emulatorConn;
+      }
+    }
+    if (connections.length === 1) {
+      return connections[0];
+    }
+    return undefined;
+  }
 
   private _evictSnapshot(key: string): void {
     this._snapshotCache.delete(key);
@@ -99,6 +277,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   ): void {
     const key = `${connectionId}:${docPath}`;
     this._evictSnapshot(key);
+    this._evictPersistedDoc(connectionId, docPath, recursive);
     if (recursive) {
       const subPrefix = `${connectionId}:${docPath}/`;
       for (const k of Array.from(this._snapshotCache.keys())) {
@@ -140,6 +319,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
    * editor or diff tabs targeting documents in that collection.
    */
   public invalidateAndNotifyCollectionDeleted(connectionId: string, collPath: string): void {
+    this._evictPersistedDoc(connectionId, collPath, true);
     const prefix = `${connectionId}:${collPath}/`;
     const exact = `${connectionId}:${collPath}`;
     for (const key of Array.from(this._snapshotCache.keys())) {
@@ -189,6 +369,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
   ): void {
     const key = `${connectionId}:${docPath}`;
     this._evictSnapshot(key);
+    this._evictPersistedDoc(connectionId, docPath, false);
 
     const names = Array.isArray(fieldNames) ? fieldNames : [fieldNames];
     const events: vscode.FileChangeEvent[] = [];
@@ -341,6 +522,10 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
 
   dispose(): void {
     this._emitter.dispose();
+    if (this._persistFlushTimer) {
+      clearTimeout(this._persistFlushTimer);
+      this._persistFlushTimer = null;
+    }
     for (const timer of this._snapshotTimers.values()) {
       clearTimeout(timer);
     }
@@ -455,14 +640,23 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     }
 
     if (!connectionId) {
-      // Check if first segment of path is connectionId
+      // Check if first segment of path is connectionId (or looks like a generated conn_ ID from a previous session)
       const parts = pathStr.split("/");
-      if (connections.some((c) => c.id === parts[0])) {
+      if (
+        connections.some((c) => c.id === parts[0]) ||
+        parts[0]?.startsWith("conn_") ||
+        parts[0] === "default"
+      ) {
         connectionId = parts[0];
         pathStr = parts.slice(1).join("/");
       } else {
         connectionId = connections[0]?.id || "default";
       }
+    }
+
+    const resolvedConn = this._resolveConnection(connectionId);
+    if (resolvedConn) {
+      connectionId = resolvedConn.id;
     }
 
     let readTime: Date | undefined;
@@ -560,17 +754,29 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       };
     }
 
-    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    const conn = this._resolveConnection(connectionId);
+    const effectiveConnectionId = conn?.id || connectionId;
     const isReadOnly = !!conn?.readOnly;
 
     if (conn?.isLocalJson) {
       const localDoc = LocalJsonService.getInstance().getDocument(conn, docPath);
       if (!localDoc) {
+        const fallback = this._getFallbackPayload(effectiveConnectionId, docPath, fieldPath);
+        if (fallback.found) {
+          return {
+            type: vscode.FileType.File,
+            ctime: fallback.ctime,
+            mtime: fallback.mtime,
+            size: Buffer.byteLength(JSON.stringify(fallback.data ?? {}, null, 2), "utf8"),
+            permissions: isReadOnly ? vscode.FilePermission.Readonly : undefined,
+          };
+        }
         throw vscode.FileSystemError.FileNotFound(uri);
       }
       if (fieldPath !== undefined && !this.getNestedFieldValue(localDoc, fieldPath).found) {
         throw vscode.FileSystemError.FileNotFound(uri);
       }
+      this._rememberPersistedDoc(effectiveConnectionId, docPath, localDoc, now, now);
       return {
         type: vscode.FileType.File,
         ctime: now,
@@ -580,12 +786,30 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       };
     }
 
-    const doc = await this.getCachedSnapshot(connectionId, docPath);
+    let doc: import("firebase-admin/firestore").DocumentSnapshot;
+    try {
+      doc = await this.getCachedSnapshot(effectiveConnectionId, docPath);
+    } catch (err) {
+      const primaryFallback = this._getFallbackPayload(effectiveConnectionId, docPath, fieldPath);
+      const fallback = primaryFallback.found
+        ? primaryFallback
+        : this._getFallbackPayload(connectionId, docPath, fieldPath);
+      if (fallback.found) {
+        return {
+          type: vscode.FileType.File,
+          ctime: fallback.ctime,
+          mtime: fallback.mtime,
+          size: Buffer.byteLength(JSON.stringify(fallback.data ?? {}, null, 2), "utf8"),
+          permissions: isReadOnly ? vscode.FilePermission.Readonly : undefined,
+        };
+      }
+      throw err;
+    }
 
     if (!doc.exists) {
       if (fieldPath === undefined) {
         try {
-          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          const firestore = await ConnectionManager.getInstance().getFirestore(effectiveConnectionId);
           const subcollections = await firestore.doc(docPath).listCollections();
           if (subcollections.length > 0) {
             return {
@@ -598,20 +822,45 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
           }
         } catch { }
       }
+      // If connected to a freshly started empty emulator, fall back to persisted snapshot so restored tabs don't break
+      if (conn?.isEmulator) {
+        const primaryFallback = this._getFallbackPayload(effectiveConnectionId, docPath, fieldPath);
+        const fallback = primaryFallback.found
+          ? primaryFallback
+          : this._getFallbackPayload(connectionId, docPath, fieldPath);
+        if (fallback.found) {
+          return {
+            type: vscode.FileType.File,
+            ctime: fallback.ctime,
+            mtime: fallback.mtime,
+            size: Buffer.byteLength(JSON.stringify(fallback.data ?? {}, null, 2), "utf8"),
+            permissions: isReadOnly ? vscode.FilePermission.Readonly : undefined,
+          };
+        }
+      }
       throw vscode.FileSystemError.FileNotFound(uri);
     }
 
+    const fullData = doc.data();
+    const ctime = doc.createTime ? doc.createTime.toMillis() : now;
+    const mtime = doc.updateTime ? doc.updateTime.toMillis() : now;
+    if (fullData) {
+      this._rememberPersistedDoc(effectiveConnectionId, docPath, fullData, ctime, mtime);
+      if (effectiveConnectionId !== connectionId) {
+        this._rememberPersistedDoc(connectionId, docPath, fullData, ctime, mtime);
+      }
+    }
+
     if (fieldPath !== undefined) {
-      const data = doc.data();
-      if (!data || !this.getNestedFieldValue(data, fieldPath).found) {
+      if (!fullData || !this.getNestedFieldValue(fullData, fieldPath).found) {
         throw vscode.FileSystemError.FileNotFound(uri);
       }
     }
 
     return {
       type: vscode.FileType.File,
-      ctime: doc.createTime ? doc.createTime.toMillis() : now,
-      mtime: doc.updateTime ? doc.updateTime.toMillis() : now,
+      ctime,
+      mtime,
       size: 0,
       permissions: isReadOnly ? vscode.FilePermission.Readonly : undefined,
     };
@@ -652,12 +901,20 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       return this.serializeDoc(data);
     }
 
-    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    const conn = this._resolveConnection(connectionId);
+    const effectiveConnectionId = conn?.id || connectionId;
     if (conn?.isLocalJson) {
       const localDoc = LocalJsonService.getInstance().getDocument(conn, docPath);
       if (!localDoc) {
+        const fallback = this._getFallbackPayload(effectiveConnectionId, docPath, fieldPath);
+        if (fallback.found) {
+          const bytes = this.serializeDoc(fallback.data);
+          this.rememberBaseline(uri, undefined, bytes);
+          return bytes;
+        }
         throw vscode.FileSystemError.FileNotFound(uri);
       }
+      this._rememberPersistedDoc(effectiveConnectionId, docPath, localDoc);
       let data = localDoc;
       if (fieldPath !== undefined) {
         const nested = this.getNestedFieldValue(localDoc, fieldPath);
@@ -668,29 +925,61 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       }
       const bytes = this.serializeDoc(data);
       this.rememberBaseline(uri, undefined, bytes);
-      void SnapshotSyncService.getInstance().mirrorVirtualDocument(connectionId, docPath, fieldPath, data);
+      void SnapshotSyncService.getInstance().mirrorVirtualDocument(effectiveConnectionId, docPath, fieldPath, data);
       return bytes;
     }
 
-    const doc = await this.getCachedSnapshot(connectionId, docPath);
+    let doc: import("firebase-admin/firestore").DocumentSnapshot;
+    try {
+      doc = await this.getCachedSnapshot(effectiveConnectionId, docPath);
+    } catch (err) {
+      const primaryFallback = this._getFallbackPayload(effectiveConnectionId, docPath, fieldPath);
+      const fallback = primaryFallback.found
+        ? primaryFallback
+        : this._getFallbackPayload(connectionId, docPath, fieldPath);
+      if (fallback.found) {
+        const bytes = this.serializeDoc(fallback.data);
+        this.rememberBaseline(uri, undefined, bytes);
+        return bytes;
+      }
+      throw err;
+    }
 
     if (!doc.exists) {
       if (fieldPath === undefined) {
         try {
-          const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+          const firestore = await ConnectionManager.getInstance().getFirestore(effectiveConnectionId);
           const subcollections = await firestore.doc(docPath).listCollections();
           if (subcollections.length > 0) {
             const bytes = this.serializeDoc({});
             this.rememberBaseline(uri, undefined, bytes);
-            void SnapshotSyncService.getInstance().mirrorVirtualDocument(connectionId, docPath, fieldPath, {});
+            void SnapshotSyncService.getInstance().mirrorVirtualDocument(effectiveConnectionId, docPath, fieldPath, {});
             return bytes;
           }
         } catch { }
+      }
+      if (conn?.isEmulator) {
+        const primaryFallback = this._getFallbackPayload(effectiveConnectionId, docPath, fieldPath);
+        const fallback = primaryFallback.found
+          ? primaryFallback
+          : this._getFallbackPayload(connectionId, docPath, fieldPath);
+        if (fallback.found) {
+          const bytes = this.serializeDoc(fallback.data);
+          this.rememberBaseline(uri, undefined, bytes);
+          return bytes;
+        }
       }
       throw vscode.FileSystemError.FileNotFound(uri);
     }
 
     const data = doc.data() ?? {};
+    const ctime = doc.createTime ? doc.createTime.toMillis() : undefined;
+    const mtime = doc.updateTime ? doc.updateTime.toMillis() : undefined;
+    this._rememberPersistedDoc(effectiveConnectionId, docPath, data, ctime, mtime);
+    if (effectiveConnectionId !== connectionId) {
+      this._rememberPersistedDoc(connectionId, docPath, data, ctime, mtime);
+    }
+
     if (fieldPath !== undefined) {
       const nested = this.getNestedFieldValue(data, fieldPath);
       if (!nested.found) {
@@ -698,13 +987,13 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       }
       const bytes = this.serializeDoc(nested.value);
       this.rememberBaseline(uri, doc.updateTime, bytes);
-      void SnapshotSyncService.getInstance().mirrorVirtualDocument(connectionId, docPath, fieldPath, nested.value);
+      void SnapshotSyncService.getInstance().mirrorVirtualDocument(effectiveConnectionId, docPath, fieldPath, nested.value);
       return bytes;
     }
 
     const bytes = this.serializeDoc(data);
     this.rememberBaseline(uri, doc.updateTime, bytes);
-    void SnapshotSyncService.getInstance().mirrorVirtualDocument(connectionId, docPath, fieldPath, data);
+    void SnapshotSyncService.getInstance().mirrorVirtualDocument(effectiveConnectionId, docPath, fieldPath, data);
     return bytes;
   }
 
@@ -791,7 +1080,8 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
       );
     }
 
-    const conn = ConnectionManager.getInstance().getConnection(connectionId);
+    const conn = this._resolveConnection(connectionId);
+    const effectiveConnectionId = conn?.id || connectionId;
     if (conn?.readOnly) {
       throw vscode.FileSystemError.NoPermissions(
         `Connection '${conn.name}' is in Read-Only mode. Unlock it from the connection context menu to save changes.`
@@ -800,7 +1090,7 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
 
     if (isRules) {
       const text = decoder.decode(content);
-      await RulesService.getInstance().saveRulesContent(connectionId, text);
+      await RulesService.getInstance().saveRulesContent(effectiveConnectionId, text);
       this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
       return;
     }
@@ -815,19 +1105,27 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
     if (conn?.isLocalJson) {
       if (fieldPath !== undefined) {
         LocalJsonService.getInstance().updateField(conn, docPath, fieldPath, json);
+        const updatedDoc = LocalJsonService.getInstance().getDocument(conn, docPath);
+        if (updatedDoc) {
+          this._rememberPersistedDoc(effectiveConnectionId, docPath, updatedDoc);
+        }
       } else {
         LocalJsonService.getInstance().setDocument(conn, docPath, json);
+        this._rememberPersistedDoc(effectiveConnectionId, docPath, json);
       }
       this.rememberBaseline(uri, undefined, this.serializeDoc(json));
-      void SnapshotSyncService.getInstance().mirrorVirtualDocument(connectionId, docPath, fieldPath, json);
+      void SnapshotSyncService.getInstance().mirrorVirtualDocument(effectiveConnectionId, docPath, fieldPath, json);
       this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
       return;
     }
 
-    const firestore = await ConnectionManager.getInstance().getFirestore(connectionId);
+    const firestore = await ConnectionManager.getInstance().getFirestore(effectiveConnectionId);
 
     // Invalidate cached snapshot on write
-    this._evictSnapshot(`${connectionId}:${docPath}`);
+    this._evictSnapshot(`${effectiveConnectionId}:${docPath}`);
+    if (effectiveConnectionId !== connectionId) {
+      this._evictSnapshot(`${connectionId}:${docPath}`);
+    }
 
     // Convert any {_seconds, _nanoseconds} timestamp objects back to real Firestore Timestamps
     json = reviveTimestamps(json);
@@ -906,11 +1204,33 @@ export class DocumentFileSystemProvider implements vscode.FileSystemProvider, vs
         writeTime = (await firestore.doc(docPath).set(json)).writeTime;
       }
       // The saved version becomes the new baseline for the next save.
-      this.rememberBaseline(uri, writeTime, this.serializeDoc(json));
-      void SnapshotSyncService.getInstance().mirrorVirtualDocument(connectionId, docPath, fieldPath, json);
-      CostService.getInstance().recordOperation(connectionId, "write", 1);
+      const serializedBytes = this.serializeDoc(json);
+      this.rememberBaseline(uri, writeTime, serializedBytes);
+      if (fieldPath === undefined) {
+        this._rememberPersistedDoc(effectiveConnectionId, docPath, JSON.parse(decoder.decode(serializedBytes)));
+      } else {
+        const existingPersisted = this._persistedCache.get(`${effectiveConnectionId}:${docPath}`);
+        if (existingPersisted && existingPersisted.data && typeof existingPersisted.data === "object") {
+          const clone = JSON.parse(JSON.stringify(existingPersisted.data));
+          const segs = fieldPath.includes(".") ? fieldPath.split(".") : [fieldPath];
+          let cur: any = clone;
+          for (let i = 0; i < segs.length - 1; i++) {
+            if (!cur[segs[i]] || typeof cur[segs[i]] !== "object") {
+              cur[segs[i]] = {};
+            }
+            cur = cur[segs[i]];
+          }
+          cur[segs[segs.length - 1]] = JSON.parse(decoder.decode(serializedBytes));
+          this._rememberPersistedDoc(effectiveConnectionId, docPath, clone);
+        }
+      }
+      void SnapshotSyncService.getInstance().mirrorVirtualDocument(effectiveConnectionId, docPath, fieldPath, json);
+      CostService.getInstance().recordOperation(effectiveConnectionId, "write", 1);
       // Invalidate again after the write completes so no stale snapshot survives.
-      this._evictSnapshot(`${connectionId}:${docPath}`);
+      this._evictSnapshot(`${effectiveConnectionId}:${docPath}`);
+      if (effectiveConnectionId !== connectionId) {
+        this._evictSnapshot(`${connectionId}:${docPath}`);
+      }
       this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
     } catch (e: any) {
       if (e instanceof vscode.FileSystemError) {

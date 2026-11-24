@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Firestore Indexes Configuration",
+  "description": "Configuration schema for Cloud Firestore composite indexes and field overrides (firestore.indexes.json).",
+  "type": "object",
+  "properties": {
+    "indexes": {
+      "type": "array",
+      "description": "List of composite and vector indexes.",
+      "items": {
+        "type": "object",
+        "required": ["collectionGroup", "queryScope", "fields"],
+        "additionalProperties": false,
+        "properties": {
+          "collectionGroup": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Collection ID or collection group ID for the index."
+          },
+          "queryScope": {
+            "type": "string",
+            "enum": [
+              "COLLECTION",
+              "COLLECTION_GROUP",
+              "COLLECTION_RECURSIVE",
+              "QUERY_SCOPE_UNSPECIFIED"
+            ],
+            "description": "Scope of queries supported by this index."
+          },
+          "apiScope": {
+            "type": "string",
+            "enum": ["ANY_API", "DATASTORE_MODE_API", "MONGODB_COMPATIBLE_API"],
+            "description": "API scope supported by this index."
+          },
+          "fields": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Ordered list of fields indexed in this composite or vector index.",
+            "items": {
+              "type": "object",
+              "required": ["fieldPath"],
+              "additionalProperties": false,
+              "properties": {
+                "fieldPath": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Field path (use dot notation for nested fields, or '__name__' for document ID)."
+                },
+                "order": {
+                  "type": "string",
+                  "enum": ["ASCENDING", "DESCENDING"],
+                  "description": "Sort direction for scalar/timestamp fields."
+                },
+                "arrayConfig": {
+                  "type": "string",
+                  "enum": ["CONTAINS"],
+                  "description": "Array membership indexing configuration."
+                },
+                "vectorConfig": {
+                  "type": "object",
+                  "required": ["dimension"],
+                  "additionalProperties": false,
+                  "description": "Vector embedding kNN similarity index configuration.",
+                  "properties": {
+                    "dimension": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2048,
+                      "description": "Vector embedding dimensionality (1 to 2048)."
+                    },
+                    "flat": {
+                      "type": "object",
+                      "description": "Flat kNN vector index configuration.",
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "fieldOverrides": {
+      "type": "array",
+      "description": "Single-field index exemptions and TTL overrides.",
+      "items": {
+        "type": "object",
+        "required": ["collectionGroup", "fieldPath", "indexes"],
+        "properties": {
+          "collectionGroup": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Collection group ID for this field override."
+          },
+          "fieldPath": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Field path to override ('*' applies to all fields in the collection group)."
+          },
+          "ttl": {
+            "type": "boolean",
+            "description": "Enable or disable Time-to-Live (TTL) expiration on this field."
+          },
+          "indexes": {
+            "type": "array",
+            "description": "Explicit single-field index configurations (empty array disables single-field indexing for this field).",
+            "items": {
+              "type": "object",
+              "required": ["queryScope"],
+              "properties": {
+                "queryScope": {
+                  "type": "string",
+                  "enum": ["COLLECTION", "COLLECTION_GROUP", "COLLECTION_RECURSIVE"]
+                },
+                "order": {
+                  "type": "string",
+                  "enum": ["ASCENDING", "DESCENDING"]
+                },
+                "arrayConfig": {
+                  "type": "string",
+                  "enum": ["CONTAINS"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -2,6 +2,30 @@
 
 All notable changes to the "Ketrik Firestore Studio" extension will be documented in this file.
 
+## [1.23.0] - 2026-11-24
+
+### Added
+- **Indexes & TTL Explorer Webview (`openIndexesAsTable`)**:
+  * Unified tabbed UI for **Composite & Vector Indexes** and **Field Overrides & TTL Policies**, with collection filtering, search, state/sync filters (`Synced`, `Drifted`, `Cloud Only`, `Local Only`), and 10s automatic polling while indexes or TTL policies are `CREATING`.
+  * 1-click single-index and single-override **Deploy**, bulk index deletion, **`NEEDS_REPAIR` Rebuild**, an **Index Health Advisor** banner (flagging `NEEDS_REPAIR`, redundant 1-field `COLLECTION` composites, and high write-amplification collections), and a graceful **Local JSON / Emulator** fallback banner.
+- **Vector Indexes & Recursive Scopes (`vectorConfig`)**:
+  * Full support for creating, inspecting, diffing, syncing, and deploying kNN Vector indexes (`vectorConfig.dimension`), `COLLECTION_RECURSIVE` query scope, and right-click Vector index creation on array fields in Explorer.
+- **Single-Field Index Overrides & `firestore.indexes.json` Tooling**:
+  * Manage field overrides (`manageFieldOverride`, `setFieldIndexOverride`) with **Collection Group Indexing**, **Custom Scope Matrix**, **Exempt Field**, and **Restore Default**, supporting collection-wide wildcard `*` (`__default__`) mapping and sync destinations (`Cloud + File`, `Cloud Only`, `File Only`).
+  * Added [firestore-indexes.schema.json](schemas/firestore-indexes.schema.json) (`jsonValidation`) and `firebase.json` multi-database index path resolution.
+  * Added **Missing Index Error Auto-Decoder** (`handleMissingIndexError`) to parse `create_composite=` protobuf links directly into 1-click Cloud creation or `firestore.indexes.json` staging.
+- **Native Firestore TTL Policies & Diagnostics**:
+  * Configure TTL expiration policies (`manageTtlPolicy`, `setTtlPolicy`) with production type-to-confirm shields, workspace `firestore.indexes.json` sync, `⏳ TTL` (`⚠️ Expired — Pending GC`) and `🚫 Unindexed` badges in Explorer & Collection Table headers, and an **Indexes & Time-to-Live (TTL) Policies** summary card in Database Configuration.
+  * **Document Index Entry & 1,500-Byte Diagnostics**: Estimates per-document index entries against Firestore's `40,000` limit and highlights UTF-8 strings >1,500 bytes in the Document Size status bar tooltip.
+- **Query Explain (`EXPLAIN ANALYZE`) & Collection Table Enhancements**:
+  * Added **Query Explain (`⚡ Explain`)** in Collection Table for standard, `Order By`, and Vector kNN queries, displaying indexes used, entries scanned vs. docs returned, and execution time.
+  * Added `Order By` sorting and upgraded **Query Bookmarks** (`matchMode`, `orderByField`, `orderByDir`), plus a `🗂️ Indexes & TTL ↗` shortcut pre-filtered to the active collection.
+- **Explorer Tree Grouping & Live Polling**:
+  * Grouped composite indexes under `IndexCollectionGroupItem` when a database has ≥15 indexes, with context menu actions, 10s background `CREATING` polling, and parallel field-override cache warming.
+
+### Changed & Fixed
+- **REST & Field Discovery Hardening**: URL-encoded `projectId`, `databaseId`, and `collectionGroup` in Firestore Admin REST URLs, normalized implicit `__name__` fields, and added `collectionGroup` + nested map dot-path sampling fallback in `pickFieldPath`.
+
 ## [1.22.1] - 2026-11-23
 
 ### Added

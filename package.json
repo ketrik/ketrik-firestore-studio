@@ -10,7 +10,7 @@
     "nosql",
     "vscode"
   ],
-  "version": "1.22.1",
+  "version": "1.23.0",
   "publisher": "ketrik",
   "icon": "media/logo.png",
   "repository": {
@@ -68,6 +68,13 @@
           "*.dry.json"
         ],
         "url": "./schemas/dashboard-dry.schema.json"
+      },
+      {
+        "fileMatch": [
+          "firestore.indexes.json",
+          "*.indexes.json"
+        ],
+        "url": "./schemas/firestore-indexes.schema.json"
       }
     ],
     "configuration": {
@@ -979,6 +986,30 @@
         "icon": "$(add)"
       },
       {
+        "command": "ketrik-firestore-studio.openIndexesAsTable",
+        "category": "Firestore Studio",
+        "title": "Open Indexes & TTL Table",
+        "icon": "$(table)"
+      },
+      {
+        "command": "ketrik-firestore-studio.manageTtlPolicy",
+        "category": "Firestore Studio",
+        "title": "Configure Field TTL Policy...",
+        "icon": "$(history)"
+      },
+      {
+        "command": "ketrik-firestore-studio.manageFieldOverride",
+        "category": "Firestore Studio",
+        "title": "Exempt / Restore Single-Field Index...",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "ketrik-firestore-studio.rebuildIndex",
+        "category": "Firestore Studio",
+        "title": "Rebuild Composite Index",
+        "icon": "$(tools)"
+      },
+      {
         "command": "ketrik-firestore-studio.openCostSimulator",
         "category": "Firestore Studio",
         "title": "Open Cost Simulator & Quota Usage Dashboard",
@@ -1338,6 +1369,21 @@
           "command": "ketrik-firestore-studio.pushSnapshotToFirestore",
           "when": "resourceScheme == file && ketrik-firestore-studio.isSnapshotFile",
           "group": "navigation@3"
+        },
+        {
+          "command": "ketrik-firestore-studio.diffIndexes",
+          "when": "resourceScheme == file && resourceFilename == firestore.indexes.json",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.snapshotLiveIndexes",
+          "when": "resourceScheme == file && resourceFilename == firestore.indexes.json",
+          "group": "navigation@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.deployIndexes",
+          "when": "resourceScheme == file && resourceFilename == firestore.indexes.json",
+          "group": "navigation@3"
         }
       ],
       "editor/context": [
@@ -1556,6 +1602,11 @@
           "group": "7_refresh@1"
         },
         {
+          "command": "ketrik-firestore-studio.openIndexesAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem =~ /^compositeIndexesBranch:/",
+          "group": "inline@0"
+        },
+        {
           "command": "ketrik-firestore-studio.buildCompositeIndex",
           "when": "view == ketrik-firestore-studio-view && viewItem =~ /^compositeIndexesBranch:rw$/",
           "group": "inline@1"
@@ -1564,6 +1615,11 @@
           "command": "ketrik-firestore-studio.refreshIndexes",
           "when": "view == ketrik-firestore-studio-view && viewItem =~ /^compositeIndexesBranch:/",
           "group": "inline@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.openIndexesAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem =~ /^compositeIndexesBranch:/",
+          "group": "1_actions@0"
         },
         {
           "command": "ketrik-firestore-studio.buildCompositeIndex",
@@ -1586,9 +1642,34 @@
           "group": "1_actions@4"
         },
         {
+          "command": "ketrik-firestore-studio.manageTtlPolicy",
+          "when": "view == ketrik-firestore-studio-view && viewItem =~ /^compositeIndexesBranch:rw$/",
+          "group": "1_actions@5"
+        },
+        {
           "command": "ketrik-firestore-studio.refreshIndexes",
           "when": "view == ketrik-firestore-studio-view && viewItem =~ /^compositeIndexesBranch:/",
-          "group": "1_actions@5"
+          "group": "1_actions@6"
+        },
+        {
+          "command": "ketrik-firestore-studio.openIndexesAsTable",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'indexCollectionGroup'",
+          "group": "1_view@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.buildCompositeIndex",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'indexCollectionGroup'",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.manageTtlPolicy",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'indexCollectionGroup'",
+          "group": "2_manage@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.manageFieldOverride",
+          "when": "view == ketrik-firestore-studio-view && viewItem == 'indexCollectionGroup'",
+          "group": "2_manage@3"
         },
         {
           "command": "ketrik-firestore-studio.inspectIndexDefinition",
@@ -1606,9 +1687,14 @@
           "group": "1_actions@1"
         },
         {
-          "command": "ketrik-firestore-studio.deleteIndex",
+          "command": "ketrik-firestore-studio.rebuildIndex",
           "when": "view == ketrik-firestore-studio-view && viewItem =~ /^compositeIndex:rw$/",
           "group": "1_actions@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.deleteIndex",
+          "when": "view == ketrik-firestore-studio-view && viewItem =~ /^compositeIndex:rw$/",
+          "group": "1_actions@3"
         },
         {
           "command": "ketrik-firestore-studio.openCostSimulator",
@@ -2481,6 +2567,16 @@
           "group": "2_data@3"
         },
         {
+          "command": "ketrik-firestore-studio.buildCompositeIndex",
+          "when": "viewItem =~ /^collection:(cloud|emulator):.*:rw$/",
+          "group": "2_data@4"
+        },
+        {
+          "command": "ketrik-firestore-studio.openIndexesAsTable",
+          "when": "viewItem =~ /^collection:(cloud|emulator):/",
+          "group": "2_data@5"
+        },
+        {
           "command": "ketrik-firestore-studio.consolidateCollection",
           "when": "viewItem =~ /^collection:(cloud|emulator):.*:rw$/",
           "group": "3_migrations@1"
@@ -2587,6 +2683,21 @@
           "command": "ketrik-firestore-studio.purgeFieldTombstones",
           "when": "viewItem =~ /^documentField:(map|array):.*:rw$/",
           "group": "3_migrations@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.manageTtlPolicy",
+          "when": "viewItem =~ /^documentField:timestamp:(cloud|emulator):rw$/",
+          "group": "4_indexes@1"
+        },
+        {
+          "command": "ketrik-firestore-studio.buildCompositeIndex",
+          "when": "viewItem =~ /^documentField:vector:(cloud|emulator):rw$/",
+          "group": "4_indexes@2"
+        },
+        {
+          "command": "ketrik-firestore-studio.manageFieldOverride",
+          "when": "viewItem =~ /^documentField:(scalar|map|array|timestamp):(cloud|emulator):rw$/",
+          "group": "4_indexes@3"
         }
       ],
       "commandPalette": [

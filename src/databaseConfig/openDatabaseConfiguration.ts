@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { ConnectionManager } from "../connections/ConnectionManager";
 import { DatabaseConfigService } from "./DatabaseConfigService";
 import { getDatabaseConfigHtml } from "./databaseConfigHtml";
+import { IndexesService } from "../indexes/indexesService";
 
 // Registry of active database config webview panels keyed by connectionId
 const activeConfigPanels = new Map<string, vscode.WebviewPanel>();
@@ -59,10 +60,36 @@ export async function openDatabaseConfiguration(target?: { connectionId?: string
     return;
   }
 
+  const loadIndexSummary = async () => {
+    try {
+      const idxSvc = IndexesService.getInstance();
+      const [composites, overrides] = await Promise.all([
+        idxSvc.listCompositeIndexes(conn.id).catch(() => []),
+        idxSvc.listFieldOverrides(conn.id).catch(() => []),
+      ]);
+      return {
+        compositeCount: composites.length,
+        ttlPolicies: overrides
+          .filter((o) => Boolean(o.ttlConfig))
+          .map((o) => ({
+            collectionGroup: o.collectionGroup,
+            fieldPath: o.fieldPath,
+            state: o.ttlConfig!.state,
+          })),
+      };
+    } catch {
+      return { compositeCount: 0, ttlPolicies: [] };
+    }
+  };
+
   const configService = DatabaseConfigService.getInstance();
   let initialConfig;
+  let initialIndexSummary = { compositeCount: 0, ttlPolicies: [] as Array<{ collectionGroup: string; fieldPath: string; state: string }> };
   try {
-    initialConfig = await configService.getDatabaseConfig(conn.id);
+    [initialConfig, initialIndexSummary] = await Promise.all([
+      configService.getDatabaseConfig(conn.id),
+      loadIndexSummary(),
+    ]);
   } catch (err: any) {
     vscode.window.showErrorMessage(`Failed to load database configuration for ${conn.name}: ${err?.message || err}`);
     return;
@@ -82,7 +109,7 @@ export async function openDatabaseConfiguration(target?: { connectionId?: string
   );
 
   activeConfigPanels.set(conn.id, panel);
-  panel.webview.html = getDatabaseConfigHtml(initialConfig, conn.name);
+  panel.webview.html = getDatabaseConfigHtml(initialConfig, conn.name, initialIndexSummary);
 
   let messageSub: vscode.Disposable | undefined;
 
@@ -95,8 +122,11 @@ export async function openDatabaseConfiguration(target?: { connectionId?: string
   messageSub = panel.webview.onDidReceiveMessage(async (message) => {
     if (message.command === "refresh") {
       try {
-        const freshConfig = await configService.getDatabaseConfig(conn.id, true);
-        panel.webview.html = getDatabaseConfigHtml(freshConfig, conn.name);
+        const [freshConfig, idxSummary] = await Promise.all([
+          configService.getDatabaseConfig(conn.id, true),
+          loadIndexSummary(),
+        ]);
+        panel.webview.html = getDatabaseConfigHtml(freshConfig, conn.name, idxSummary);
         vscode.window.showInformationMessage(`Refreshed database configuration for '${conn.name}'.`);
       } catch (err: any) {
         vscode.window.showErrorMessage(`Failed to refresh database configuration: ${err?.message || err}`);
@@ -145,6 +175,10 @@ export async function openDatabaseConfiguration(target?: { connectionId?: string
 
     if (message.command === "openTimeTravel") {
       await vscode.commands.executeCommand("ketrik-firestore-studio.openTimeTravel", { connectionId: conn.id });
+    }
+
+    if (message.command === "openIndexesTable") {
+      await vscode.commands.executeCommand("ketrik-firestore-studio.openIndexesAsTable", { connectionId: conn.id });
     }
   });
 }
